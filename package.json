@@ -1,0 +1,20 @@
+{
+  "name": "cc",
+  "version": "0.0.1",
+  "description": "A fast, minimal terminal coding agent (Bun + Ink)",
+  "type": "module",
+  "bin": {
+    "cc": "./src/index.ts"
+  },
+  "scripts": {
+    "dev": "bun run src/index.ts",
+    "cc": "bun run src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5"
+  }
+}
