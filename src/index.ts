@@ -18,6 +18,7 @@ import { loadProjectContext, composeSystemPrompt, describeContext } from "./cont
 import { discoverSkills, composeSkillsPrompt, describeSkills, readSkillTool } from "./skills.ts";
 import { spawnAgentTool, Semaphore } from "./subagents.ts";
 import { connectMcpServers, describeMcp, closeMcp, type McpConnection } from "./mcp.ts";
+import { startTui } from "./tui/App.tsx";
 import type { Message } from "./provider.ts";
 
 interface Args {
@@ -105,7 +106,7 @@ function printUsage(): void {
       "",
       "Usage:",
       '  cc -p "<prompt>"   headless print mode (streams to stdout, exits)',
-      "  cc                 interactive TUI (not yet implemented)",
+      "  cc                 interactive TUI (Ink)",
       "",
       "Flags:",
       "  -p, --print <s>    run a single prompt headless",
@@ -460,6 +461,81 @@ function flushTranscript(
   }
 }
 
+/**
+ * Interactive TUI mode (Ink). Assembles the same engine pieces as headless —
+ * config, provider, project context, skills, MCP — then hands them to the App
+ * component, which keeps a running session over `runAgent`. Startup notes that the
+ * headless path writes to stderr are passed in as scrollback items instead.
+ */
+async function runTui(args: Args): Promise<number> {
+  let config;
+  try {
+    config = await loadConfig();
+  } catch (err) {
+    console.error((err as Error).message);
+    return 1;
+  }
+
+  const resolved = resolveModel(config, args.model);
+  if (!resolved) {
+    console.error("cc: no model available; check ~/.cc/config.json providers");
+    return 1;
+  }
+
+  let provider;
+  try {
+    provider = createProvider(resolved.providerConfig);
+  } catch (err) {
+    console.error((err as Error).message);
+    return 1;
+  }
+  const modelName = resolved.model.name ?? resolved.model.id;
+  const modelLabel = resolved.model.id;
+
+  const startupNotes: string[] = [];
+
+  // Project memory (CC.md > AGENTS.md > CLAUDE.md) + skills fold into the base
+  // system prompt; App re-appends the per-mode rules at send time.
+  const projectContext = await loadProjectContext();
+  const ctxNote = describeContext(projectContext);
+  if (ctxNote) startupNotes.push(ctxNote);
+
+  const skills = await discoverSkills();
+  const skillsNote = describeSkills(skills);
+  if (skillsNote) startupNotes.push(skillsNote);
+
+  const mcp: McpConnection = args.noTools
+    ? { tools: [], clients: [], notes: [] }
+    : await connectMcpServers(config.mcpServers);
+  const mcpNote = describeMcp(mcp, Object.keys(config.mcpServers).length);
+  if (mcpNote) startupNotes.push(mcpNote);
+
+  const baseSystem = composeSkillsPrompt(
+    composeSystemPrompt(SYSTEM_PROMPT, projectContext),
+    skills,
+  );
+
+  const store = SessionStore.open();
+  const sessionId = store.createSession({ model: modelName, cwd: process.cwd() });
+
+  startupNotes.unshift(`cc — ${modelLabel} · type /help for commands`);
+
+  startTui({
+    config,
+    provider,
+    modelName,
+    modelLabel,
+    baseSystem,
+    skills,
+    mcp,
+    store,
+    sessionId,
+    noTools: args.noTools,
+    startupNotes,
+  });
+  return 0;
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
 
@@ -472,11 +548,17 @@ async function main(): Promise<void> {
     return;
   }
   // Headless when a prompt is given, or when --resume is used (with a prompt to
-  // continue, or bare to list sessions). The TUI lands in Phase 4.
+  // continue, or bare to list sessions).
   if (args.prompt !== undefined || args.resume !== undefined) {
     process.exit(await runHeadless(args));
   }
-  // No -p and no TUI yet → show usage.
+  // No prompt + an interactive terminal → launch the Ink TUI. Without a TTY (piped
+  // with no prompt) there's nothing to do, so show usage.
+  if (process.stdin.isTTY) {
+    const code = await runTui(args);
+    if (code !== 0) process.exit(code);
+    return;
+  }
   printUsage();
 }
 
