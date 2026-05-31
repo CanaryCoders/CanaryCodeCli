@@ -9,6 +9,11 @@
 // interactive TUI lands in Phase 4.
 
 import { type AgentMode, runAgent, systemForMode } from "./agent.ts";
+import {
+  composeAgentsPrompt,
+  describeAgents,
+  discoverAgents,
+} from "./agents.ts";
 import { describeCanary, populateCanaryModels } from "./canary.ts";
 import { type Config, loadConfig, resolveModel } from "./config.ts";
 import {
@@ -17,6 +22,12 @@ import {
   loadProjectContext,
 } from "./context.ts";
 import { diffStat, renderDiff } from "./diff.ts";
+import {
+  describeHooks,
+  runPostToolHooks,
+  runPreToolHooks,
+  runStopHooks,
+} from "./hooks.ts";
 import { renderAnsi } from "./markdown.ts";
 import {
   closeMcp,
@@ -24,6 +35,7 @@ import {
   describeMcp,
   type McpConnection,
 } from "./mcp.ts";
+import { checkCommandSafety, inPermissionScope } from "./permission.ts";
 import type { Message, Provider } from "./provider.ts";
 import { createProvider } from "./provider.ts";
 import { type SessionRow, SessionStore } from "./session.ts";
@@ -323,6 +335,12 @@ async function runHeadless(args: Args): Promise<number> {
   const skillsNote = describeSkills(skills);
   if (skillsNote) process.stderr.write(`${skillsNote}\n`);
 
+  // Discover custom agents (global ~/.cc/agents + project ./.cc/agents). Their
+  // name+description go into the prompt; spawn_agent dispatches to them by name.
+  const agents = await discoverAgents();
+  const agentsNote = describeAgents(agents);
+  if (agentsNote) process.stderr.write(`${agentsNote}\n`);
+
   // Connect MCP servers (stdio + SSE) and merge their namespaced tools. A server
   // that fails to connect is noted and skipped — the agent runs without it.
   const mcp: McpConnection = args.noTools
@@ -360,6 +378,7 @@ async function runHeadless(args: Args): Promise<number> {
         depth: 0,
         limiter,
         signal: controller.signal,
+        agents,
       }),
     ];
   }
@@ -370,9 +389,12 @@ async function runHeadless(args: Args): Promise<number> {
   const contextNote = describeContext(projectContext);
   if (contextNote) process.stderr.write(`${contextNote}\n`);
   const system = systemForMode(
-    composeSkillsPrompt(
-      composeSystemPrompt(SYSTEM_PROMPT, projectContext),
-      skills,
+    composeAgentsPrompt(
+      composeSkillsPrompt(
+        composeSystemPrompt(SYSTEM_PROMPT, projectContext),
+        skills,
+      ),
+      agents,
     ),
     mode,
   );
@@ -470,11 +492,66 @@ async function runHeadless(args: Args): Promise<number> {
       mdBuf = "";
     }
   };
+  // ── lifecycle hooks (PreToolUse can block; PostToolUse/Stop observe) ──
+  const hooksNote = describeHooks(config.hooks);
+  if (hooksNote) process.stderr.write(`${hooksNote}\n`);
+  const preToolUse = config.hooks.PreToolUse?.length
+    ? (call: { name: string; input: unknown }) =>
+        runPreToolHooks(config.hooks, call)
+    : undefined;
+  const postToolUse = config.hooks.PostToolUse?.length
+    ? (
+        call: { name: string; input: unknown },
+        result: { content: string; isError: boolean },
+      ) => runPostToolHooks(config.hooks, call, result)
+    : undefined;
+
+  // ── AI permission gate ──
+  // The human confirm box is a TUI-only affordance, so headless has no one to
+  // escalate an "unsafe" verdict to: here an unsafe call is blocked outright and
+  // the model is told why. Auto/`--yolo` skips the gate entirely (run everything).
+  let gate:
+    | ((call: { name: string; input: unknown }) => Promise<{
+        allow: boolean;
+        reason?: string;
+      }>)
+    | undefined;
+  if (mode !== "auto" && config.permission.mode === "ai") {
+    const permResolved = resolveModel(config, config.permission.model);
+    if (!permResolved) {
+      process.stderr.write(
+        `note: permission model "${config.permission.model}" not found; AI safety check disabled\n`,
+      );
+    } else {
+      try {
+        const checkerProvider = createProvider(permResolved.providerConfig);
+        const checkerModel = permResolved.model.name ?? permResolved.model.id;
+        process.stderr.write(`🛡 AI permission check (${checkerModel})\n`);
+        gate = async (call) => {
+          if (!inPermissionScope(config.permission.scope, call.name)) {
+            return { allow: true };
+          }
+          const v = await checkCommandSafety(
+            checkerProvider,
+            checkerModel,
+            call,
+            controller.signal,
+          );
+          if (v.safe) return { allow: true };
+          return {
+            allow: false,
+            reason: `blocked by AI safety check: ${v.reason}`,
+          };
+        };
+      } catch (err) {
+        process.stderr.write(
+          `note: AI safety check disabled: ${(err as Error).message}\n`,
+        );
+      }
+    }
+  }
+
   try {
-    // No `confirm` hook here: the confirm-before-running gate (config `confirm`)
-    // is a TUI-only concern — headless is non-interactive, so it runs every tool.
-    // Use `--auto`/`--yolo` to grant write/bash unattended (it's already the default
-    // here); the gate lives in the TUI where a human can answer y/n/a.
     for await (const ev of runAgent({
       provider,
       model: modelName,
@@ -486,6 +563,9 @@ async function runHeadless(args: Args): Promise<number> {
       thinkingBudget,
       compactAtTokens: config.compactAtTokens,
       signal: controller.signal,
+      gate,
+      preToolUse,
+      postToolUse,
     })) {
       switch (ev.type) {
         case "text":
@@ -623,6 +703,9 @@ async function runHeadless(args: Args): Promise<number> {
     process.off("SIGINT", onSigint);
   }
 
+  // Stop hooks fire once the run finishes (observational; never block).
+  if (config.hooks.Stop?.length) await runStopHooks(config.hooks);
+
   flushTranscript(store, sessionId, messages, persistedCount, compacted);
   const finalSession = store.getSession(sessionId);
   if (finalSession) {
@@ -703,15 +786,25 @@ async function runTui(args: Args): Promise<number> {
   const skillsNote = describeSkills(skills);
   if (skillsNote) startupNotes.push(skillsNote);
 
+  const agents = await discoverAgents();
+  const agentsNote = describeAgents(agents);
+  if (agentsNote) startupNotes.push(agentsNote);
+
+  const hooksNote = describeHooks(config.hooks);
+  if (hooksNote) startupNotes.push(hooksNote);
+
   const mcp: McpConnection = args.noTools
     ? { tools: [], clients: [], notes: [] }
     : await connectMcpServers(config.mcpServers);
   const mcpNote = describeMcp(mcp, Object.keys(config.mcpServers).length);
   if (mcpNote) startupNotes.push(mcpNote);
 
-  const baseSystem = composeSkillsPrompt(
-    composeSystemPrompt(SYSTEM_PROMPT, projectContext),
-    skills,
+  const baseSystem = composeAgentsPrompt(
+    composeSkillsPrompt(
+      composeSystemPrompt(SYSTEM_PROMPT, projectContext),
+      skills,
+    ),
+    agents,
   );
 
   const store = SessionStore.open();
@@ -732,6 +825,7 @@ async function runTui(args: Args): Promise<number> {
     version: VERSION,
     baseSystem,
     skills,
+    agents,
     mcp,
     store,
     sessionId,

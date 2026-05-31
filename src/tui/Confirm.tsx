@@ -102,8 +102,11 @@ export async function buildConfirmPreview(call: {
 /** Render the pending-call confirmation box. */
 export function ConfirmView({
   preview,
+  reason,
 }: {
   preview: ConfirmPreview;
+  /** When set, the AI safety check flagged this call — shown above the prompt. */
+  reason?: string | null;
 }): React.ReactElement {
   return (
     <Box
@@ -116,6 +119,11 @@ export function ConfirmView({
       <Text color={tint("yellow")} bold>
         Run this?
       </Text>
+      {reason ? (
+        <Text
+          color={tint("yellow")}
+        >{`⚠ flagged by safety check: ${reason}`}</Text>
+      ) : null}
       {preview.kind === "bash" ? (
         <Text>{`$ ${preview.command}`}</Text>
       ) : preview.kind === "diff" ? (

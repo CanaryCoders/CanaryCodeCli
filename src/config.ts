@@ -45,6 +45,43 @@ export interface McpServerConfig {
   url?: string;
 }
 
+/**
+ * AI permission-approval engine. When `mode` is "ai", a separate (usually cheap)
+ * model classifies each gated mutating tool call as safe/unsafe before it runs:
+ * "safe" runs silently, "unsafe" escalates to the human y/n/a box (TUI) or blocks
+ * the call (headless, where there is no human). Auto mode / `--yolo` bypass it.
+ * "off" (default) falls back to the deterministic `confirm` gate instead.
+ */
+export interface PermissionConfig {
+  mode: "off" | "ai";
+  /** Checker model id (resolved against providers). Defaults to a cheap model. */
+  model?: string;
+  /** Which tools to check: "bash" or "writes" (bash + write_file + edit_file). */
+  scope?: "bash" | "writes";
+}
+
+/** One configured hook: a shell command fired on a lifecycle event. */
+export interface HookConfig {
+  /** Regex matched against the tool name (omitted = all tools). */
+  matcher?: string;
+  /** Shell command run via `bash -c`, receiving a JSON payload on stdin. */
+  command: string;
+  /** Timeout in milliseconds (default 10000). */
+  timeout?: number;
+}
+
+/**
+ * Lifecycle hooks. `PreToolUse` hooks can BLOCK a call (a non-zero exit denies it
+ * and the model is told why); `PostToolUse` and `Stop` are observational
+ * (fire-and-forget). Hooks run in every mode, including auto.
+ */
+export interface HooksConfig {
+  PreToolUse?: HookConfig[];
+  PostToolUse?: HookConfig[];
+  /** Fired once when a turn finishes (no tool calls left). */
+  Stop?: HookConfig[];
+}
+
 export interface Config {
   /** Active model id. Resolved against providers' model lists. */
   model: string;
@@ -69,6 +106,10 @@ export interface Config {
   compactAtTokens: number;
   /** TUI confirm-before-running gate: off | bash | writes (headless ignores). */
   confirm: ConfirmMode;
+  /** AI permission-approval engine (overrides `confirm` when mode is "ai"). */
+  permission: PermissionConfig;
+  /** Lifecycle hooks (PreToolUse / PostToolUse / Stop). */
+  hooks: HooksConfig;
 }
 
 /** Path to the config file (~/.cc/config.json). */
@@ -102,6 +143,8 @@ function defaultConfig(): Config {
     maxDepth: 2,
     compactAtTokens: 120_000,
     confirm: "off",
+    permission: { mode: "off", model: "haiku", scope: "writes" },
+    hooks: {},
   };
 }
 
@@ -140,6 +183,8 @@ function mergeConfig(base: Config, user: Partial<Config>): Config {
     maxDepth: user.maxDepth ?? base.maxDepth,
     compactAtTokens: user.compactAtTokens ?? base.compactAtTokens,
     confirm: user.confirm ?? base.confirm,
+    permission: { ...base.permission, ...(user.permission ?? {}) },
+    hooks: { ...base.hooks, ...(user.hooks ?? {}) },
   };
 }
 

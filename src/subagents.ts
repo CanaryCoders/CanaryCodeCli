@@ -13,6 +13,7 @@
 // caps how many child loops run at once via a shared semaphore.
 
 import { runAgent } from "./agent.ts";
+import type { AgentDef } from "./agents.ts";
 import { type Config, resolveModel } from "./config.ts";
 import { createProvider, type Message, type Provider } from "./provider.ts";
 import type { Tool } from "./tools.ts";
@@ -61,6 +62,8 @@ export interface SpawnAgentEnv {
   limiter: Semaphore;
   /** Abort propagated from the parent run. */
   signal?: AbortSignal;
+  /** Custom agent definitions the model may dispatch to by name (optional). */
+  agents?: AgentDef[];
 }
 
 const SUBAGENT_SYSTEM = [
@@ -72,11 +75,24 @@ const SUBAGENT_SYSTEM = [
   "self-contained and to the point.",
 ].join("\n");
 
-/** Build the toolset a child running at `childDepth` receives: the inherited tools
- * plus a nested spawn_agent only while still under the depth cap. */
-function buildChildTools(env: SpawnAgentEnv, childDepth: number): Tool[] {
-  const childTools = [...env.inheritedTools];
-  if (childDepth < env.config.maxDepth) {
+/**
+ * Build the toolset a child running at `childDepth` receives: the inherited tools
+ * (optionally narrowed to a custom agent's `allow` list) plus a nested spawn_agent
+ * only while still under the depth cap (and permitted by the allow list).
+ */
+function buildChildTools(
+  env: SpawnAgentEnv,
+  childDepth: number,
+  allow?: string[],
+): Tool[] {
+  const allowed = allow ? new Set(allow) : null;
+  const childTools = allowed
+    ? env.inheritedTools.filter((t) => allowed.has(t.name))
+    : [...env.inheritedTools];
+  if (
+    childDepth < env.config.maxDepth &&
+    (!allowed || allowed.has("spawn_agent"))
+  ) {
     childTools.push(spawnAgentTool({ ...env, depth: childDepth }));
   }
   return childTools;
@@ -86,6 +102,8 @@ interface SpawnRequest {
   task: string;
   files?: string[];
   model?: string;
+  /** Name of a custom agent definition to dispatch to (optional). */
+  agent?: string;
 }
 
 /** Run one sub-agent to completion and return its summary text. Never throws —
@@ -99,12 +117,27 @@ async function runSubagent(
   }
   const childDepth = env.depth + 1;
 
-  // Reuse the parent's provider/model unless the task asks for a different model.
+  // Resolve a named custom agent, if one was requested. It supplies the child's
+  // persona (system prompt), and may override the model and restrict the tools.
+  let def: AgentDef | undefined;
+  if (req.agent) {
+    def = env.agents?.find((a) => a.name === req.agent);
+    if (!def) {
+      const available = env.agents?.length
+        ? env.agents.map((a) => a.name).join(", ")
+        : "(none)";
+      return `spawn_agent: unknown agent "${req.agent}"; available: ${available}`;
+    }
+  }
+
+  // Model precedence: an explicit `model` arg wins, else the custom agent's
+  // declared model, else the parent's model.
+  const wantModel = req.model ?? def?.model;
   let provider = env.parentProvider;
   let model = env.parentModel;
-  if (req.model && req.model !== env.parentModel) {
-    const resolved = resolveModel(env.config, req.model);
-    if (!resolved) return `spawn_agent: unknown model "${req.model}"`;
+  if (wantModel && wantModel !== env.parentModel) {
+    const resolved = resolveModel(env.config, wantModel);
+    if (!resolved) return `spawn_agent: unknown model "${wantModel}"`;
     try {
       provider = createProvider(resolved.providerConfig);
       model = resolved.model.name ?? resolved.model.id;
@@ -128,7 +161,11 @@ async function runSubagent(
     brief += `\n\nRelevant files:\n${blocks.join("\n\n")}`;
   }
 
-  const tools = buildChildTools(env, childDepth);
+  const tools = buildChildTools(env, childDepth, def?.tools);
+  // A custom agent's body becomes the persona; the generic contract (work
+  // autonomously, return a self-contained summary) is appended so the return value
+  // still flows back to the parent correctly.
+  const system = def ? `${def.system}\n\n${SUBAGENT_SYSTEM}` : SUBAGENT_SYSTEM;
   const messages: Message[] = [
     { role: "user", content: [{ type: "text", text: brief }] },
   ];
@@ -139,7 +176,7 @@ async function runSubagent(
     for await (const ev of runAgent({
       provider,
       model,
-      system: SUBAGENT_SYSTEM,
+      system,
       messages,
       tools,
       mode: "normal",
@@ -160,6 +197,12 @@ async function runSubagent(
  * the top-level tool set only when `maxDepth > 0`; nesting is handled internally.
  */
 export function spawnAgentTool(env: SpawnAgentEnv): Tool {
+  // List any custom agents so the description points the model at them by name.
+  const agentList = env.agents?.length
+    ? ` Custom agents you can dispatch to via \`agent\`: ${env.agents
+        .map((a) => a.name)
+        .join(", ")}.`
+    : "";
   return {
     name: "spawn_agent",
     description:
@@ -167,7 +210,7 @@ export function spawnAgentTool(env: SpawnAgentEnv): Tool {
       "own fresh context and returns a concise summary. Use it to keep your own context " +
       "small for large or parallelizable work (e.g. 'write tests for src/foo.ts', 'audit " +
       "the auth flow'). The child sees only the task brief and any files you name — not " +
-      "this conversation — so describe the task completely.",
+      `this conversation — so describe the task completely.${agentList}`,
     readOnly: false,
     schema: {
       type: "object",
@@ -188,6 +231,12 @@ export function spawnAgentTool(env: SpawnAgentEnv): Tool {
           description:
             "Optional model id for the child (defaults to the current model).",
         },
+        agent: {
+          type: "string",
+          description:
+            "Optional name of a custom agent definition to dispatch to (its persona, " +
+            "model, and tool restrictions apply). Omit for a generic sub-agent.",
+        },
       },
       required: ["task"],
     },
@@ -200,7 +249,8 @@ export function spawnAgentTool(env: SpawnAgentEnv): Tool {
         ? input.files.filter((f): f is string => typeof f === "string")
         : undefined;
       const model = typeof input.model === "string" ? input.model : undefined;
-      return runSubagent(env, { task, files, model });
+      const agent = typeof input.agent === "string" ? input.agent : undefined;
+      return runSubagent(env, { task, files, model, agent });
     },
   };
 }

@@ -17,6 +17,7 @@ import { Box, render, Static, Text, useApp, useInput, useStdout } from "ink";
 import Spinner from "ink-spinner";
 import { useRef, useState } from "react";
 import { type AgentMode, runAgent, systemForMode } from "../agent.ts";
+import type { AgentDef } from "../agents.ts";
 import {
   type CompletionContext,
   completions,
@@ -25,7 +26,9 @@ import {
 import type { Config } from "../config.ts";
 import { resolveModel, saveConfig } from "../config.ts";
 import { initProjectContext } from "../context.ts";
+import { runPostToolHooks, runPreToolHooks, runStopHooks } from "../hooks.ts";
 import type { McpConnection } from "../mcp.ts";
+import { checkCommandSafety, inPermissionScope } from "../permission.ts";
 import type { Message, Provider } from "../provider.ts";
 import { createProvider } from "../provider.ts";
 import type { SessionStore } from "../session.ts";
@@ -76,6 +79,8 @@ interface AppProps {
   /** Base system prompt (project context + skills already folded in). */
   baseSystem: string;
   skills: Skill[];
+  /** Custom agent definitions spawn_agent can dispatch to by name. */
+  agents: AgentDef[];
   mcp: McpConnection;
   store: SessionStore;
   sessionId: string;
@@ -119,6 +124,9 @@ function App(props: AppProps): React.ReactElement {
   // mirrors what the UI shows.
   const providerRef = useRef(props.provider);
   const modelNameRef = useRef(props.modelName);
+  // The AI permission checker (provider + model), resolved lazily on first gated
+  // call and cached. `undefined` = not yet resolved; `null` = disabled/unavailable.
+  const checkerRef = useRef<{ provider: Provider; model: string } | null>();
   // Base system prompt (project context + skills already folded in). Held in a
   // ref so `/init` can fold a freshly generated CC.md in live, mid-session.
   const baseSystemRef = useRef(props.baseSystem);
@@ -211,6 +219,11 @@ function App(props: AppProps): React.ReactElement {
   const [pendingConfirm, setPendingConfirm] = useState<ConfirmPreview | null>(
     null,
   );
+  // When the AI permission check escalates an "unsafe" verdict to the human box,
+  // its reason is shown above the y/n/a prompt. null = no AI reason (plain gate).
+  const [pendingConfirmReason, setPendingConfirmReason] = useState<
+    string | null
+  >(null);
   const pendingConfirmRef = useRef<ConfirmPreview | null>(null);
   const confirmResolverRef = useRef<((ok: boolean) => void) | null>(null);
   const confirmAlwaysRef = useRef(false);
@@ -263,6 +276,7 @@ function App(props: AppProps): React.ReactElement {
           depth: 0,
           limiter,
           signal,
+          agents: props.agents,
         }),
       ];
     }
@@ -303,6 +317,19 @@ function App(props: AppProps): React.ReactElement {
     const interactive = runMode !== "auto";
     const maxTurns = props.config.autoMaxTurns;
     const checkpointEvery = interactive ? props.config.checkpointEvery : 0;
+
+    // Lifecycle hooks run in every mode (deterministic policy). PreToolUse can
+    // block a call; PostToolUse observes. Omitted when none are configured.
+    const hooks = props.config.hooks;
+    const preToolUse = hooks.PreToolUse?.length
+      ? (call: { name: string; input: unknown }) => runPreToolHooks(hooks, call)
+      : undefined;
+    const postToolUse = hooks.PostToolUse?.length
+      ? (
+          call: { name: string; input: unknown },
+          result: { content: string; isError: boolean },
+        ) => runPostToolHooks(hooks, call, result)
+      : undefined;
 
     // The in-flight turn is built up here and mirrored into React state for render.
     // Only the *last* item is ever mutated (text appends to it, a tool flips
@@ -376,7 +403,9 @@ function App(props: AppProps): React.ReactElement {
         thinkingBudget: budget,
         compactAtTokens: props.config.compactAtTokens,
         signal: controller.signal,
-        confirm: (call) => requestConfirm(runMode, call),
+        gate: (call) => requestGate(runMode, call),
+        preToolUse,
+        postToolUse,
       })) {
         switch (ev.type) {
           case "text":
@@ -440,6 +469,10 @@ function App(props: AppProps): React.ReactElement {
             break;
           case "done":
             outcome = ev.reason;
+            // Stop hooks fire when the model finishes responding (observational).
+            if (ev.reason === "stop" && props.config.hooks.Stop?.length) {
+              void runStopHooks(props.config.hooks);
+            }
             if (ev.reason === "aborted") {
               local.push({
                 id: nextId(),
@@ -534,32 +567,90 @@ function App(props: AppProps): React.ReactElement {
     note("plan rejected — still in plan mode");
   }
 
-  // ── confirm gate: the hook runAgent calls before a mutating tool runs ──
-  // Decides whether to pause for [y]/[n]/[a]. Auto mode, the session "always"
-  // override, and `confirm:"off"` all run silently; otherwise gated tools (bash,
-  // or bash+writes) render the box and await the user's choice via a Promise.
-  function requestConfirm(
+  // Resolve (and cache) the AI permission checker: provider + model. Returns null
+  // when permission isn't in "ai" mode or the configured model can't be resolved.
+  function getChecker(): { provider: Provider; model: string } | null {
+    if (checkerRef.current !== undefined) return checkerRef.current;
+    if (props.config.permission.mode !== "ai") {
+      checkerRef.current = null;
+      return null;
+    }
+    const resolved = resolveModel(props.config, props.config.permission.model);
+    if (!resolved) {
+      note(
+        `permission model "${props.config.permission.model}" not found; AI safety check disabled`,
+        "error",
+      );
+      checkerRef.current = null;
+      return null;
+    }
+    try {
+      checkerRef.current = {
+        provider: createProvider(resolved.providerConfig),
+        model: resolved.model.name ?? resolved.model.id,
+      };
+    } catch (err) {
+      note(`AI safety check disabled: ${(err as Error).message}`, "error");
+      checkerRef.current = null;
+    }
+    return checkerRef.current;
+  }
+
+  // ── the approval gate runAgent calls before a mutating tool runs ──
+  // Composes the two gate strategies. Auto mode and the session "always" override
+  // run everything silently. With permission "ai", the checker model classifies
+  // the call: safe runs silently, unsafe escalates to the human y/n/a box (with the
+  // reason). With permission "off", the deterministic `confirm` config decides
+  // which tools prompt. A declined call comes back as a model-readable reason.
+  async function requestGate(
     runMode: AgentMode,
     call: { id: string; name: string; input: unknown },
-  ): Promise<boolean> {
-    if (runMode === "auto" || confirmAlwaysRef.current)
-      return Promise.resolve(true);
+  ): Promise<{ allow: boolean; reason?: string }> {
+    if (runMode === "auto" || confirmAlwaysRef.current) return { allow: true };
+
+    if (props.config.permission.mode === "ai") {
+      if (!inPermissionScope(props.config.permission.scope, call.name)) {
+        return { allow: true };
+      }
+      const checker = getChecker();
+      if (!checker) return { allow: true }; // misconfigured → fail open
+      const verdict = await checkCommandSafety(
+        checker.provider,
+        checker.model,
+        call,
+        controllerRef.current?.signal,
+      );
+      if (verdict.safe) return { allow: true };
+      const ok = await humanConfirm(call, verdict.reason);
+      return { allow: ok, reason: ok ? undefined : "user declined the call" };
+    }
+
+    // Deterministic confirm gate.
     const setting = props.config.confirm;
-    if (setting === "off") return Promise.resolve(true);
+    if (setting === "off") return { allow: true };
     const gated =
       setting === "bash"
         ? call.name === "bash"
         : call.name === "bash" ||
           call.name === "write_file" ||
           call.name === "edit_file";
-    if (!gated) return Promise.resolve(true);
-    // Pause the loop: render the call and resolve once the user picks y/n/a.
+    if (!gated) return { allow: true };
+    const ok = await humanConfirm(call, null);
+    return { allow: ok, reason: ok ? undefined : "user declined the call" };
+  }
+
+  /** Render the y/n/a box (optionally with an AI reason) and await the choice. */
+  function humanConfirm(
+    call: { name: string; input: unknown },
+    reason: string | null,
+  ): Promise<boolean> {
     return buildConfirmPreview(call).then(
       (preview) =>
         new Promise<boolean>((resolve) => {
           confirmResolverRef.current = resolve;
           pendingConfirmRef.current = preview;
           setPendingConfirm(preview);
+          setPendingConfirmReason(reason);
         }),
     );
   }
@@ -572,6 +663,7 @@ function App(props: AppProps): React.ReactElement {
     confirmResolverRef.current = null;
     pendingConfirmRef.current = null;
     setPendingConfirm(null);
+    setPendingConfirmReason(null);
     resolve(ok);
   }
 
@@ -1029,7 +1121,7 @@ function App(props: AppProps): React.ReactElement {
       ) : null}
 
       {pendingConfirm ? (
-        <ConfirmView preview={pendingConfirm} />
+        <ConfirmView preview={pendingConfirm} reason={pendingConfirmReason} />
       ) : pendingCheckpoint !== null ? (
         <Box flexDirection="column" marginTop={SPACING.inputGap}>
           <Text color={tint("yellow")}>

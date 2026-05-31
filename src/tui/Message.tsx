@@ -14,6 +14,12 @@ import { Box, Text } from "ink";
 import { type Diff, type DiffLine, diffStat } from "../diff.ts";
 import { codeLineFlags, parseMarkdown, type Span } from "../markdown.ts";
 import {
+  pickVerb,
+  RESPONDING_VERBS,
+  THINKING_VERBS,
+  TOOL_VERB,
+} from "../verbs.ts";
+import {
   DIFF,
   GUTTER_RULE,
   ROLE,
@@ -122,33 +128,23 @@ function collapseWhitespace(s: string): string {
 //
 // While a turn is in flight the spinner pairs with a short verb describing what's
 // happening *right now*, derived from the live items (the most recent one is the
-// best indicator). A pending tool maps to a tool-specific verb ("running bash…",
-// "searching…"); streaming assistant text is "responding…"; everything else
-// (waiting on the model, a just-finished tool, a fresh turn) is "thinking…".
-
-/** Tool → present-tense verb shown beside the spinner while the tool runs. */
-const TOOL_VERB: Record<string, string> = {
-  bash: "running bash",
-  web_search: "searching",
-  grep: "searching",
-  read_file: "reading",
-  list_dir: "listing",
-  read_skill: "reading",
-  write_file: "writing",
-  edit_file: "editing",
-  spawn_agent: "delegating",
-};
+// best indicator). A pending tool maps to a literal tool verb ("running bash…",
+// "grepping…"); streaming assistant text and idle reasoning draw from rotating
+// mood pools (see verbs.ts), seeded by the live item's id so the verb is stable
+// for the step and changes on the next rather than flickering each spinner frame.
 
 /** A short status verb for the busy spinner, derived from the live transcript. */
 export function statusVerb(live: Item[]): string {
   const last = live[live.length - 1];
-  if (!last) return "thinking…";
+  if (!last) return `${pickVerb(THINKING_VERBS, 0)}…`;
+  // A stable per-step seed: holds steady while this item is live, rolls on the next.
+  const seed = last.id;
   if (last.kind === "tool" && last.pending) {
     return `${TOOL_VERB[last.name] ?? `running ${last.name}`}…`;
   }
-  if (last.kind === "assistant") return "responding…";
+  if (last.kind === "assistant") return `${pickVerb(RESPONDING_VERBS, seed)}…`;
   // A finished tool, a note, or thinking → the model is (about to be) speaking.
-  return "thinking…";
+  return `${pickVerb(THINKING_VERBS, seed)}…`;
 }
 
 function truncate(s: string, max: number): string {

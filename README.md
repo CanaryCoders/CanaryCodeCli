@@ -1,6 +1,6 @@
 # cc
 
-A fast, minimal terminal coding agent. Bun runtime, [Ink](https://github.com/vadimdemedes/ink) TUI, flexible model support. Tiny core, the Claude-Code quality-of-life features that matter — **plan mode, auto mode, thinking modes, web search** — plus **sub-agents, MCP, skills, and project-context files**.
+A fast, minimal terminal coding agent. Bun runtime, [Ink](https://github.com/vadimdemedes/ink) TUI, flexible model support. Tiny core, the Claude-Code quality-of-life features that matter — **plan mode, auto mode, thinking modes, web search** — plus **sub-agents, custom agents, MCP, skills, hooks, an AI permission engine, and project-context files**.
 
 Two front-ends, one engine: a headless `-p` print mode for scripting and an interactive TUI, both driving the same agent loop.
 
@@ -73,6 +73,9 @@ Each line is a JSON `AgentEvent`: `text`, `thinking`, `tool_start {id,name,input
 - **Thinking modes** — map to Anthropic extended-thinking budgets (`off`/`think` 4k/`think-hard` 10k/`ultrathink` 32k). Non-Anthropic providers degrade gracefully.
 - **Web search** — a read-only `web_search` tool with a pluggable HTTP backend (Brave / Tavily) configured in `webSearch`.
 - **Sub-agents** — a `spawn_agent` tool delegates focused work to a child agent with its own fresh context; bounded by `maxConcurrent` / `maxDepth`.
+- **Custom agents** — file-defined personas in `~/.cc/agents/` and `./.cc/agents/` (frontmatter `name`/`description`/optional `model`/optional `tools` allowlist + a system-prompt body). Their name+description load into the prompt; `spawn_agent` dispatches to one by `agent` name, applying its persona, model, and tool restrictions.
+- **AI permission engine** — opt-in (`permission.mode: "ai"`): a separate, cheap model classifies each gated mutating tool call as safe/unsafe before it runs. Safe runs silently; unsafe escalates to the human y/n/a box (TUI, showing the reason) or blocks the call (headless). Auto/`--yolo` bypass it.
+- **Hooks** — shell commands fired on lifecycle events (`PreToolUse`/`PostToolUse`/`Stop`), matched by a regex on the tool name. A non-zero `PreToolUse` exit blocks the call (its output is the reason the model sees); the rest are observational. Hooks run in every mode.
 - **MCP** — connect stdio + SSE MCP servers from config; their tools merge in namespaced as `mcp__<server>__<tool>`.
 - **Skills** — progressive-disclosure capabilities from `~/.cc/skills/` and `./.cc/skills/`; only name+description load into the prompt, bodies are read on demand via `read_skill`.
 - **Project context** — walking up to the repo root, prepends `CC.md` > `AGENTS.md` > `CLAUDE.md` (first found wins) to the system prompt. `/init` scaffolds a starter `CC.md`.
@@ -145,11 +148,55 @@ The preset is an `openai-compat` provider pinned to `https://canaryllm.canarycod
 }
 ```
 
+### Custom agents
+
+Drop a markdown file in `~/.cc/agents/<name>.md` (global) or `./.cc/agents/<name>.md` (project, overrides global). The frontmatter configures it; the body is the agent's system prompt:
+
+```markdown
+---
+name: test-writer
+description: Writes thorough unit tests for a given module.
+model: haiku                        # optional — defaults to the parent's model
+tools: read_file, grep, write_file  # optional — defaults to the full inherited set
+---
+You are a meticulous test engineer. Given a module, write comprehensive tests…
+```
+
+The model delegates to it via `spawn_agent` with `{ "agent": "test-writer", "task": "…" }`.
+
+### AI permission engine
+
+```json
+{ "permission": { "mode": "ai", "model": "haiku", "scope": "writes" } }
+```
+
+- `mode`: `"off"` (default, falls back to the deterministic `confirm` gate) or `"ai"`.
+- `model`: the checker model id (any configured model; defaults to a cheap one).
+- `scope`: `"bash"` or `"writes"` (bash + write_file + edit_file).
+
+The checker is one-shot and tool-free; it **fails open** (a network/parse error is treated as safe so a flaky checker degrades to running the tool rather than wedging the agent). Auto/`--yolo` skip it.
+
+### Hooks
+
+```json
+{
+  "hooks": {
+    "PreToolUse":  [{ "matcher": "bash|write_file|edit_file", "command": "./scripts/guard.sh" }],
+    "PostToolUse": [{ "matcher": ".*", "command": "./scripts/log.sh" }],
+    "Stop":        [{ "command": "echo done" }]
+  }
+}
+```
+
+`matcher` is a regex on the tool name (omitted = all tools). The command runs via `bash -c` and receives a JSON payload on stdin (`{ event, tool, input }`, plus `result`/`isError` for `PostToolUse`). A non-zero `PreToolUse` exit **blocks** the call — its output becomes the reason the model sees. `PostToolUse`/`Stop` are fire-and-forget. Each hook is timeout-bounded (default 10s). Hooks run in every mode, including auto.
+
 ## Safety stance
 
-`cc` is intentionally unsandboxed and has **no permission-approval engine** — that is a deliberate non-goal to keep the core small. In normal mode, tool calls run as you invoke them; `--auto`/`--yolo` additionally skips any pausing and runs to completion. Run it in a directory you trust, prefer `--plan` or `--no-tools` for untrusted work, and review what auto mode does. `Esc` (TUI) and `Ctrl+C` (headless) abort an in-flight run.
+`cc` is intentionally unsandboxed. By default there is no automatic gating — tool calls run as you invoke them; `--auto`/`--yolo` additionally skips any pausing and runs to completion. Run it in a directory you trust, prefer `--plan` or `--no-tools` for untrusted work, and review what auto mode does. `Esc` (TUI) and `Ctrl+C` (headless) abort an in-flight run.
 
-For a lighter-weight check than a full permission engine, the TUI supports an opt-in **confirm gate** via the `confirm` config key:
+For tighter control there are three opt-in gates that compose in a single pre-tool pipeline (`PreToolUse` hooks → AI permission check → human confirm): the **hooks** for deterministic policy, the **AI permission engine** for model-judged safety, and the **confirm gate** below for a human checkpoint. Auto/`--yolo` bypass the AI + human gates (hooks still run).
+
+For a lighter-weight check than the AI engine, the TUI supports an opt-in **confirm gate** via the `confirm` config key (used only when `permission.mode` is `"off"` — the AI engine supersedes it):
 
 ```json
 { "confirm": "writes" }
@@ -159,7 +206,7 @@ For a lighter-weight check than a full permission engine, the TUI supports an op
 - `"bash"` — pause and show the full command before each `bash` run.
 - `"writes"` — pause before `bash`, `write_file`, and `edit_file` (showing the command or a diff preview), with `[y]es · [n]o · [a]lways (this session)`.
 
-Auto mode and `--yolo` bypass the gate; plan mode never reaches mutating tools. Headless is non-interactive, so `confirm` is ignored there — use `--auto` to grant write/bash access unattended.
+Auto mode and `--yolo` bypass the gate; plan mode never reaches mutating tools. Headless is non-interactive, so `confirm` is ignored there — use `--auto` to grant write/bash access unattended, or `permission.mode: "ai"` to gate it automatically.
 
 ## Slash commands (TUI)
 

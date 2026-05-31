@@ -107,18 +107,37 @@ export interface AgentOptions {
   /** Abort in-flight work. Checked at each turn boundary and during streaming. */
   signal?: AbortSignal;
   /**
-   * Optional confirmation gate. Called just before a mutating (non-read-only)
-   * tool runs; resolving `false` declines the call — the model gets a
-   * "user declined" tool_result and can adapt, and the tool never executes.
-   * Read-only tools are never gated. The TUI supplies this to implement the
-   * confirm-before-running box; headless leaves it undefined so every tool runs.
-   * Keeping it a caller-supplied hook keeps this loop a pure engine.
+   * Optional approval gate. Called just before a mutating (non-read-only) tool
+   * runs; resolving `{ allow: false }` declines the call — the model gets the
+   * `reason` (or a default "user declined") as an error tool_result and can adapt,
+   * and the tool never executes. Read-only tools are never gated. The front-ends
+   * supply this to compose the AI permission check and the human confirm box;
+   * leaving it undefined runs every mutating tool. Keeping it a caller-supplied
+   * hook keeps this loop a pure engine.
    */
-  confirm?(call: {
+  gate?(call: {
     id: string;
     name: string;
     input: unknown;
-  }): Promise<boolean>;
+  }): Promise<{ allow: boolean; reason?: string }>;
+  /**
+   * Optional PreToolUse hook, run before EVERY tool (read-only included) and in
+   * every mode. Resolving `{ allow: false }` blocks the call with `reason`. Runs
+   * before `gate`, so a hook can veto a call the gate would otherwise see.
+   */
+  preToolUse?(call: {
+    id: string;
+    name: string;
+    input: unknown;
+  }): Promise<{ allow: boolean; reason?: string }>;
+  /**
+   * Optional PostToolUse hook, run after every tool finishes (observational).
+   * Errors are swallowed by the caller; it never affects the loop.
+   */
+  postToolUse?(
+    call: { id: string; name: string; input: unknown },
+    result: { content: string; isError: boolean },
+  ): Promise<void>;
 }
 
 export type AgentEvent =
@@ -324,37 +343,64 @@ export async function* runAgent(
         input: call.input,
       };
 
-      // ── confirm gate: pause for caller approval on mutating tools ──
-      // Only mutating (non-read-only) tools are ever gated. A declined call is
-      // reported back to the model as an error tool_result so it can adapt.
-      if (opts.confirm) {
+      // Deny a call without running it: report `reason` to the model as an error
+      // tool_result so it can adapt, and move on to the next call.
+      const deny = (reason: string): void => {
+        results.push({
+          type: "tool_result",
+          tool_use_id: call.id,
+          content: reason,
+          is_error: true,
+        });
+      };
+
+      // ── 1. PreToolUse hooks: deterministic policy, every tool, every mode ──
+      if (opts.preToolUse) {
+        const h = await opts.preToolUse(call);
+        if (signal?.aborted) {
+          yield { type: "done", reason: "aborted" };
+          return;
+        }
+        if (!h.allow) {
+          const reason = h.reason ?? `blocked by a PreToolUse hook`;
+          yield {
+            type: "tool_end",
+            id: call.id,
+            name: call.name,
+            result: reason,
+            isError: true,
+          };
+          deny(reason);
+          continue;
+        }
+      }
+
+      // ── 2/3. Approval gate (AI permission + human confirm): mutating only ──
+      // A declined call is reported back to the model as an error tool_result.
+      if (opts.gate) {
         const tool = toolByName.get(call.name);
         if (tool && !tool.readOnly) {
-          const ok = await opts.confirm(call);
+          const g = await opts.gate(call);
           if (signal?.aborted) {
             yield { type: "done", reason: "aborted" };
             return;
           }
-          if (!ok) {
-            const declined = `user declined to run ${call.name}`;
+          if (!g.allow) {
+            const reason = g.reason ?? `user declined to run ${call.name}`;
             yield {
               type: "tool_end",
               id: call.id,
               name: call.name,
-              result: declined,
+              result: reason,
               isError: true,
             };
-            results.push({
-              type: "tool_result",
-              tool_use_id: call.id,
-              content: declined,
-              is_error: true,
-            });
+            deny(reason);
             continue;
           }
         }
       }
 
+      // ── 4. run the tool ──
       const { content, isError, diff } = await runToolCall(
         toolByName,
         mode,
@@ -374,6 +420,11 @@ export async function* runAgent(
         content,
         is_error: isError,
       });
+
+      // ── 5. PostToolUse hooks: observational, never block the loop ──
+      if (opts.postToolUse) {
+        await opts.postToolUse(call, { content, isError }).catch(() => {});
+      }
     }
     messages.push({ role: "user", content: results });
   }
