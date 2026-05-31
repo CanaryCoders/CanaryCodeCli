@@ -12,6 +12,7 @@
 
 import type { AgentMode } from "./agent.ts";
 import { parseLevel, type ThinkingLevel } from "./thinking.ts";
+import { fuzzyScore, fuzzyRank } from "./fuzzy.ts";
 
 /** A command broken into its name (without the leading slash) and trailing argument. */
 export interface ParsedCommand {
@@ -145,4 +146,94 @@ export function dispatchCommand(input: string): CommandAction {
       // Unreachable while COMMANDS and this switch stay in sync.
       return { kind: "error", message: `unhandled command: /${spec.name}` };
   }
+}
+
+// ── slash autocomplete ─────────────────────────────────────────────────────────
+//
+// The TUI shows an fzf-style popover while the input starts with "/". This layer
+// is pure and data-driven: given the raw input and a context of known parameter
+// values, it returns ranked `Completion`s. The first token fuzzy-matches the
+// command registry (name + aliases + description); once a command word and a
+// space are present, we switch to that command's parameter source (model ids,
+// thinking levels, recent sessions). Keeping it here — beside the registry it
+// draws on — means both the matcher and the dispatcher share one source of truth.
+
+/** A single autocomplete suggestion. */
+export interface Completion {
+  /** The full input line to replace the prompt with when accepted. A trailing
+   *  space signals "now complete a parameter" (keeps the popover open). */
+  value: string;
+  /** Primary display text (the command form, or the parameter value). */
+  label: string;
+  /** Dim secondary hint (the command description, or a session title). */
+  description?: string;
+}
+
+/** Known parameter values the host can supply for parameter completion. */
+export interface CompletionContext {
+  /** Configured model ids (for `/model`). */
+  models: string[];
+  /** Recent sessions, newest first (for `/resume`). */
+  sessions: { id: string; title: string | null }[];
+}
+
+/** The thinking levels `/think` accepts, in increasing order. */
+const THINK_LEVELS: ThinkingLevel[] = ["off", "think", "think-hard", "ultrathink"];
+
+/** Parameter-value candidates for a (canonical) command name, pre-fuzzy-filter. */
+function paramValues(name: string, ctx: CompletionContext): Completion[] {
+  switch (name) {
+    case "model":
+      return ctx.models.map((id) => ({ value: `/model ${id}`, label: id }));
+    case "think":
+      return THINK_LEVELS.map((l) => ({ value: `/think ${l}`, label: l }));
+    case "resume":
+      return ctx.sessions.map((s) => ({
+        value: `/resume ${s.id}`,
+        label: s.id.slice(0, 8),
+        description: s.title ?? undefined,
+      }));
+    default:
+      return [];
+  }
+}
+
+/**
+ * Compute autocomplete suggestions for a raw input line. Returns [] when the
+ * line is not a `/`-command in progress. The first token (no space yet) ranks
+ * commands; after a command word + space, ranks that command's parameters.
+ */
+export function completions(input: string, ctx: CompletionContext): Completion[] {
+  if (!input.startsWith("/")) return [];
+  const rest = input.slice(1);
+  const space = rest.search(/\s/);
+
+  // First token still being typed → complete the command name.
+  if (space === -1) {
+    const q = rest;
+    const scored = COMMANDS.map((c) => {
+      // Score against the name, any alias, and the description; keep the best.
+      const keys = [c.name, ...(c.aliases ?? []), c.description];
+      let best = -Infinity;
+      for (const k of keys) {
+        const m = fuzzyScore(q, k);
+        if (m && m.score > best) best = m.score;
+      }
+      return { c, best };
+    }).filter((x) => x.best > -Infinity);
+    scored.sort((a, b) => b.best - a.best);
+    return scored.map(({ c }) => ({
+      value: `/${c.name}${c.usage ? " " : ""}`,
+      label: `/${c.name}${c.usage ? ` ${c.usage}` : ""}`,
+      description: c.description,
+    }));
+  }
+
+  // Command word complete → complete its parameter values.
+  const name = rest.slice(0, space).toLowerCase();
+  const argQuery = rest.slice(space + 1).trimStart();
+  const spec = BY_NAME.get(name);
+  if (!spec) return [];
+  const values = paramValues(spec.name, ctx);
+  return fuzzyRank(argQuery, values, (v) => v.label).map((r) => r.item);
 }

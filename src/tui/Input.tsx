@@ -11,7 +11,7 @@
 // tested without a render; the component is a thin shell that mirrors the cursor
 // in state and renders the value with a fake inverse-block cursor (no chalk dep).
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Box, Text, useInput } from "ink";
 
 // ── pure editing reducer ──────────────────────────────────────────────────────
@@ -65,14 +65,28 @@ function insert(value: string, cursor: number, text: string): InputResult {
   return { type: "update", value: next, cursor: cursor + text.length };
 }
 
+/** Options that let the host suppress keys it handles itself (e.g. an open popover). */
+export interface ReduceOptions {
+  /** When true, the autocomplete popover owns Enter and Up/Down — the input
+   *  ignores them (Shift+Enter still inserts a newline, editing keys still work). */
+  capture?: boolean;
+}
+
 /** Decide what a keypress does to the input. Pure — no Ink, no React. */
-export function reduceInput(state: InputState, input: string, key: InputKey): InputResult {
+export function reduceInput(
+  state: InputState,
+  input: string,
+  key: InputKey,
+  opts: ReduceOptions = {},
+): InputResult {
   const value = state.value;
   const cursor = Math.min(Math.max(state.cursor, 0), value.length);
 
   // Plain Enter submits; Shift+Enter (or meta+return) inserts a newline instead.
+  // While the popover captures keys, plain Enter is theirs (accept) — ignore it.
   if (key.return) {
     if (key.shift || key.meta) return insert(value, cursor, "\n");
+    if (opts.capture) return { type: "none" };
     return { type: "submit", value };
   }
 
@@ -82,6 +96,8 @@ export function reduceInput(state: InputState, input: string, key: InputKey): In
   if (key.rightArrow) {
     return cursor < value.length ? { type: "update", value, cursor: cursor + 1 } : { type: "none" };
   }
+  // While the popover captures keys, Up/Down move the selection, not the cursor.
+  if ((key.upArrow || key.downArrow) && opts.capture) return { type: "none" };
   if (key.upArrow || key.downArrow) {
     const { line, col } = cursorLineCol(value, cursor);
     const lines = value.split("\n");
@@ -113,6 +129,11 @@ interface MultilineInputProps {
   onSubmit: (value: string) => void;
   placeholder?: string;
   isActive?: boolean;
+  /** When true, the autocomplete popover owns Enter/Up/Down (see reduceInput). */
+  capture?: boolean;
+  /** A counter the host bumps when it sets `value` externally (e.g. accepting a
+   *  completion); a change jumps the cursor to the end of the new value. */
+  cursorNonce?: number;
 }
 
 export function MultilineInput({
@@ -121,13 +142,23 @@ export function MultilineInput({
   onSubmit,
   placeholder = "",
   isActive = true,
+  capture = false,
+  cursorNonce = 0,
 }: MultilineInputProps): React.ReactElement {
   const [cursor, setCursor] = useState(value.length);
+  // When the host replaces `value` out-of-band (completion accept), snap the
+  // cursor to the end. Adjusting state during render is React's sanctioned way
+  // to derive from a changed prop without an effect.
+  const lastNonceRef = useRef(cursorNonce);
+  if (cursorNonce !== lastNonceRef.current) {
+    lastNonceRef.current = cursorNonce;
+    setCursor(value.length);
+  }
   const effectiveCursor = Math.min(cursor, value.length);
 
   useInput(
     (input, key) => {
-      const result = reduceInput({ value, cursor: effectiveCursor }, input, key);
+      const result = reduceInput({ value, cursor: effectiveCursor }, input, key, { capture });
       if (result.type === "submit") {
         onSubmit(result.value);
       } else if (result.type === "update") {

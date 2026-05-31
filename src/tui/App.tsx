@@ -29,7 +29,7 @@ import { readSkillTool, type Skill } from "../skills.ts";
 import { spawnAgentTool, Semaphore } from "../subagents.ts";
 import type { McpConnection } from "../mcp.ts";
 import { SessionStore } from "../session.ts";
-import { dispatchCommand } from "../commands.ts";
+import { dispatchCommand, completions, type CompletionContext } from "../commands.ts";
 import {
   budgetFor,
   describeLevel,
@@ -38,6 +38,7 @@ import {
 } from "../thinking.ts";
 import { ItemView, type Item, type ItemInput } from "./Message.tsx";
 import { PlanView, planChoiceForKey } from "./Plan.tsx";
+import { Complete } from "./Complete.tsx";
 
 // ── The component ────────────────────────────────────────────────────────────────
 // The transcript is rendered as a flat list of typed `Item`s (see Message.tsx).
@@ -60,6 +61,16 @@ interface AppProps {
   noTools: boolean;
   /** Startup notes (context/skills/mcp) to show in the scrollback. */
   startupNotes: string[];
+}
+
+/** Gather the data the `/` autocomplete draws parameter values from. */
+function buildCompletionContext(config: Config, store: SessionStore): CompletionContext {
+  const models: string[] = [];
+  for (const pc of Object.values(config.providers)) {
+    for (const m of pc.models ?? []) models.push(m.id);
+  }
+  const sessions = store.listSessions(20).map((s) => ({ id: s.id, title: s.title }));
+  return { models, sessions };
 }
 
 export function App(props: AppProps): React.ReactElement {
@@ -100,6 +111,19 @@ export function App(props: AppProps): React.ReactElement {
     pendingPlanRef.current = text;
     setPendingPlan(text);
   };
+
+  // `/` autocomplete popover. `selected` is the highlighted row; `dismissed`
+  // hides it (after Esc, or accepting a no-arg command) until the input changes.
+  // `cursorNonce` is bumped when we set the input out-of-band so the MultilineInput
+  // snaps its cursor to the end. The refs mirror live state for the once-captured
+  // `useInput` closure that drives navigation/accept.
+  const [selected, setSelected] = useState(0);
+  const [completeDismissed, setCompleteDismissed] = useState(false);
+  const [cursorNonce, setCursorNonce] = useState(0);
+  const completeOpenRef = useRef(false);
+  const completionsRef = useRef<ReturnType<typeof completions>>([]);
+  const selRef = useRef(0);
+  const completeDismissedRef = useRef(false);
 
   const push = (item: ItemInput) =>
     setHistory((prev) => [...prev, { ...item, id: nextId() } as Item]);
@@ -308,6 +332,40 @@ export function App(props: AppProps): React.ReactElement {
     note(`mode → ${next}`);
   }
 
+  // ── `/` autocomplete popover handlers ──
+  // The list is recomputed each render from `input`; these drive it from the
+  // (stale-closure) key handler via the mirrored refs. Typing reopens it (any
+  // input change clears `dismissed` and resets the selection to the top).
+  function handleInputChange(value: string): void {
+    setInput(value);
+    setSelected(0);
+    if (completeDismissedRef.current) {
+      completeDismissedRef.current = false;
+      setCompleteDismissed(false);
+    }
+  }
+  function moveSel(delta: number): void {
+    const n = completionsRef.current.length;
+    if (n === 0) return;
+    setSelected((s) => ((s + delta) % n + n) % n); // wrap both ends
+  }
+  function dismissComplete(): void {
+    completeDismissedRef.current = true;
+    setCompleteDismissed(true);
+  }
+  function acceptCompletion(): void {
+    const choice = completionsRef.current[selRef.current];
+    if (!choice) return;
+    setInput(choice.value);
+    setCursorNonce((n) => n + 1);
+    setSelected(0);
+    // A trailing space means "now complete a parameter" → keep the popover open;
+    // otherwise the command/value is complete → close it (Enter then submits).
+    const keepOpen = choice.value.endsWith(" ");
+    completeDismissedRef.current = !keepOpen;
+    setCompleteDismissed(!keepOpen);
+  }
+
   // ── switch the active model (/model <id>) ──
   function switchModel(id: string): void {
     const resolved = resolveModel(props.config, id);
@@ -439,9 +497,20 @@ export function App(props: AppProps): React.ReactElement {
       handleCtrlC();
       return;
     }
-    if (key.escape && controllerRef.current) {
-      controllerRef.current.abort();
+    if (key.escape) {
+      // Esc dismisses the autocomplete popover first, otherwise aborts a request.
+      if (completeOpenRef.current) dismissComplete();
+      else if (controllerRef.current) controllerRef.current.abort();
       return;
+    }
+    // Autocomplete popover navigation: ↑/↓ or Ctrl-P/Ctrl-N move, Tab/Enter accept.
+    // Other keys fall through so typing keeps filtering the list.
+    if (completeOpenRef.current) {
+      if (key.upArrow || (key.ctrl && _input === "p")) return moveSel(-1);
+      if (key.downArrow || (key.ctrl && _input === "n")) return moveSel(1);
+      if ((key.tab && !key.shift) || (key.return && !key.shift && !key.meta)) {
+        return acceptCompletion();
+      }
     }
     if (pendingPlanRef.current && !key.ctrl && !key.meta) {
       const choice = planChoiceForKey(_input);
@@ -460,6 +529,19 @@ export function App(props: AppProps): React.ReactElement {
   const modeColor = mode === "plan" ? "cyan" : mode === "auto" ? "yellow" : "green";
   const thinkLabel = thinking === "off" ? "no-think" : describeLevel(thinking);
 
+  // ── `/` autocomplete suggestions, recomputed each render from the input ──
+  // Only while the prompt is an in-progress slash command and the popover isn't
+  // dismissed/busy/blocked by a plan. The refs are mirrored for the key handler.
+  const completeActive = !busy && !pendingPlan && input.startsWith("/") && !completeDismissed;
+  const suggestions = completeActive
+    ? completions(input, buildCompletionContext(props.config, props.store))
+    : [];
+  const completeOpen = suggestions.length > 0;
+  const sel = completeOpen ? Math.min(Math.max(selected, 0), suggestions.length - 1) : 0;
+  completeOpenRef.current = completeOpen;
+  completionsRef.current = suggestions;
+  selRef.current = sel;
+
   return (
     <Box flexDirection="column">
       <Static items={history}>
@@ -477,20 +559,25 @@ export function App(props: AppProps): React.ReactElement {
       {pendingPlan ? (
         <PlanView plan={pendingPlan} />
       ) : (
-        <Box marginTop={1}>
-          {busy ? (
-            <Text color="yellow">
-              <Spinner type="dots" />{" "}
-            </Text>
-          ) : (
-            <Text color="cyan">{"› "}</Text>
-          )}
-          <MultilineInput
-            value={input}
-            onChange={setInput}
-            onSubmit={onSubmit}
-            placeholder={busy ? "working… (Esc to abort)" : "message, or /help · Shift+Enter for newline"}
-          />
+        <Box flexDirection="column" marginTop={1}>
+          {completeOpen ? <Complete items={suggestions} selected={sel} /> : null}
+          <Box>
+            {busy ? (
+              <Text color="yellow">
+                <Spinner type="dots" />{" "}
+              </Text>
+            ) : (
+              <Text color="cyan">{"› "}</Text>
+            )}
+            <MultilineInput
+              value={input}
+              onChange={handleInputChange}
+              onSubmit={onSubmit}
+              capture={completeOpen}
+              cursorNonce={cursorNonce}
+              placeholder={busy ? "working… (Esc to abort)" : "message, or /help · Shift+Enter for newline"}
+            />
+          </Box>
         </Box>
       )}
 
