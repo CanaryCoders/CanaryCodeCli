@@ -25,6 +25,8 @@ interface Args {
   noTools: boolean;
   /** --plan: read-only planning mode — investigate, emit a structured plan, stop. */
   plan: boolean;
+  /** --auto (alias --yolo): autonomous multi-turn execution, capped at autoMaxTurns. */
+  auto: boolean;
   /** --model <id>: override the configured model. */
   model?: string;
   /** --think <level>: off | think | think-hard | ultrathink (aliases accepted). */
@@ -38,7 +40,7 @@ interface Args {
 
 /** Parse argv into a small, explicit shape. Unknown flags are ignored for now. */
 function parseArgs(argv: string[]): Args {
-  const out: Args = { help: false, version: false, noTools: false, plan: false };
+  const out: Args = { help: false, version: false, noTools: false, plan: false, auto: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     switch (a) {
@@ -58,6 +60,10 @@ function parseArgs(argv: string[]): Args {
         break;
       case "--plan":
         out.plan = true;
+        break;
+      case "--auto":
+      case "--yolo":
+        out.auto = true;
         break;
       case "--model":
         out.model = argv[++i];
@@ -103,6 +109,8 @@ function printUsage(): void {
       "  --think [level]    extended thinking: off | think | think-hard | ultrathink",
       "                     (also triggered by a keyword in the prompt)",
       "  --plan             planning mode: investigate read-only, emit a plan, stop",
+      "  --auto, --yolo     autonomous mode: run to completion, no confirmations,",
+      "                     capped at autoMaxTurns (default 25)",
       "  --no-tools         disable tools (read-only quick Q&A)",
       "  --resume [id]      continue a saved session (most recent if id omitted);",
       "                     bare --resume with no prompt lists recent sessions",
@@ -214,8 +222,15 @@ async function runHeadless(args: Args): Promise<number> {
   }
 
   const modelName = resolved.model.name ?? resolved.model.id;
-  // Plan mode runs read-only: investigate, emit a structured plan, stop.
-  const mode: AgentMode = args.plan ? "plan" : "normal";
+  // Plan mode runs read-only (investigate, emit a plan, stop); auto mode runs
+  // autonomously to completion. They are mutually exclusive — plan wins if both given.
+  if (args.plan && args.auto) {
+    process.stderr.write("note: --plan and --auto conflict; using --plan (read-only)\n");
+  }
+  const mode: AgentMode = args.plan ? "plan" : args.auto ? "auto" : "normal";
+  // Turn cap: auto mode uses the configured autonomy budget; otherwise a fixed
+  // runaway guard. Surfaced in the max_turns message below.
+  const turnCap = mode === "auto" ? config.autoMaxTurns : 25;
   // web_search is built from config (backend + key) and joins the static tool set.
   // In plan mode the loop gates non-read-only tools, but we also withhold them from
   // the model entirely so it only sees what it can actually use.
@@ -223,6 +238,7 @@ async function runHeadless(args: Args): Promise<number> {
   if (mode === "plan") tools = tools.filter((t) => t.readOnly);
   const system = systemForMode(SYSTEM_PROMPT, mode);
   if (mode === "plan") process.stderr.write("📋 plan mode (read-only)\n");
+  if (mode === "auto") process.stderr.write(`🤖 auto mode (autonomous · max ${turnCap} turns)\n`);
 
   // ── resolve the thinking level (explicit flag wins, else a prompt keyword) ──
   const thinking = resolveThinking({ flag: args.think, prompt });
@@ -294,6 +310,7 @@ async function runHeadless(args: Args): Promise<number> {
       messages,
       tools,
       mode,
+      maxTurns: turnCap,
       thinkingBudget,
       compactAtTokens: config.compactAtTokens,
       signal: controller.signal,
@@ -333,7 +350,15 @@ async function runHeadless(args: Args): Promise<number> {
         case "done":
           closeThinking();
           process.stdout.write("\n");
-          if (ev.reason === "aborted") sawError = true;
+          if (ev.reason === "aborted") {
+            sawError = true;
+          } else if (ev.reason === "max_turns") {
+            // Cap reached before the model finished — the task may be incomplete.
+            sawError = true;
+            process.stderr.write(
+              `⚠ stopped after ${turnCap} turns (the turn limit) before the model signalled it was done.\n`,
+            );
+          }
           break;
       }
     }

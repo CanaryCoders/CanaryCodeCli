@@ -40,9 +40,28 @@ export const PLAN_SYSTEM_PROMPT = [
   "After emitting the plan, stop. The user will review and accept it before any changes are made.",
 ].join("\n");
 
-/** Compose the system prompt for a mode. Plan mode appends the planning rules. */
+/**
+ * Auto-mode instructions appended to the system prompt. In auto mode the agent
+ * runs autonomously with no human between turns: it should drive the task to
+ * completion itself rather than pausing to ask, and never wait for confirmation
+ * before editing files or running commands. The loop enforces a hard turn cap
+ * (`autoMaxTurns`) so this autonomy can't run away.
+ */
+export const AUTO_SYSTEM_PROMPT = [
+  "",
+  "── AUTO MODE ──",
+  "You are running autonomously with no human in the loop between turns. Work the task",
+  "through to completion: take each next step yourself instead of asking the user what to do,",
+  "and do not pause for confirmation before editing files or running commands. Only stop when",
+  "the task is fully done or you are genuinely blocked. You operate under a turn limit, so be",
+  "efficient — avoid redundant tool calls and converge quickly.",
+].join("\n");
+
+/** Compose the system prompt for a mode: plan/auto append their extra rules. */
 export function systemForMode(base: string, mode: AgentMode): string {
-  return mode === "plan" ? `${base}\n${PLAN_SYSTEM_PROMPT}` : base;
+  if (mode === "plan") return `${base}\n${PLAN_SYSTEM_PROMPT}`;
+  if (mode === "auto") return `${base}\n${AUTO_SYSTEM_PROMPT}`;
+  return base;
 }
 
 export interface AgentOptions {
