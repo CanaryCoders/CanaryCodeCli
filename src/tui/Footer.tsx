@@ -49,7 +49,9 @@ const SEP = " · ";
 /** Total rendered width of a segment list (segments joined by `SEP`). */
 function rowWidth(segs: Seg[]): number {
   if (segs.length === 0) return 0;
-  return segs.reduce((sum, s) => sum + s.width, 0) + (segs.length - 1) * SEP.length;
+  return (
+    segs.reduce((sum, s) => sum + s.width, 0) + (segs.length - 1) * SEP.length
+  );
 }
 
 /**
@@ -59,7 +61,9 @@ function rowWidth(segs: Seg[]): number {
  */
 export function fitSegments(segs: Seg[], cols: number): Seg[] {
   const dropped = new Set<string>();
-  const droppable = segs.filter((s) => s.prio > 0).sort((a, b) => b.prio - a.prio);
+  const droppable = segs
+    .filter((s) => s.prio > 0)
+    .sort((a, b) => b.prio - a.prio);
   for (const cand of droppable) {
     if (rowWidth(segs.filter((s) => !dropped.has(s.key))) <= cols) break;
     dropped.add(cand.key);
@@ -81,18 +85,47 @@ export function Footer(props: FooterProps): React.ReactElement {
       width: props.mode.length + 2,
       prio: 0,
       node: (
-        <Text backgroundColor={tint(props.modeColor)} color={tint("black")} bold>
+        <Text
+          backgroundColor={tint(props.modeColor)}
+          color={tint("black")}
+          bold
+        >
           {` ${props.mode} `}
         </Text>
       ),
     },
-    { key: "model", width: props.modelLabel.length, prio: 5, node: <Text dimColor>{props.modelLabel}</Text> },
-    { key: "think", width: props.thinkLabel.length, prio: 4, node: <Text dimColor>{props.thinkLabel}</Text> },
-    { key: "tokens", width: tokText.length, prio: 3, node: <Text dimColor>{tokText}</Text> },
-    { key: "cost", width: costText.length, prio: 1, node: <Text dimColor>{costText}</Text> },
+    {
+      key: "model",
+      width: props.modelLabel.length,
+      prio: 5,
+      node: <Text dimColor>{props.modelLabel}</Text>,
+    },
+    {
+      key: "think",
+      width: props.thinkLabel.length,
+      prio: 4,
+      node: <Text dimColor>{props.thinkLabel}</Text>,
+    },
+    {
+      key: "tokens",
+      width: tokText.length,
+      prio: 3,
+      node: <Text dimColor>{tokText}</Text>,
+    },
+    {
+      key: "cost",
+      width: costText.length,
+      prio: 1,
+      node: <Text dimColor>{costText}</Text>,
+    },
   ];
   if (props.verbose) {
-    segs.push({ key: "verbose", width: verboseText.length, prio: 2, node: <Text color={tint("cyan")}>{verboseText}</Text> });
+    segs.push({
+      key: "verbose",
+      width: verboseText.length,
+      prio: 2,
+      node: <Text color={tint("cyan")}>{verboseText}</Text>,
+    });
   }
 
   const kept = fitSegments(segs, cols);

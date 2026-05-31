@@ -37,7 +37,8 @@ export interface MdLine {
 /** The styling carried into a nested inline span (bold containing italic, etc.). */
 type Style = Omit<Span, "text">;
 
-const isWordChar = (c: string | undefined): boolean => c !== undefined && /[A-Za-z0-9]/.test(c);
+const isWordChar = (c: string | undefined): boolean =>
+  c !== undefined && /[A-Za-z0-9]/.test(c);
 
 /**
  * Parse one line of inline markdown into styled spans under a base style.
@@ -64,7 +65,11 @@ export function parseInline(text: string, base: Style = {}): Span[] {
       const close = text.indexOf("`", i + 1);
       if (close > i + 1) {
         flush();
-        spans.push({ text: text.slice(i + 1, close), ...base, color: "yellow" });
+        spans.push({
+          text: text.slice(i + 1, close),
+          ...base,
+          color: "yellow",
+        });
         i = close + 1;
         continue;
       }
@@ -76,7 +81,9 @@ export function parseInline(text: string, base: Style = {}): Span[] {
       const close = guarded ? -1 : text.indexOf(two, i + 2);
       if (close > i + 1 && !(two === "__" && isWordChar(text[close + 2]))) {
         flush();
-        spans.push(...parseInline(text.slice(i + 2, close), { ...base, bold: true }));
+        spans.push(
+          ...parseInline(text.slice(i + 2, close), { ...base, bold: true }),
+        );
         i = close + 2;
         continue;
       }
@@ -87,7 +94,12 @@ export function parseInline(text: string, base: Style = {}): Span[] {
       const close = text.indexOf("~~", i + 2);
       if (close > i + 1) {
         flush();
-        spans.push(...parseInline(text.slice(i + 2, close), { ...base, strikethrough: true }));
+        spans.push(
+          ...parseInline(text.slice(i + 2, close), {
+            ...base,
+            strikethrough: true,
+          }),
+        );
         i = close + 2;
         continue;
       }
@@ -100,7 +112,9 @@ export function parseInline(text: string, base: Style = {}): Span[] {
       const close = guarded ? -1 : text.indexOf(c, i + 1);
       if (close > i + 1 && !(c === "_" && isWordChar(text[close + 1]))) {
         flush();
-        spans.push(...parseInline(text.slice(i + 1, close), { ...base, italic: true }));
+        spans.push(
+          ...parseInline(text.slice(i + 1, close), { ...base, italic: true }),
+        );
         i = close + 1;
         continue;
       }
@@ -111,7 +125,9 @@ export function parseInline(text: string, base: Style = {}): Span[] {
       const m = /^\[([^\]]*)\]\(([^)\s]+)\)/.exec(text.slice(i));
       if (m) {
         flush();
-        spans.push(...parseInline(m[1]!, { ...base, underline: true, color: "blue" }));
+        spans.push(
+          ...parseInline(m[1]!, { ...base, underline: true, color: "blue" }),
+        );
         spans.push({ text: ` (${m[2]})`, ...base, dim: true });
         i += m[0]!.length;
         continue;
@@ -166,7 +182,12 @@ export function parseMarkdown(src: string): MdLine[] {
 
     const q = QUOTE.exec(raw);
     if (q) {
-      out.push({ spans: [{ text: "│ ", dim: true }, ...parseInline(q[1]!, { dim: true })] });
+      out.push({
+        spans: [
+          { text: "│ ", dim: true },
+          ...parseInline(q[1]!, { dim: true }),
+        ],
+      });
       continue;
     }
 
@@ -179,7 +200,9 @@ export function parseMarkdown(src: string): MdLine[] {
 
     const n = NUMBERED.exec(raw);
     if (n) {
-      out.push({ spans: [{ text: `${n[1]}${n[2]}${n[3]} ` }, ...parseInline(n[4]!, {})] });
+      out.push({
+        spans: [{ text: `${n[1]}${n[2]}${n[3]} ` }, ...parseInline(n[4]!, {})],
+      });
       continue;
     }
 

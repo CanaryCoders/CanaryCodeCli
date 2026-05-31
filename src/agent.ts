@@ -7,9 +7,9 @@
 // headless mode, Ink components in the TUI. The conversation `messages` array is
 // mutated in place so the caller keeps the full transcript for persistence.
 
-import type { Message, ContentBlock, Provider, ToolDef } from "./provider.ts";
-import type { Tool } from "./tools.ts";
 import type { Diff } from "./diff.ts";
+import type { ContentBlock, Message, Provider, ToolDef } from "./provider.ts";
+import type { Tool } from "./tools.ts";
 
 export type AgentMode = "normal" | "plan" | "auto";
 
@@ -100,17 +100,33 @@ export interface AgentOptions {
    * confirm-before-running box; headless leaves it undefined so every tool runs.
    * Keeping it a caller-supplied hook keeps this loop a pure engine.
    */
-  confirm?(call: { id: string; name: string; input: unknown }): Promise<boolean>;
+  confirm?(call: {
+    id: string;
+    name: string;
+    input: unknown;
+  }): Promise<boolean>;
 }
 
 export type AgentEvent =
   | { type: "text"; text: string }
   | { type: "thinking"; text: string }
   | { type: "tool_start"; id: string; name: string; input: unknown }
-  | { type: "tool_end"; id: string; name: string; result: string; isError: boolean; diff?: Diff }
+  | {
+      type: "tool_end";
+      id: string;
+      name: string;
+      result: string;
+      isError: boolean;
+      diff?: Diff;
+    }
   | { type: "usage"; inputTokens: number; outputTokens: number }
   | { type: "turn_end"; stopReason?: string }
-  | { type: "compaction"; beforeTokens: number; afterTokens: number; summarized: number }
+  | {
+      type: "compaction";
+      beforeTokens: number;
+      afterTokens: number;
+      summarized: number;
+    }
   | { type: "done"; reason: "stop" | "max_turns" | "aborted" };
 
 /** Strip a Tool down to the provider-facing `ToolDef` (no executor). */
@@ -130,7 +146,9 @@ interface CollectedTurn {
  * Returns when the model produces a reply with no tool calls (`stop`), the turn
  * cap is reached (`max_turns`), or the signal aborts (`aborted`).
  */
-export async function* runAgent(opts: AgentOptions): AsyncGenerator<AgentEvent> {
+export async function* runAgent(
+  opts: AgentOptions,
+): AsyncGenerator<AgentEvent> {
   const { provider, model, system, messages, tools, signal } = opts;
   const mode: AgentMode = opts.mode ?? "normal";
   const maxTurns = opts.maxTurns ?? 25;
@@ -149,7 +167,13 @@ export async function* runAgent(opts: AgentOptions): AsyncGenerator<AgentEvent> 
     if (compactAtTokens > 0) {
       const beforeTokens = estimateTokens(messages, system);
       if (beforeTokens > compactAtTokens) {
-        const result = await compactConversation({ provider, model, messages, keepRecent, signal });
+        const result = await compactConversation({
+          provider,
+          model,
+          messages,
+          keepRecent,
+          signal,
+        });
         if (result.summarized > 0) {
           yield {
             type: "compaction",
@@ -197,11 +221,24 @@ export async function* runAgent(opts: AgentOptions): AsyncGenerator<AgentEvent> 
         case "tool_use":
           // A tool_use closes any open text block so ordering is preserved.
           flushText();
-          collected.toolUses.push({ id: ev.id, name: ev.name, input: ev.input });
-          collected.blocks.push({ type: "tool_use", id: ev.id, name: ev.name, input: ev.input });
+          collected.toolUses.push({
+            id: ev.id,
+            name: ev.name,
+            input: ev.input,
+          });
+          collected.blocks.push({
+            type: "tool_use",
+            id: ev.id,
+            name: ev.name,
+            input: ev.input,
+          });
           break;
         case "usage":
-          yield { type: "usage", inputTokens: ev.inputTokens, outputTokens: ev.outputTokens };
+          yield {
+            type: "usage",
+            inputTokens: ev.inputTokens,
+            outputTokens: ev.outputTokens,
+          };
           break;
         case "done":
           collected.stopReason = ev.stopReason;
@@ -211,7 +248,8 @@ export async function* runAgent(opts: AgentOptions): AsyncGenerator<AgentEvent> 
     flushText();
     // Record thinking for display continuity; unsigned thinking is dropped by the
     // provider on replay, so it is safe to keep but won't be sent back.
-    if (thinkingBuf) collected.blocks.unshift({ type: "thinking", thinking: thinkingBuf });
+    if (thinkingBuf)
+      collected.blocks.unshift({ type: "thinking", thinking: thinkingBuf });
 
     // Persist the assistant turn (skip an empty one to avoid a malformed message).
     if (collected.blocks.length > 0) {
@@ -232,7 +270,12 @@ export async function* runAgent(opts: AgentOptions): AsyncGenerator<AgentEvent> 
         yield { type: "done", reason: "aborted" };
         return;
       }
-      yield { type: "tool_start", id: call.id, name: call.name, input: call.input };
+      yield {
+        type: "tool_start",
+        id: call.id,
+        name: call.name,
+        input: call.input,
+      };
 
       // ── confirm gate: pause for caller approval on mutating tools ──
       // Only mutating (non-read-only) tools are ever gated. A declined call is
@@ -247,16 +290,39 @@ export async function* runAgent(opts: AgentOptions): AsyncGenerator<AgentEvent> 
           }
           if (!ok) {
             const declined = `user declined to run ${call.name}`;
-            yield { type: "tool_end", id: call.id, name: call.name, result: declined, isError: true };
-            results.push({ type: "tool_result", tool_use_id: call.id, content: declined, is_error: true });
+            yield {
+              type: "tool_end",
+              id: call.id,
+              name: call.name,
+              result: declined,
+              isError: true,
+            };
+            results.push({
+              type: "tool_result",
+              tool_use_id: call.id,
+              content: declined,
+              is_error: true,
+            });
             continue;
           }
         }
       }
 
       const { content, isError, diff } = await runToolCall(tools, mode, call);
-      yield { type: "tool_end", id: call.id, name: call.name, result: content, isError, diff };
-      results.push({ type: "tool_result", tool_use_id: call.id, content, is_error: isError });
+      yield {
+        type: "tool_end",
+        id: call.id,
+        name: call.name,
+        result: content,
+        isError,
+        diff,
+      };
+      results.push({
+        type: "tool_result",
+        tool_use_id: call.id,
+        content,
+        is_error: isError,
+      });
     }
     messages.push({ role: "user", content: results });
   }
@@ -275,9 +341,12 @@ async function runToolCall(
     return { content: `unknown tool: ${call.name}`, isError: true };
   }
   if (mode === "plan" && !tool.readOnly) {
-    return { content: `tool "${call.name}" is blocked in plan mode (read-only)`, isError: true };
+    return {
+      content: `tool "${call.name}" is blocked in plan mode (read-only)`,
+      isError: true,
+    };
   }
-  const input = (call.input ?? {}) as Record<string, any>;
+  const input = (call.input ?? {}) as Record<string, unknown>;
   try {
     const out = await tool.run(input);
     // Tools may return a bare string or a `{ content, diff }` result.
@@ -313,11 +382,18 @@ function renderTranscript(messages: Message[]): string {
           if (b.text.trim()) parts.push(`${m.role}: ${b.text}`);
           break;
         case "tool_use":
-          parts.push(`${m.role} called ${b.name}(${JSON.stringify(b.input).slice(0, 800)})`);
+          parts.push(
+            `${m.role} called ${b.name}(${JSON.stringify(b.input).slice(0, 800)})`,
+          );
           break;
         case "tool_result": {
-          const c = typeof b.content === "string" ? b.content : JSON.stringify(b.content);
-          parts.push(`tool_result${b.is_error ? " (error)" : ""}: ${c.slice(0, 800)}`);
+          const c =
+            typeof b.content === "string"
+              ? b.content
+              : JSON.stringify(b.content);
+          parts.push(
+            `tool_result${b.is_error ? " (error)" : ""}: ${c.slice(0, 800)}`,
+          );
           break;
         }
         // thinking blocks are display-only; omit from the summary input.
@@ -355,7 +431,9 @@ interface CompactOptions {
  * synthetic user message. Returns the number of messages that were summarized
  * away (0 if compaction was skipped or produced no summary). Exported for testing.
  */
-export async function compactConversation(opts: CompactOptions): Promise<{ summarized: number }> {
+export async function compactConversation(
+  opts: CompactOptions,
+): Promise<{ summarized: number }> {
   const { provider, model, messages, keepRecent, signal } = opts;
   const cut = pickCut(messages, keepRecent);
   if (cut === 0) return { summarized: 0 };
@@ -398,11 +476,21 @@ async function summarize(
   const messages: Message[] = [
     {
       role: "user",
-      content: [{ type: "text", text: `Summarize this conversation transcript:\n\n${transcript}` }],
+      content: [
+        {
+          type: "text",
+          text: `Summarize this conversation transcript:\n\n${transcript}`,
+        },
+      ],
     },
   ];
   let out = "";
-  for await (const ev of provider.stream({ model, system: SUMMARIZER_SYSTEM, messages, tools: [] })) {
+  for await (const ev of provider.stream({
+    model,
+    system: SUMMARIZER_SYSTEM,
+    messages,
+    tools: [],
+  })) {
     if (signal?.aborted) break;
     if (ev.type === "text_delta") out += ev.text;
   }

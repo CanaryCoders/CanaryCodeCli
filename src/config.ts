@@ -97,9 +97,15 @@ export function defaultConfig(): Config {
 }
 
 /** Recursively replace "${VAR}" string values with the matching env var. */
-export function interpolateEnv<T>(value: T, env: Record<string, string | undefined> = process.env): T {
+export function interpolateEnv<T>(
+  value: T,
+  env: Record<string, string | undefined> = process.env,
+): T {
   if (typeof value === "string") {
-    return value.replace(/\$\{([A-Z0-9_]+)\}/gi, (_m, name: string) => env[name] ?? "") as unknown as T;
+    return value.replace(
+      /\$\{([A-Z0-9_]+)\}/gi,
+      (_m, name: string) => env[name] ?? "",
+    ) as unknown as T;
   }
   if (Array.isArray(value)) {
     return value.map((v) => interpolateEnv(v, env)) as unknown as T;
@@ -139,7 +145,9 @@ export async function loadConfig(path: string = configPath()): Promise<Config> {
     try {
       raw = await file.text();
     } catch (err) {
-      throw new Error(`cc: cannot read config at ${path}: ${(err as Error).message}`);
+      throw new Error(
+        `cc: cannot read config at ${path}: ${(err as Error).message}`,
+      );
     }
     try {
       user = JSON.parse(raw) as Partial<Config>;
@@ -154,7 +162,9 @@ export async function loadConfig(path: string = configPath()): Promise<Config> {
 export function resolveModel(
   config: Config,
   modelId?: string,
-): { provider: string; providerConfig: ProviderConfig; model: ModelConfig } | undefined {
+):
+  | { provider: string; providerConfig: ProviderConfig; model: ModelConfig }
+  | undefined {
   const wanted = modelId ?? config.model;
   for (const [provider, providerConfig] of Object.entries(config.providers)) {
     for (const model of providerConfig.models ?? []) {

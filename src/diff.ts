@@ -60,10 +60,15 @@ function diffOps(a: string[], b: string[]): DiffLine[] {
   const n = a.length;
   const m = b.length;
   // dp[i][j] = LCS length of a[i:] and b[j:].
-  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  const dp: number[][] = Array.from({ length: n + 1 }, () =>
+    new Array(m + 1).fill(0),
+  );
   for (let i = n - 1; i >= 0; i--) {
     for (let j = m - 1; j >= 0; j--) {
-      dp[i]![j] = a[i] === b[j] ? dp[i + 1]![j + 1]! + 1 : Math.max(dp[i + 1]![j]!, dp[i]![j + 1]!);
+      dp[i]![j] =
+        a[i] === b[j]
+          ? dp[i + 1]![j + 1]! + 1
+          : Math.max(dp[i + 1]![j]!, dp[i]![j + 1]!);
     }
   }
 
@@ -93,7 +98,11 @@ function diffOps(a: string[], b: string[]): DiffLine[] {
  * `context` lines of surrounding context (default 3). Adjacent change regions
  * within `2*context` lines are merged into one hunk, as in real unified diffs.
  */
-export function computeDiff(oldText: string, newText: string, context = 3): Diff {
+export function computeDiff(
+  oldText: string,
+  newText: string,
+  context = 3,
+): Diff {
   const ops = diffOps(toLines(oldText), toLines(newText));
 
   let added = 0;
@@ -105,7 +114,8 @@ export function computeDiff(oldText: string, newText: string, context = 3): Diff
 
   // Indices of the changed ops, so we know which context lines to keep.
   const changeIdx: number[] = [];
-  for (let k = 0; k < ops.length; k++) if (ops[k]!.type !== "context") changeIdx.push(k);
+  for (let k = 0; k < ops.length; k++)
+    if (ops[k]!.type !== "context") changeIdx.push(k);
   if (changeIdx.length === 0) return { hunks: [], added: 0, removed: 0 };
 
   // Merge change indices into [start, end] op-ranges padded by `context`,
@@ -157,7 +167,11 @@ export function computeDiff(oldText: string, newText: string, context = 3): Diff
   return { hunks, added, removed };
 }
 
-const PREFIX: Record<DiffLine["type"], string> = { context: " ", add: "+", del: "-" };
+const PREFIX: Record<DiffLine["type"], string> = {
+  context: " ",
+  add: "+",
+  del: "-",
+};
 
 export interface RenderOptions {
   /** Cap the number of body lines emitted; the rest collapse to a `…` marker. */
@@ -189,14 +203,17 @@ export function renderDiff(diff: Diff, opts: RenderOptions = {}): string {
 
   for (const h of diff.hunks) {
     if (emitted >= max) break;
-    const header = opts.color ? `${CYAN}${hunkHeader(h)}${RESET}` : hunkHeader(h);
+    const header = opts.color
+      ? `${CYAN}${hunkHeader(h)}${RESET}`
+      : hunkHeader(h);
     out.push(header);
     emitted++;
     for (const line of h.lines) {
       if (emitted >= max) break;
       const raw = PREFIX[line.type] + line.text;
       if (opts.color && line.type === "add") out.push(`${GREEN}${raw}${RESET}`);
-      else if (opts.color && line.type === "del") out.push(`${RED}${raw}${RESET}`);
+      else if (opts.color && line.type === "del")
+        out.push(`${RED}${raw}${RESET}`);
       else out.push(raw);
       emitted++;
     }

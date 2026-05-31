@@ -54,7 +54,9 @@ export async function searchWeb(
     case "tavily":
       return tavilySearch(query, cfg, count, fetchImpl, opts.signal);
     default:
-      throw new Error(`unknown webSearch.provider "${cfg.provider}" (supported: brave, tavily)`);
+      throw new Error(
+        `unknown webSearch.provider "${cfg.provider}" (supported: brave, tavily)`,
+      );
   }
 }
 
@@ -69,7 +71,8 @@ async function braveSearch(
   fetchImpl: typeof fetch,
   signal?: AbortSignal,
 ): Promise<SearchResult[]> {
-  if (!cfg.apiKey) throw new Error("brave web search requires webSearch.apiKey");
+  if (!cfg.apiKey)
+    throw new Error("brave web search requires webSearch.apiKey");
   const url = new URL("https://api.search.brave.com/res/v1/web/search");
   url.searchParams.set("q", query);
   url.searchParams.set("count", String(count));
@@ -78,7 +81,9 @@ async function braveSearch(
     signal,
   });
   if (!res.ok) {
-    throw new Error(`brave search failed: ${res.status} ${res.statusText} ${await res.text()}`.trim());
+    throw new Error(
+      `brave search failed: ${res.status} ${res.statusText} ${await res.text()}`.trim(),
+    );
   }
   const data = (await res.json()) as { web?: { results?: BraveResult[] } };
   const results = data.web?.results ?? [];
@@ -106,7 +111,8 @@ async function tavilySearch(
   fetchImpl: typeof fetch,
   signal?: AbortSignal,
 ): Promise<SearchResult[]> {
-  if (!cfg.apiKey) throw new Error("tavily web search requires webSearch.apiKey");
+  if (!cfg.apiKey)
+    throw new Error("tavily web search requires webSearch.apiKey");
   const res = await fetchImpl("https://api.tavily.com/search", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -114,7 +120,9 @@ async function tavilySearch(
     signal,
   });
   if (!res.ok) {
-    throw new Error(`tavily search failed: ${res.status} ${res.statusText} ${await res.text()}`.trim());
+    throw new Error(
+      `tavily search failed: ${res.status} ${res.statusText} ${await res.text()}`.trim(),
+    );
   }
   const data = (await res.json()) as { results?: TavilyResult[] };
   const results = data.results ?? [];
@@ -167,7 +175,10 @@ export function webSearchTool(cfg: WebSearchConfig): Tool {
       type: "object",
       properties: {
         query: { type: "string", description: "The search query." },
-        count: { type: "number", description: "Number of results to return (1-10, default 5)." },
+        count: {
+          type: "number",
+          description: "Number of results to return (1-10, default 5).",
+        },
       },
       required: ["query"],
     },

@@ -12,9 +12,9 @@
 // nested spawn_agent while it is still under the depth cap) and `maxConcurrent`
 // caps how many child loops run at once via a shared semaphore.
 
-import { resolveModel, type Config } from "./config.ts";
-import { createProvider, type Provider, type Message } from "./provider.ts";
 import { runAgent } from "./agent.ts";
+import { type Config, resolveModel } from "./config.ts";
+import { createProvider, type Message, type Provider } from "./provider.ts";
 import type { Tool } from "./tools.ts";
 
 /**
@@ -90,7 +90,10 @@ interface SpawnRequest {
 
 /** Run one sub-agent to completion and return its summary text. Never throws —
  * failures come back as a model-readable string so the parent loop continues. */
-async function runSubagent(env: SpawnAgentEnv, req: SpawnRequest): Promise<string> {
+async function runSubagent(
+  env: SpawnAgentEnv,
+  req: SpawnRequest,
+): Promise<string> {
   if (env.depth >= env.config.maxDepth) {
     return `spawn_agent blocked: maximum sub-agent depth (${env.config.maxDepth}) reached`;
   }
@@ -126,7 +129,9 @@ async function runSubagent(env: SpawnAgentEnv, req: SpawnRequest): Promise<strin
   }
 
   const tools = buildChildTools(env, childDepth);
-  const messages: Message[] = [{ role: "user", content: [{ type: "text", text: brief }] }];
+  const messages: Message[] = [
+    { role: "user", content: [{ type: "text", text: brief }] },
+  ];
 
   await env.limiter.acquire();
   let summary = "";
@@ -169,16 +174,19 @@ export function spawnAgentTool(env: SpawnAgentEnv): Tool {
       properties: {
         task: {
           type: "string",
-          description: "Complete, self-contained description of the sub-task to perform.",
+          description:
+            "Complete, self-contained description of the sub-task to perform.",
         },
         files: {
           type: "array",
           items: { type: "string" },
-          description: "Optional file paths to embed in the child's brief for context.",
+          description:
+            "Optional file paths to embed in the child's brief for context.",
         },
         model: {
           type: "string",
-          description: "Optional model id for the child (defaults to the current model).",
+          description:
+            "Optional model id for the child (defaults to the current model).",
         },
       },
       required: ["task"],

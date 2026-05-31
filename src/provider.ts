@@ -21,7 +21,12 @@ export type ContentBlock =
   | { type: "text"; text: string }
   | { type: "thinking"; thinking: string; signature?: string }
   | { type: "tool_use"; id: string; name: string; input: unknown }
-  | { type: "tool_result"; tool_use_id: string; content: string; is_error?: boolean };
+  | {
+      type: "tool_result";
+      tool_use_id: string;
+      content: string;
+      is_error?: boolean;
+    };
 
 export interface Message {
   role: "user" | "assistant";
@@ -55,7 +60,10 @@ export interface Provider {
 // ── SSE parsing ──────────────────────────────────────────────────────────────
 
 /** Yield each parsed `data:` JSON object from a server-sent-events body. */
-async function* parseSSE(body: ReadableStream<Uint8Array>): AsyncIterable<Record<string, any>> {
+async function* parseSSE(
+  body: ReadableStream<Uint8Array>,
+  // biome-ignore lint/suspicious/noExplicitAny: SSE frames are dynamically shaped JSON read with optional chaining.
+): AsyncIterable<Record<string, any>> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buf = "";
@@ -89,7 +97,12 @@ type AnthropicBlock =
   | { type: "text"; text: string }
   | { type: "thinking"; thinking: string; signature: string }
   | { type: "tool_use"; id: string; name: string; input: unknown }
-  | { type: "tool_result"; tool_use_id: string; content: string; is_error?: boolean };
+  | {
+      type: "tool_result";
+      tool_use_id: string;
+      content: string;
+      is_error?: boolean;
+    };
 
 function toAnthropicBlock(b: ContentBlock): AnthropicBlock | null {
   switch (b.type) {
@@ -97,16 +110,28 @@ function toAnthropicBlock(b: ContentBlock): AnthropicBlock | null {
       return { type: "text", text: b.text };
     case "thinking":
       // Replayed thinking blocks must carry their signature to be accepted; drop unsigned ones.
-      return b.signature ? { type: "thinking", thinking: b.thinking, signature: b.signature } : null;
+      return b.signature
+        ? { type: "thinking", thinking: b.thinking, signature: b.signature }
+        : null;
     case "tool_use":
       return { type: "tool_use", id: b.id, name: b.name, input: b.input };
     case "tool_result":
-      return { type: "tool_result", tool_use_id: b.tool_use_id, content: b.content, is_error: b.is_error };
+      return {
+        type: "tool_result",
+        tool_use_id: b.tool_use_id,
+        content: b.content,
+        is_error: b.is_error,
+      };
   }
 }
 
-function toAnthropicMessage(m: Message): { role: string; content: AnthropicBlock[] } {
-  const content = m.content.map(toAnthropicBlock).filter((b): b is AnthropicBlock => b !== null);
+function toAnthropicMessage(m: Message): {
+  role: string;
+  content: AnthropicBlock[];
+} {
+  const content = m.content
+    .map(toAnthropicBlock)
+    .filter((b): b is AnthropicBlock => b !== null);
   return { role: m.role, content };
 }
 
@@ -143,7 +168,10 @@ function effortForBudget(budget: number): "low" | "medium" | "high" {
 }
 
 export function anthropicProvider(opts: AnthropicOptions): Provider {
-  const baseUrl = (opts.baseUrl ?? "https://api.anthropic.com").replace(/\/$/, "");
+  const baseUrl = (opts.baseUrl ?? "https://api.anthropic.com").replace(
+    /\/$/,
+    "",
+  );
   const version = opts.version ?? "2023-06-01";
 
   return {
@@ -171,8 +199,12 @@ export function anthropicProvider(opts: AnthropicOptions): Provider {
           body.output_config = { effort: effortForBudget(req.thinkingBudget) };
         } else {
           // max_tokens must exceed the thinking budget.
-          if (maxTokens <= req.thinkingBudget) maxTokens = req.thinkingBudget + 4096;
-          body.thinking = { type: "enabled", budget_tokens: req.thinkingBudget };
+          if (maxTokens <= req.thinkingBudget)
+            maxTokens = req.thinkingBudget + 4096;
+          body.thinking = {
+            type: "enabled",
+            budget_tokens: req.thinkingBudget,
+          };
         }
       }
       body.max_tokens = maxTokens;
@@ -189,11 +221,16 @@ export function anthropicProvider(opts: AnthropicOptions): Provider {
 
       if (!res.ok || !res.body) {
         const errText = await res.text().catch(() => "");
-        throw new Error(`anthropic: ${res.status} ${res.statusText}${errText ? ` — ${errText}` : ""}`);
+        throw new Error(
+          `anthropic: ${res.status} ${res.statusText}${errText ? ` — ${errText}` : ""}`,
+        );
       }
 
       // Accumulate streamed tool_use input JSON keyed by content block index.
-      const pending: Record<number, { id: string; name: string; json: string }> = {};
+      const pending: Record<
+        number,
+        { id: string; name: string; json: string }
+      > = {};
 
       for await (const ev of parseSSE(res.body)) {
         switch (ev.type) {
@@ -208,7 +245,11 @@ export function anthropicProvider(opts: AnthropicOptions): Provider {
             break;
           case "content_block_start":
             if (ev.content_block?.type === "tool_use") {
-              pending[ev.index] = { id: ev.content_block.id, name: ev.content_block.name, json: "" };
+              pending[ev.index] = {
+                id: ev.content_block.id,
+                name: ev.content_block.name,
+                json: "",
+              };
             }
             break;
           case "content_block_delta":
@@ -237,14 +278,20 @@ export function anthropicProvider(opts: AnthropicOptions): Provider {
           }
           case "message_delta":
             if (ev.usage) {
-              yield { type: "usage", inputTokens: 0, outputTokens: ev.usage.output_tokens ?? 0 };
+              yield {
+                type: "usage",
+                inputTokens: 0,
+                outputTokens: ev.usage.output_tokens ?? 0,
+              };
             }
             if (ev.delta?.stop_reason) {
               yield { type: "done", stopReason: ev.delta.stop_reason };
             }
             break;
           case "error":
-            throw new Error(`anthropic stream error: ${JSON.stringify(ev.error)}`);
+            throw new Error(
+              `anthropic stream error: ${JSON.stringify(ev.error)}`,
+            );
           default:
             break;
         }
@@ -258,7 +305,11 @@ export function anthropicProvider(opts: AnthropicOptions): Provider {
 interface OpenAIMessage {
   role: "system" | "user" | "assistant" | "tool";
   content?: string | null;
-  tool_calls?: { id: string; type: "function"; function: { name: string; arguments: string } }[];
+  tool_calls?: {
+    id: string;
+    type: "function";
+    function: { name: string; arguments: string };
+  }[];
   tool_call_id?: string;
 }
 
@@ -271,7 +322,10 @@ interface OpenAIMessage {
  * requires to immediately follow the assistant turn that called the tools).
  * `thinking` blocks have no OpenAI equivalent and are dropped.
  */
-function toOpenAIMessages(system: string, messages: Message[]): OpenAIMessage[] {
+function toOpenAIMessages(
+  system: string,
+  messages: Message[],
+): OpenAIMessage[] {
   const out: OpenAIMessage[] = [];
   if (system) out.push({ role: "system", content: system });
 
@@ -285,7 +339,10 @@ function toOpenAIMessages(system: string, messages: Message[]): OpenAIMessage[] 
           toolCalls.push({
             id: b.id,
             type: "function",
-            function: { name: b.name, arguments: JSON.stringify(b.input ?? {}) },
+            function: {
+              name: b.name,
+              arguments: JSON.stringify(b.input ?? {}),
+            },
           });
         }
         // thinking blocks: dropped (no OpenAI equivalent)
@@ -299,7 +356,11 @@ function toOpenAIMessages(system: string, messages: Message[]): OpenAIMessage[] 
       let text = "";
       for (const b of m.content) {
         if (b.type === "tool_result") {
-          out.push({ role: "tool", tool_call_id: b.tool_use_id, content: b.content });
+          out.push({
+            role: "tool",
+            tool_call_id: b.tool_use_id,
+            content: b.content,
+          });
         } else if (b.type === "text") {
           text += b.text;
         }
@@ -331,12 +392,18 @@ export function openaiCompatProvider(opts: OpenAICompatOptions): Provider {
       if (req.tools.length) {
         body.tools = req.tools.map((t) => ({
           type: "function",
-          function: { name: t.name, description: t.description, parameters: t.schema },
+          function: {
+            name: t.name,
+            description: t.description,
+            parameters: t.schema,
+          },
         }));
       }
       // Extended thinking has no portable Chat Completions equivalent; drop it.
 
-      const headers: Record<string, string> = { "content-type": "application/json" };
+      const headers: Record<string, string> = {
+        "content-type": "application/json",
+      };
       if (opts.apiKey) headers.authorization = `Bearer ${opts.apiKey}`;
 
       const res = await fetch(`${baseUrl}/chat/completions`, {
@@ -353,7 +420,10 @@ export function openaiCompatProvider(opts: OpenAICompatOptions): Provider {
       }
 
       // Accumulate streamed tool calls keyed by their `index` in the delta.
-      const pending: Record<number, { id: string; name: string; args: string }> = {};
+      const pending: Record<
+        number,
+        { id: string; name: string; args: string }
+      > = {};
       let stopReason: string | undefined;
 
       const flushTools = function* (): Iterable<StreamEvent> {
@@ -397,7 +467,10 @@ export function openaiCompatProvider(opts: OpenAICompatOptions): Provider {
         }
         if (choice.finish_reason) {
           // Map OpenAI finish reasons onto our (Anthropic-flavoured) stop reasons.
-          stopReason = choice.finish_reason === "tool_calls" ? "tool_use" : choice.finish_reason;
+          stopReason =
+            choice.finish_reason === "tool_calls"
+              ? "tool_use"
+              : choice.finish_reason;
         }
       }
 
@@ -415,7 +488,9 @@ export function createProvider(cfg: ProviderConfig): Provider {
   switch (cfg.api) {
     case "anthropic":
       if (!cfg.apiKey) {
-        throw new Error("cc: anthropic provider requires an apiKey (set ANTHROPIC_API_KEY)");
+        throw new Error(
+          "cc: anthropic provider requires an apiKey (set ANTHROPIC_API_KEY)",
+        );
       }
       return anthropicProvider({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl });
     case "openai-compat":
@@ -424,6 +499,8 @@ export function createProvider(cfg: ProviderConfig): Provider {
       }
       return openaiCompatProvider({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl });
     default:
-      throw new Error(`cc: unknown provider api "${(cfg as ProviderConfig).api}"`);
+      throw new Error(
+        `cc: unknown provider api "${(cfg as ProviderConfig).api}"`,
+      );
   }
 }

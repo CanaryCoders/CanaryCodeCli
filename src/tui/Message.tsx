@@ -11,17 +11,17 @@
 // tool's output. Errors always show their first line even when collapsed.
 
 import { Box, Text } from "ink";
-import { diffStat, type Diff, type DiffLine } from "../diff.ts";
+import { type Diff, type DiffLine, diffStat } from "../diff.ts";
 import { codeLineFlags, parseMarkdown, type Span } from "../markdown.ts";
 import {
   DIFF,
   GUTTER_RULE,
   ROLE,
+  type Role,
   SPACING,
   TOOL_STATUS,
   tint,
   toolStatus,
-  type Role,
 } from "./theme.ts";
 
 // ── Display items ───────────────────────────────────────────────────────────────
@@ -60,7 +60,9 @@ export type Item =
 
 /** Distributive `Omit` so each union member keeps its own shape (a plain
  * `Omit<Item, "id">` collapses to the members' common keys). */
-export type DistributiveOmit<T, K extends keyof any> = T extends unknown ? Omit<T, K> : never;
+export type DistributiveOmit<T, K extends PropertyKey> = T extends unknown
+  ? Omit<T, K>
+  : never;
 export type ItemInput = DistributiveOmit<Item, "id">;
 
 // ── Tool input summarising ───────────────────────────────────────────────────────
@@ -178,7 +180,10 @@ export function tailLines(
 /** First `n` non-trivial lines of a tool result, with an "(+N more)" marker. */
 function head(text: string, n: number): { lines: string[]; more: number } {
   const all = text.replace(/\n+$/, "").split("\n");
-  return { lines: all.slice(0, n).map((l) => truncate(l, 200)), more: Math.max(0, all.length - n) };
+  return {
+    lines: all.slice(0, n).map((l) => truncate(l, 200)),
+    more: Math.max(0, all.length - n),
+  };
 }
 
 // ── Block gutter rule ──────────────────────────────────────────────────────────────
@@ -188,7 +193,11 @@ function head(text: string, n: number): { lines: string[]; more: number } {
 // Content lives in a flex column beside the rule so wrapped lines stay tucked under
 // it; the rule colour passes through `tint` for `NO_COLOR` safety.
 
-function RuleRow({ children }: { children: React.ReactNode }): React.ReactElement {
+function RuleRow({
+  children,
+}: {
+  children: React.ReactNode;
+}): React.ReactElement {
   return (
     <Box flexDirection="row">
       <Text color={tint(DIFF.gutter)} dimColor>{`${GUTTER_RULE} `}</Text>
@@ -275,7 +284,9 @@ export function BannerView({
   return (
     <Box borderStyle="round" borderColor={tint("gray")} paddingX={1}>
       <Text bold dimColor>{`${appName} v${version}`}</Text>
-      <Text dimColor>{`  ${abbreviateCwd(cwd)}  ·  ${model} · ${provider}`}</Text>
+      <Text
+        dimColor
+      >{`  ${abbreviateCwd(cwd)}  ·  ${model} · ${provider}`}</Text>
     </Box>
   );
 }
@@ -290,22 +301,26 @@ export function BannerView({
 // glyphs + spacing but drops the colour.
 
 function Gutter({
-  role,
+  speaker,
   colorOverride,
   marginTop = 0,
   children,
 }: {
-  role: Role;
+  speaker: Role;
   /** Override the gutter glyph colour (tool calls colour it by status). */
   colorOverride?: string;
   marginTop?: number;
   children: React.ReactNode;
 }): React.ReactElement {
-  const s = ROLE[role];
+  const s = ROLE[speaker];
   const glyph = s.glyph ? `${s.glyph} ` : "  ";
   return (
     <Box flexDirection="row" marginTop={marginTop}>
-      <Text color={tint(colorOverride ?? s.color)} bold={s.bold} dimColor={s.dim}>
+      <Text
+        color={tint(colorOverride ?? s.color)}
+        bold={s.bold}
+        dimColor={s.dim}
+      >
         {glyph}
       </Text>
       <Box flexDirection="column" flexGrow={1}>
@@ -334,34 +349,39 @@ export function ItemView({
       // A user line starts a new turn → one blank line above it separates turns
       // (continuation/within-turn items below carry no top margin).
       return (
-        <Gutter role="user" marginTop={SPACING.turnGap}>
+        <Gutter speaker="user" marginTop={SPACING.turnGap}>
           <Text>{item.text}</Text>
         </Gutter>
       );
     case "assistant":
       return (
-        <Gutter role="assistant">
+        <Gutter speaker="assistant">
           <Markdown text={item.text} />
         </Gutter>
       );
     case "thinking":
       return (
-        <Gutter role="thinking">
-          <Text dimColor italic>{item.text}</Text>
+        <Gutter speaker="thinking">
+          <Text dimColor italic>
+            {item.text}
+          </Text>
         </Gutter>
       );
     case "tool": {
-      const statusColor = TOOL_STATUS[toolStatus(item.pending, item.isError)].color;
+      const statusColor =
+        TOOL_STATUS[toolStatus(item.pending, item.isError)].color;
       return (
-        <Gutter role="tool" colorOverride={statusColor}>
+        <Gutter speaker="tool" colorOverride={statusColor}>
           <ToolView item={item} expanded={expanded} showHint={showExpandHint} />
         </Gutter>
       );
     }
     case "note":
       return (
-        <Gutter role={item.tone === "error" ? "error" : "note"}>
-          <Text color={tint(item.tone === "error" ? "red" : "gray")}>{item.text}</Text>
+        <Gutter speaker={item.tone === "error" ? "error" : "note"}>
+          <Text color={tint(item.tone === "error" ? "red" : "gray")}>
+            {item.text}
+          </Text>
         </Gutter>
       );
   }
@@ -384,7 +404,11 @@ function ToolView({
   // ran" is the thing the user most wants to verify. Every other tool keeps the
   // 72-char one-line summary. Ink `<Text>` wraps by default, so leaving bash's
   // command un-truncated lets it flow onto the next line instead of `…`-eliding.
-  const shown = summary ? (item.name === "bash" ? summary : truncate(summary, 72)) : "";
+  const shown = summary
+    ? item.name === "bash"
+      ? summary
+      : truncate(summary, 72)
+    : "";
   const headline = shown ? `${item.name}: ${shown}` : item.name;
 
   // Errors always reveal their first line; expansion reveals input + output head.
@@ -392,26 +416,35 @@ function ToolView({
   const body = showBody ? head(item.result!, expanded ? 20 : 1) : null;
 
   // write_file/edit_file carry a diff: always preview it (collapsed = first hunk).
-  const showDiff = !item.pending && !item.isError && item.diff && item.diff.hunks.length > 0;
+  const showDiff =
+    !item.pending && !item.isError && item.diff && item.diff.hunks.length > 0;
 
   return (
     <Box flexDirection="column">
       <Text color={tint(color)}>
         {headline}
         <Text dimColor>{` ${mark}`}</Text>
-        {showHint && !expanded ? <Text dimColor>{"  (ctrl+r to expand)"}</Text> : null}
+        {showHint && !expanded ? (
+          <Text dimColor>{"  (ctrl+r to expand)"}</Text>
+        ) : null}
       </Text>
       {expanded && summary ? (
         <Text dimColor>{`  ${truncate(fmtInput(item.input), 200)}`}</Text>
       ) : null}
       {body
         ? body.lines.map((line, i) => (
-            <Text key={i} color={tint(item.isError ? "red" : undefined)} dimColor={!item.isError}>
+            <Text
+              key={i}
+              color={tint(item.isError ? "red" : undefined)}
+              dimColor={!item.isError}
+            >
               {`  ${line}`}
             </Text>
           ))
         : null}
-      {body && body.more > 0 ? <Text dimColor>{`  …(+${body.more} more lines)`}</Text> : null}
+      {body && body.more > 0 ? (
+        <Text dimColor>{`  …(+${body.more} more lines)`}</Text>
+      ) : null}
       {showDiff ? <DiffView diff={item.diff!} expanded={expanded} /> : null}
     </Box>
   );
@@ -419,7 +452,11 @@ function ToolView({
 
 // ── Diff preview ───────────────────────────────────────────────────────────────────
 
-const DIFF_PREFIX: Record<DiffLine["type"], string> = { context: " ", add: "+", del: "-" };
+const DIFF_PREFIX: Record<DiffLine["type"], string> = {
+  context: " ",
+  add: "+",
+  del: "-",
+};
 const DIFF_COLOR: Record<DiffLine["type"], string | undefined> = {
   context: undefined,
   add: "green",
@@ -440,7 +477,10 @@ function diffRows(hunks: Diff["hunks"]): DiffRow[] {
       color: "cyan",
     });
     for (const line of h.lines) {
-      rows.push({ text: DIFF_PREFIX[line.type] + line.text, color: DIFF_COLOR[line.type] });
+      rows.push({
+        text: DIFF_PREFIX[line.type] + line.text,
+        color: DIFF_COLOR[line.type],
+      });
     }
   }
   return rows;

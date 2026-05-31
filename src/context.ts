@@ -7,9 +7,9 @@
 // wins; any other context files that exist are noted but not loaded. This keeps
 // project instructions out of config and lets a repo carry its own memory.
 
-import { homedir } from "node:os";
-import { join, dirname, resolve } from "node:path";
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 
 /** Recognized context filenames, highest priority first. */
 export const CONTEXT_FILENAMES = ["CC.md", "AGENTS.md", "CLAUDE.md"] as const;
@@ -57,7 +57,9 @@ function dirChain(startDir: string): string[] {
  * priority: nearest directory first, and within a directory CC.md > AGENTS.md >
  * CLAUDE.md. The first element (if any) is the one that should be loaded.
  */
-export async function findContextFiles(startDir: string = process.cwd()): Promise<ContextFile[]> {
+export async function findContextFiles(
+  startDir: string = process.cwd(),
+): Promise<ContextFile[]> {
   const found: ContextFile[] = [];
   for (const dir of dirChain(startDir)) {
     for (const name of CONTEXT_FILENAMES) {
@@ -73,7 +75,9 @@ export async function findContextFiles(startDir: string = process.cwd()): Promis
  * `startDir` becomes `primary`; remaining found files are recorded in `others`.
  * Empty or unreadable files are skipped so they can't shadow a real one.
  */
-export async function loadProjectContext(startDir: string = process.cwd()): Promise<ProjectContext> {
+export async function loadProjectContext(
+  startDir: string = process.cwd(),
+): Promise<ProjectContext> {
   const found = await findContextFiles(startDir);
   let primary: ContextFile | undefined;
   let content: string | undefined;
@@ -140,7 +144,8 @@ agent knows how to work in this repo. Keep it short and high-signal.
 async function detectProjectName(dir: string): Promise<string> {
   try {
     const pkg = await Bun.file(join(dir, "package.json")).json();
-    if (pkg && typeof pkg.name === "string" && pkg.name.trim()) return pkg.name.trim();
+    if (pkg && typeof pkg.name === "string" && pkg.name.trim())
+      return pkg.name.trim();
   } catch {
     // no package.json or unparseable — fall through to the directory name
   }
@@ -162,7 +167,9 @@ export interface InitResult {
  * overwrite an existing CC.md — returns `created:false` so the caller can warn
  * instead of clobbering project memory.
  */
-export async function initProjectContext(dir: string = process.cwd()): Promise<InitResult> {
+export async function initProjectContext(
+  dir: string = process.cwd(),
+): Promise<InitResult> {
   const path = join(dir, "CC.md");
   if (existsSync(path)) return { path, created: false };
   const content = starterContext(await detectProjectName(dir));

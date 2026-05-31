@@ -8,9 +8,9 @@
 // when the model decides a skill is relevant, via the read-only `read_skill`
 // tool. This keeps the prompt small while making many capabilities available.
 
+import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { readdir } from "node:fs/promises";
 import type { Tool } from "./tools.ts";
 
 export interface Skill {
@@ -32,7 +32,9 @@ export interface ParsedSkill {
 }
 
 /** Default skill directories: global (`~/.cc/skills`) then project (`./.cc/skills`). */
-export function skillDirs(cwd: string = process.cwd()): { dir: string; source: "global" | "project" }[] {
+export function skillDirs(
+  cwd: string = process.cwd(),
+): { dir: string; source: "global" | "project" }[] {
   return [
     { dir: join(homedir(), ".cc", "skills"), source: "global" },
     { dir: join(cwd, ".cc", "skills"), source: "project" },
@@ -54,7 +56,10 @@ export function parseSkill(text: string): ParsedSkill {
     if (!kv) continue;
     let value = kv[2].trim();
     // Strip matching surrounding quotes if present.
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
       value = value.slice(1, -1);
     }
     meta[kv[1].toLowerCase()] = value;
@@ -73,12 +78,10 @@ export async function discoverSkills(
 ): Promise<Skill[]> {
   const byName = new Map<string, Skill>();
   for (const { dir, source } of dirs) {
-    let entries;
-    try {
-      entries = await readdir(dir, { withFileTypes: true });
-    } catch {
-      continue; // directory absent — no skills from here
-    }
+    const entries = await readdir(dir, { withFileTypes: true }).catch(
+      () => null,
+    );
+    if (!entries) continue; // directory absent — no skills from here
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
       const path = join(dir, entry.name, "SKILL.md");
@@ -139,7 +142,10 @@ export function readSkillTool(skills: Skill[]): Tool {
     schema: {
       type: "object",
       properties: {
-        name: { type: "string", description: "The skill name to load (exact match)." },
+        name: {
+          type: "string",
+          description: "The skill name to load (exact match).",
+        },
       },
       required: ["name"],
     },
@@ -148,7 +154,8 @@ export function readSkillTool(skills: Skill[]): Tool {
       if (!name) throw new Error('missing required string argument "name"');
       const skill = index.get(name);
       if (!skill) {
-        const available = skills.length > 0 ? skills.map((s) => s.name).join(", ") : "(none)";
+        const available =
+          skills.length > 0 ? skills.map((s) => s.name).join(", ") : "(none)";
         throw new Error(`no such skill "${name}"; available: ${available}`);
       }
       const text = await Bun.file(skill.path).text();

@@ -19,7 +19,13 @@ import type { AgentMode } from "../agent.ts";
 // separates who/what produced each line. `assistant` is intentionally glyph-less:
 // the model's prose stands on its own (markdown already styles it).
 
-export type Role = "user" | "assistant" | "thinking" | "tool" | "note" | "error";
+export type Role =
+  | "user"
+  | "assistant"
+  | "thinking"
+  | "tool"
+  | "note"
+  | "error";
 
 export interface RoleStyle {
   /** Left-gutter glyph; "" means no glyph. */
@@ -61,11 +67,12 @@ export function modeColor(mode: AgentMode): string {
 
 export type ToolStatus = "pending" | "ok" | "error";
 
-export const TOOL_STATUS: Record<ToolStatus, { color: string; mark: string }> = {
-  pending: { color: "yellow", mark: "…" },
-  ok: { color: "green", mark: "✓" },
-  error: { color: "red", mark: "✗" },
-};
+export const TOOL_STATUS: Record<ToolStatus, { color: string; mark: string }> =
+  {
+    pending: { color: "yellow", mark: "…" },
+    ok: { color: "green", mark: "✓" },
+    error: { color: "red", mark: "✗" },
+  };
 
 /** Resolve a tool call's status from its pending/error flags. */
 export function toolStatus(pending: boolean, isError?: boolean): ToolStatus {

@@ -92,7 +92,11 @@ export interface Ranked<T> {
  * Non-matching items are dropped. Ties keep input order (Array#sort is stable),
  * so a registry's natural ordering survives an empty/loose query.
  */
-export function fuzzyRank<T>(query: string, items: T[], key: (item: T) => string): Ranked<T>[] {
+export function fuzzyRank<T>(
+  query: string,
+  items: T[],
+  key: (item: T) => string,
+): Ranked<T>[] {
   const out: Ranked<T>[] = [];
   for (const item of items) {
     const m = fuzzyScore(query, key(item));

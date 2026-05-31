@@ -37,7 +37,9 @@ export function canaryProviderConfig(): ProviderConfig {
 
 /** Whether a provider config points at the CanaryLLM gateway. */
 export function isCanaryProvider(pc: ProviderConfig): boolean {
-  return pc.api === "openai-compat" && (pc.baseUrl ?? "").startsWith(CANARY_API_HOST);
+  return (
+    pc.api === "openai-compat" && (pc.baseUrl ?? "").startsWith(CANARY_API_HOST)
+  );
 }
 
 /**
@@ -61,7 +63,9 @@ export function parseCanaryModels(payload: unknown): ModelConfig[] {
     for (const m of models as Array<Record<string, unknown>>) {
       const id = typeof m?.id === "string" ? m.id : undefined;
       if (!id || seen.has(id)) continue;
-      const caps = Array.isArray(m?.capabilities) ? (m.capabilities as unknown[]) : [];
+      const caps = Array.isArray(m?.capabilities)
+        ? (m.capabilities as unknown[])
+        : [];
       if (!caps.includes("chat") && !caps.includes("reasoning")) continue;
       seen.add(id);
       out.push({ id });
@@ -76,9 +80,13 @@ export async function fetchCanaryModels(
 ): Promise<ModelConfig[]> {
   const url = opts.url ?? CANARY_MODELS_URL;
   const f = opts.fetchImpl ?? fetch;
-  const res = await f(url, { signal: AbortSignal.timeout(opts.timeoutMs ?? 8000) });
+  const res = await f(url, {
+    signal: AbortSignal.timeout(opts.timeoutMs ?? 8000),
+  });
   if (!res.ok) {
-    throw new Error(`canaryllm: ${res.status} ${res.statusText} fetching ${url}`);
+    throw new Error(
+      `canaryllm: ${res.status} ${res.statusText} fetching ${url}`,
+    );
   }
   return parseCanaryModels(await res.json());
 }
@@ -115,9 +123,12 @@ export async function populateCanaryModels(
 }
 
 /** One-line stderr/scrollback note describing a discovery result (or nothing). */
-export function describeCanary(result: CanaryPopulateResult | undefined): string | undefined {
+export function describeCanary(
+  result: CanaryPopulateResult | undefined,
+): string | undefined {
   if (!result) return undefined;
-  if ("error" in result) return `note: CanaryLLM model discovery failed — ${result.error}`;
+  if ("error" in result)
+    return `note: CanaryLLM model discovery failed — ${result.error}`;
   if (result.count === 0) return undefined;
   return `note: CanaryLLM — discovered ${result.count} model${result.count === 1 ? "" : "s"}`;
 }

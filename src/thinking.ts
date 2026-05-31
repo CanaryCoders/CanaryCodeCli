@@ -32,7 +32,10 @@ export function budgetFor(level: ThinkingLevel): number {
  */
 export function parseLevel(raw: string | undefined): ThinkingLevel | undefined {
   if (raw == null) return undefined;
-  const s = raw.trim().toLowerCase().replace(/[\s_]+/g, "-");
+  const s = raw
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, "-");
   switch (s) {
     case "":
     case "off":
@@ -70,8 +73,12 @@ export function parseLevel(raw: string | undefined): ThinkingLevel | undefined {
  */
 export function levelFromKeywords(prompt: string): ThinkingLevel {
   const t = prompt.toLowerCase();
-  if (/\bultrathink\b/.test(t) || /\bultra[-\s]?think\b/.test(t)) return "ultrathink";
-  if (/\bmegathink\b/.test(t) || /\bthink\s+(hard(er)?|deeply|really\s+hard)\b/.test(t)) {
+  if (/\bultrathink\b/.test(t) || /\bultra[-\s]?think\b/.test(t))
+    return "ultrathink";
+  if (
+    /\bmegathink\b/.test(t) ||
+    /\bthink\s+(hard(er)?|deeply|really\s+hard)\b/.test(t)
+  ) {
     return "think-hard";
   }
   if (/\bthink\b/.test(t)) return "think";
@@ -90,14 +97,18 @@ export interface ThinkingResolution {
  * flag value is ignored (treated as absent). Otherwise a prompt keyword is used.
  * Falls back to "off".
  */
-export function resolveThinking(opts: { flag?: string; prompt?: string }): ThinkingResolution {
+export function resolveThinking(opts: {
+  flag?: string;
+  prompt?: string;
+}): ThinkingResolution {
   const fromFlag = parseLevel(opts.flag);
   if (fromFlag !== undefined) {
     return { level: fromFlag, budget: budgetFor(fromFlag), source: "flag" };
   }
   if (opts.prompt) {
     const kw = levelFromKeywords(opts.prompt);
-    if (kw !== "off") return { level: kw, budget: budgetFor(kw), source: "keyword" };
+    if (kw !== "off")
+      return { level: kw, budget: budgetFor(kw), source: "keyword" };
   }
   return { level: "off", budget: 0, source: "default" };
 }

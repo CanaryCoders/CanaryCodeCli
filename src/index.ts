@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+
 // cc — a fast, minimal terminal coding agent.
 // Entry point: arg parse + mode dispatch (headless vs TUI).
 //
@@ -7,22 +8,40 @@
 // folded into the prompt as context (`git diff | cc -p "commit message"`). The
 // interactive TUI lands in Phase 4.
 
-import { loadConfig, resolveModel } from "./config.ts";
-import { populateCanaryModels, describeCanary } from "./canary.ts";
-import { createProvider } from "./provider.ts";
-import { runAgent, systemForMode, type AgentMode } from "./agent.ts";
-import { resolveThinking, supportsThinking, describeLevel } from "./thinking.ts";
-import { tools as allTools } from "./tools.ts";
-import { webSearchTool } from "./websearch.ts";
-import { SessionStore, type SessionRow } from "./session.ts";
-import { loadProjectContext, composeSystemPrompt, describeContext } from "./context.ts";
-import { discoverSkills, composeSkillsPrompt, describeSkills, readSkillTool } from "./skills.ts";
-import { spawnAgentTool, Semaphore } from "./subagents.ts";
-import { connectMcpServers, describeMcp, closeMcp, type McpConnection } from "./mcp.ts";
-import { renderDiff, diffStat } from "./diff.ts";
+import { type AgentMode, runAgent, systemForMode } from "./agent.ts";
+import { describeCanary, populateCanaryModels } from "./canary.ts";
+import { type Config, loadConfig, resolveModel } from "./config.ts";
+import {
+  composeSystemPrompt,
+  describeContext,
+  loadProjectContext,
+} from "./context.ts";
+import { diffStat, renderDiff } from "./diff.ts";
 import { renderAnsi } from "./markdown.ts";
+import {
+  closeMcp,
+  connectMcpServers,
+  describeMcp,
+  type McpConnection,
+} from "./mcp.ts";
+import type { Message, Provider } from "./provider.ts";
+import { createProvider } from "./provider.ts";
+import { type SessionRow, SessionStore } from "./session.ts";
+import {
+  composeSkillsPrompt,
+  describeSkills,
+  discoverSkills,
+  readSkillTool,
+} from "./skills.ts";
+import { Semaphore, spawnAgentTool } from "./subagents.ts";
+import {
+  describeLevel,
+  resolveThinking,
+  supportsThinking,
+} from "./thinking.ts";
+import { tools as allTools } from "./tools.ts";
 import { startTui } from "./tui/App.tsx";
-import type { Message } from "./provider.ts";
+import { webSearchTool } from "./websearch.ts";
 
 /** App version, shown by `--version` and in the TUI launch banner. */
 const VERSION = "0.0.1";
@@ -55,7 +74,15 @@ interface Args {
 
 /** Parse argv into a small, explicit shape. Unknown flags are ignored for now. */
 function parseArgs(argv: string[]): Args {
-  const out: Args = { help: false, version: false, noTools: false, noColor: false, json: false, plan: false, auto: false };
+  const out: Args = {
+    help: false,
+    version: false,
+    noTools: false,
+    noColor: false,
+    json: false,
+    plan: false,
+    auto: false,
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     switch (a) {
@@ -91,7 +118,10 @@ function parseArgs(argv: string[]): Args {
         break;
       case "--think":
         // An optional level may follow; a bare `--think` means the default level.
-        out.think = argv[i + 1] !== undefined && !argv[i + 1].startsWith("-") ? argv[++i] : "think";
+        out.think =
+          argv[i + 1] !== undefined && !argv[i + 1].startsWith("-")
+            ? argv[++i]
+            : "think";
         break;
       case "--resume": {
         // An optional session id (or prefix) may follow. A value that looks like
@@ -183,19 +213,29 @@ function printSessions(store: SessionStore): void {
   }
   console.log("Recent sessions (newest first):\n");
   for (const s of rows) {
-    const when = new Date(s.updatedAt).toISOString().replace("T", " ").slice(0, 16);
+    const when = new Date(s.updatedAt)
+      .toISOString()
+      .replace("T", " ")
+      .slice(0, 16);
     const title = s.title ?? "(untitled)";
     const cost = s.costUsd > 0 ? `$${s.costUsd.toFixed(4)}` : "$0";
-    console.log(`  ${s.id.slice(0, 8)}  ${when}  ${s.model}  ${cost}  ${title}`);
+    console.log(
+      `  ${s.id.slice(0, 8)}  ${when}  ${s.model}  ${cost}  ${title}`,
+    );
   }
   console.log('\nResume with:  cc --resume <id> -p "<prompt>"');
 }
 
 /** Resolve a session by exact id, then by id prefix among recent sessions. */
-function resolveSession(store: SessionStore, idOrPrefix: string): SessionRow | undefined {
+function resolveSession(
+  store: SessionStore,
+  idOrPrefix: string,
+): SessionRow | undefined {
   const exact = store.getSession(idOrPrefix);
   if (exact) return exact;
-  const matches = store.listSessions(100).filter((s) => s.id.startsWith(idOrPrefix));
+  const matches = store
+    .listSessions(100)
+    .filter((s) => s.id.startsWith(idOrPrefix));
   return matches.length === 1 ? matches[0] : undefined;
 }
 
@@ -208,7 +248,11 @@ function titleFrom(prompt: string): string {
 /** Headless print mode: run the agent loop once over `prompt`, streaming to stdout. */
 async function runHeadless(args: Args): Promise<number> {
   // Bare `--resume` with no prompt → list sessions and exit.
-  if (args.resume === true && args.prompt === undefined && process.stdin.isTTY) {
+  if (
+    args.resume === true &&
+    args.prompt === undefined &&
+    process.stdin.isTTY
+  ) {
     const store = SessionStore.open();
     try {
       printSessions(store);
@@ -224,11 +268,11 @@ async function runHeadless(args: Args): Promise<number> {
     prompt = prompt ? `${prompt}\n\n--- stdin ---\n${stdin}` : stdin;
   }
   if (!prompt.trim()) {
-    console.error("cc: empty prompt (pass -p \"...\" or pipe stdin)");
+    console.error('cc: empty prompt (pass -p "..." or pipe stdin)');
     return 1;
   }
 
-  let config;
+  let config: Config;
   try {
     config = await loadConfig();
   } catch (err) {
@@ -247,7 +291,7 @@ async function runHeadless(args: Args): Promise<number> {
     return 1;
   }
 
-  let provider;
+  let provider: Provider;
   try {
     provider = createProvider(resolved.providerConfig);
   } catch (err) {
@@ -259,7 +303,9 @@ async function runHeadless(args: Args): Promise<number> {
   // Plan mode runs read-only (investigate, emit a plan, stop); auto mode runs
   // autonomously to completion. They are mutually exclusive — plan wins if both given.
   if (args.plan && args.auto) {
-    process.stderr.write("note: --plan and --auto conflict; using --plan (read-only)\n");
+    process.stderr.write(
+      "note: --plan and --auto conflict; using --plan (read-only)\n",
+    );
   }
   const mode: AgentMode = args.plan ? "plan" : args.auto ? "auto" : "normal";
   // Turn cap: auto mode uses the configured autonomy budget; otherwise a fixed
@@ -290,7 +336,12 @@ async function runHeadless(args: Args): Promise<number> {
   // model entirely so it only sees what it can actually use.
   let tools = args.noTools
     ? []
-    : [...allTools, webSearchTool(config.webSearch), readSkillTool(skills), ...mcp.tools];
+    : [
+        ...allTools,
+        webSearchTool(config.webSearch),
+        readSkillTool(skills),
+        ...mcp.tools,
+      ];
   // spawn_agent lets the model delegate focused sub-tasks to child agents with a
   // fresh context. Added only when sub-agents are enabled (maxDepth > 0); it is
   // mutating, so the plan-mode filter below drops it. The inherited tool set is the
@@ -317,11 +368,15 @@ async function runHeadless(args: Args): Promise<number> {
   const contextNote = describeContext(projectContext);
   if (contextNote) process.stderr.write(`${contextNote}\n`);
   const system = systemForMode(
-    composeSkillsPrompt(composeSystemPrompt(SYSTEM_PROMPT, projectContext), skills),
+    composeSkillsPrompt(
+      composeSystemPrompt(SYSTEM_PROMPT, projectContext),
+      skills,
+    ),
     mode,
   );
   if (mode === "plan") process.stderr.write("📋 plan mode (read-only)\n");
-  if (mode === "auto") process.stderr.write(`🤖 auto mode (autonomous · max ${turnCap} turns)\n`);
+  if (mode === "auto")
+    process.stderr.write(`🤖 auto mode (autonomous · max ${turnCap} turns)\n`);
 
   // ── resolve the thinking level (explicit flag wins, else a prompt keyword) ──
   const thinking = resolveThinking({ flag: args.think, prompt });
@@ -357,9 +412,15 @@ async function runHeadless(args: Args): Promise<number> {
     }
     sessionId = target.id;
     messages.push(...store.loadMessages(sessionId));
-    process.stderr.write(`↻ resuming session ${sessionId.slice(0, 8)} (${messages.length} prior turns)\n`);
+    process.stderr.write(
+      `↻ resuming session ${sessionId.slice(0, 8)} (${messages.length} prior turns)\n`,
+    );
   } else {
-    sessionId = store.createSession({ model: modelName, cwd: process.cwd(), title: titleFrom(prompt) });
+    sessionId = store.createSession({
+      model: modelName,
+      cwd: process.cwd(),
+      title: titleFrom(prompt),
+    });
   }
 
   // Everything already in `messages` is persisted; new entries (the prompt plus
@@ -380,7 +441,8 @@ async function runHeadless(args: Args): Promise<number> {
   // formatting (markdown, the ⚙/✓ tool lines, diffs) is suppressed on stdout; the
   // raw JSONL is the whole output. Startup notes still go to stderr (separate stream).
   const jsonMode = args.json;
-  const emit = (obj: unknown) => process.stdout.write(`${JSON.stringify(obj)}\n`);
+  const emit = (obj: unknown) =>
+    process.stdout.write(`${JSON.stringify(obj)}\n`);
   // Tracks an open (unclosed) dimmed thinking block on stderr so we can reset it
   // before any non-thinking output.
   let thinkingOpen = false;
@@ -394,7 +456,11 @@ async function runHeadless(args: Args): Promise<number> {
   // and render it as ANSI styling once the turn's deltas have all arrived (markdown
   // needs whole blocks; streaming char-by-char can't style). Piped output (not a
   // TTY), NO_COLOR, or --no-color keep the raw markdown streaming so it composes.
-  const renderMd = !jsonMode && Boolean(process.stdout.isTTY) && !process.env.NO_COLOR && !args.noColor;
+  const renderMd =
+    !jsonMode &&
+    Boolean(process.stdout.isTTY) &&
+    !process.env.NO_COLOR &&
+    !args.noColor;
   let mdBuf = "";
   const flushMarkdown = () => {
     if (mdBuf) {
@@ -451,7 +517,12 @@ async function runHeadless(args: Args): Promise<number> {
           // The exact tool call before it runs — full input, so the user (or a
           // script under --json) can see precisely what is about to execute.
           if (jsonMode) {
-            emit({ type: "tool_start", id: ev.id, name: ev.name, input: ev.input });
+            emit({
+              type: "tool_start",
+              id: ev.id,
+              name: ev.name,
+              input: ev.input,
+            });
             break;
           }
           closeThinking();
@@ -479,13 +550,21 @@ async function runHeadless(args: Args): Promise<number> {
             process.stderr.write(`✓ ${ev.name}\n`);
             if (ev.diff && ev.diff.hunks.length > 0) {
               // write_file/edit_file carry a diff — show what changed (green/red on a TTY).
-              const color = Boolean(process.stderr.isTTY) && !process.env.NO_COLOR;
-              process.stderr.write(`${renderDiff(ev.diff, { color, maxLines: 60 })}\n`);
+              const color =
+                Boolean(process.stderr.isTTY) && !process.env.NO_COLOR;
+              process.stderr.write(
+                `${renderDiff(ev.diff, { color, maxLines: 60 })}\n`,
+              );
             }
           }
           break;
         case "usage":
-          if (jsonMode) emit({ type: "usage", inputTokens: ev.inputTokens, outputTokens: ev.outputTokens });
+          if (jsonMode)
+            emit({
+              type: "usage",
+              inputTokens: ev.inputTokens,
+              outputTokens: ev.outputTokens,
+            });
           store.addUsage(sessionId, ev.inputTokens, ev.outputTokens);
           break;
         case "compaction":
@@ -506,7 +585,8 @@ async function runHeadless(args: Args): Promise<number> {
         case "done":
           if (jsonMode) {
             emit({ type: "done", reason: ev.reason });
-            if (ev.reason === "aborted" || ev.reason === "max_turns") sawError = true;
+            if (ev.reason === "aborted" || ev.reason === "max_turns")
+              sawError = true;
             break;
           }
           closeThinking();
@@ -582,7 +662,7 @@ function flushTranscript(
  * headless path writes to stderr are passed in as scrollback items instead.
  */
 async function runTui(args: Args): Promise<number> {
-  let config;
+  let config: Config;
   try {
     config = await loadConfig();
   } catch (err) {
@@ -598,7 +678,7 @@ async function runTui(args: Args): Promise<number> {
     return 1;
   }
 
-  let provider;
+  let provider: Provider;
   try {
     provider = createProvider(resolved.providerConfig);
   } catch (err) {
@@ -633,7 +713,10 @@ async function runTui(args: Args): Promise<number> {
   );
 
   const store = SessionStore.open();
-  const sessionId = store.createSession({ model: modelName, cwd: process.cwd() });
+  const sessionId = store.createSession({
+    model: modelName,
+    cwd: process.cwd(),
+  });
 
   // The launch banner (in the TUI) shows app/version/cwd/model — keep the startup
   // notes to the /help hint plus context/skills/mcp lines.

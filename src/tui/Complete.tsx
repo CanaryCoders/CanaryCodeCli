@@ -21,7 +21,11 @@ const MAX_ROWS = 8;
 const FRAME_INSET = 1 + SPACING.boxPadX;
 
 /** Compute the [start, end) slice of items to render around `selected`. */
-export function windowRange(count: number, selected: number, max = MAX_ROWS): [number, number] {
+export function windowRange(
+  count: number,
+  selected: number,
+  max = MAX_ROWS,
+): [number, number] {
   if (count <= max) return [0, count];
   let start = selected - Math.floor(max / 2);
   if (start < 0) start = 0;
@@ -34,7 +38,10 @@ interface CompleteProps {
   selected: number;
 }
 
-export function Complete({ items, selected }: CompleteProps): React.ReactElement | null {
+export function Complete({
+  items,
+  selected,
+}: CompleteProps): React.ReactElement | null {
   if (items.length === 0) return null;
   const [start, end] = windowRange(items.length, selected);
   const visible = items.slice(start, end);
@@ -47,11 +54,15 @@ export function Complete({ items, selected }: CompleteProps): React.ReactElement
         const isSel = idx === selected;
         return (
           <Box key={idx}>
-            <Text color={isSel ? accent : undefined}>{isSel ? "› " : "  "}</Text>
+            <Text color={isSel ? accent : undefined}>
+              {isSel ? "› " : "  "}
+            </Text>
             <Text color={isSel ? accent : undefined} bold={isSel}>
               {c.label}
             </Text>
-            {c.description ? <Text dimColor>{`  ${c.description}`}</Text> : null}
+            {c.description ? (
+              <Text dimColor>{`  ${c.description}`}</Text>
+            ) : null}
           </Box>
         );
       })}

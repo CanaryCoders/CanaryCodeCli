@@ -10,7 +10,9 @@
     "dev": "bun run src/index.ts",
     "cc": "bun run src/index.ts",
     "typecheck": "tsc --noEmit",
-    "check": "tsc --noEmit"
+    "lint": "biome lint ./src",
+    "format": "biome format --write ./src",
+    "check": "biome check ./src && tsc --noEmit"
   },
   "dependencies": {
     "ink": "^5",
@@ -19,6 +21,7 @@
     "react": "^18"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.4.16",
     "@types/bun": "latest",
     "@types/react": "^18",
     "typescript": "^5"

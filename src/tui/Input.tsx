@@ -11,8 +11,8 @@
 // tested without a render; the component is a thin shell that mirrors the cursor
 // in state and renders the value with a fake inverse-block cursor (no chalk dep).
 
-import { useRef, useState } from "react";
 import { Box, Text, useInput } from "ink";
+import { useRef, useState } from "react";
 
 // ── pure editing reducer ──────────────────────────────────────────────────────
 
@@ -45,7 +45,10 @@ export interface InputKey {
 }
 
 /** Map an absolute cursor offset to its {line, col} within the value. */
-export function cursorLineCol(value: string, cursor: number): { line: number; col: number } {
+export function cursorLineCol(
+  value: string,
+  cursor: number,
+): { line: number; col: number } {
   const lines = value.split("\n");
   let rem = cursor;
   for (let i = 0; i < lines.length; i++) {
@@ -60,7 +63,8 @@ export function cursorLineCol(value: string, cursor: number): { line: number; co
 function lineStart(value: string, line: number): number {
   const lines = value.split("\n");
   let off = 0;
-  for (let i = 0; i < line && i < lines.length; i++) off += lines[i]!.length + 1;
+  for (let i = 0; i < line && i < lines.length; i++)
+    off += lines[i]!.length + 1;
   return off;
 }
 
@@ -95,10 +99,14 @@ export function reduceInput(
   }
 
   if (key.leftArrow) {
-    return cursor > 0 ? { type: "update", value, cursor: cursor - 1 } : { type: "none" };
+    return cursor > 0
+      ? { type: "update", value, cursor: cursor - 1 }
+      : { type: "none" };
   }
   if (key.rightArrow) {
-    return cursor < value.length ? { type: "update", value, cursor: cursor + 1 } : { type: "none" };
+    return cursor < value.length
+      ? { type: "update", value, cursor: cursor + 1 }
+      : { type: "none" };
   }
   // While the popover captures keys, Up/Down move the selection, not the cursor.
   if ((key.upArrow || key.downArrow) && opts.capture) return { type: "none" };
@@ -111,11 +119,19 @@ export function reduceInput(
     if (target < 0) return { type: "history-prev" };
     if (target >= lines.length) return { type: "history-next" };
     const nextCol = Math.min(col, lines[target]!.length);
-    return { type: "update", value, cursor: lineStart(value, target) + nextCol };
+    return {
+      type: "update",
+      value,
+      cursor: lineStart(value, target) + nextCol,
+    };
   }
   if (key.backspace || key.delete) {
     if (cursor === 0) return { type: "none" };
-    return { type: "update", value: value.slice(0, cursor - 1) + value.slice(cursor), cursor: cursor - 1 };
+    return {
+      type: "update",
+      value: value.slice(0, cursor - 1) + value.slice(cursor),
+      cursor: cursor - 1,
+    };
   }
 
   // Ignore control chords (Ctrl/Esc/Tab arrive with empty or control input); a
@@ -171,7 +187,12 @@ export function MultilineInput({
 
   useInput(
     (input, key) => {
-      const result = reduceInput({ value, cursor: effectiveCursor }, input, key, { capture });
+      const result = reduceInput(
+        { value, cursor: effectiveCursor },
+        input,
+        key,
+        { capture },
+      );
       if (result.type === "submit") {
         onSubmit(result.value);
       } else if (result.type === "update") {
@@ -203,7 +224,9 @@ export function MultilineInput({
   return (
     <Box flexDirection="column">
       {lines.map((text, i) => (
-        <Text key={i}>{i === curLine ? renderCursorLine(text, curCol) : text}</Text>
+        <Text key={i}>
+          {i === curLine ? renderCursorLine(text, curCol) : text}
+        </Text>
       ))}
     </Box>
   );

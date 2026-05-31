@@ -11,8 +11,8 @@
 // returned as a `message` action so the host has a single thing to switch on.
 
 import type { AgentMode } from "./agent.ts";
+import { fuzzyRank, fuzzyScore } from "./fuzzy.ts";
 import { parseLevel, type ThinkingLevel } from "./thinking.ts";
-import { fuzzyScore, fuzzyRank } from "./fuzzy.ts";
 
 /** A command broken into its name (without the leading slash) and trailing argument. */
 export interface ParsedCommand {
@@ -54,15 +54,30 @@ export interface CommandSpec {
 
 /** The full command set. Order here is the order shown by `/help`. */
 export const COMMANDS: CommandSpec[] = [
-  { name: "model", usage: "[id]", description: "list models, or switch to <id>" },
-  { name: "think", usage: "[level]", description: "set thinking: off | think | think-hard | ultrathink" },
+  {
+    name: "model",
+    usage: "[id]",
+    description: "list models, or switch to <id>",
+  },
+  {
+    name: "think",
+    usage: "[level]",
+    description: "set thinking: off | think | think-hard | ultrathink",
+  },
   { name: "plan", description: "switch to read-only plan mode" },
   { name: "auto", description: "switch to autonomous auto mode" },
   { name: "normal", description: "return to normal mode" },
   { name: "clear", description: "clear the conversation and start fresh" },
-  { name: "resume", usage: "[id]", description: "list saved sessions, or resume <id>" },
+  {
+    name: "resume",
+    usage: "[id]",
+    description: "list saved sessions, or resume <id>",
+  },
   { name: "cost", description: "show token usage and cost so far" },
-  { name: "init", description: "generate a starter CC.md project-context file" },
+  {
+    name: "init",
+    description: "generate a starter CC.md project-context file",
+  },
   { name: "help", aliases: ["?"], description: "show this command list" },
   { name: "exit", aliases: ["quit", "q"], description: "exit cc" },
 ];
@@ -88,14 +103,19 @@ export function parseCommand(input: string): ParsedCommand | null {
   const t = input.trim().slice(1); // drop the leading "/"
   const space = t.search(/\s/);
   if (space === -1) return { name: t.toLowerCase(), arg: "" };
-  return { name: t.slice(0, space).toLowerCase(), arg: t.slice(space + 1).trim() };
+  return {
+    name: t.slice(0, space).toLowerCase(),
+    arg: t.slice(space + 1).trim(),
+  };
 }
 
 /** Render the `/help` command list as aligned lines. */
 export function helpText(): string {
   const left = COMMANDS.map((c) => `/${c.name}${c.usage ? ` ${c.usage}` : ""}`);
   const width = Math.max(...left.map((l) => l.length));
-  const lines = COMMANDS.map((c, i) => `  ${left[i].padEnd(width)}  ${c.description}`);
+  const lines = COMMANDS.map(
+    (c, i) => `  ${left[i].padEnd(width)}  ${c.description}`,
+  );
   return ["Commands:", ...lines].join("\n");
 }
 
@@ -110,17 +130,25 @@ export function dispatchCommand(input: string): CommandAction {
 
   const spec = BY_NAME.get(parsed.name);
   if (!spec) {
-    return { kind: "error", message: `unknown command: /${parsed.name} (try /help)` };
+    return {
+      kind: "error",
+      message: `unknown command: /${parsed.name} (try /help)`,
+    };
   }
 
   switch (spec.name) {
     case "model":
-      return parsed.arg ? { kind: "set-model", model: parsed.arg } : { kind: "list-models" };
+      return parsed.arg
+        ? { kind: "set-model", model: parsed.arg }
+        : { kind: "list-models" };
     case "think": {
       // A bare `/think` means the default on-level; an unrecognized value errors.
       const level = parseLevel(parsed.arg || "think");
       if (level === undefined) {
-        return { kind: "error", message: `unknown thinking level: "${parsed.arg}" (off|think|think-hard|ultrathink)` };
+        return {
+          kind: "error",
+          message: `unknown thinking level: "${parsed.arg}" (off|think|think-hard|ultrathink)`,
+        };
       }
       return { kind: "set-think", level };
     }
@@ -133,7 +161,9 @@ export function dispatchCommand(input: string): CommandAction {
     case "clear":
       return { kind: "clear" };
     case "resume":
-      return parsed.arg ? { kind: "resume", id: parsed.arg } : { kind: "resume" };
+      return parsed.arg
+        ? { kind: "resume", id: parsed.arg }
+        : { kind: "resume" };
     case "cost":
       return { kind: "cost" };
     case "init":
@@ -178,7 +208,12 @@ export interface CompletionContext {
 }
 
 /** The thinking levels `/think` accepts, in increasing order. */
-const THINK_LEVELS: ThinkingLevel[] = ["off", "think", "think-hard", "ultrathink"];
+const THINK_LEVELS: ThinkingLevel[] = [
+  "off",
+  "think",
+  "think-hard",
+  "ultrathink",
+];
 
 /** Parameter-value candidates for a (canonical) command name, pre-fuzzy-filter. */
 function paramValues(name: string, ctx: CompletionContext): Completion[] {
@@ -203,7 +238,10 @@ function paramValues(name: string, ctx: CompletionContext): Completion[] {
  * line is not a `/`-command in progress. The first token (no space yet) ranks
  * commands; after a command word + space, ranks that command's parameters.
  */
-export function completions(input: string, ctx: CompletionContext): Completion[] {
+export function completions(
+  input: string,
+  ctx: CompletionContext,
+): Completion[] {
   if (!input.startsWith("/")) return [];
   const rest = input.slice(1);
   const space = rest.search(/\s/);

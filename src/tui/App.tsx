@@ -13,42 +13,51 @@
 // request → quit (the last step needs a second press). Ctrl+R toggles verbose tool
 // output; Shift+Tab cycles the mode (normal → plan → auto → normal).
 
-import { useRef, useState } from "react";
-import { Box, Static, Text, render, useApp, useInput, useStdout } from "ink";
+import { Box, render, Static, Text, useApp, useInput, useStdout } from "ink";
 import Spinner from "ink-spinner";
-import { MultilineInput } from "./Input.tsx";
-
+import { useRef, useState } from "react";
+import { type AgentMode, runAgent, systemForMode } from "../agent.ts";
+import {
+  type CompletionContext,
+  completions,
+  dispatchCommand,
+} from "../commands.ts";
 import type { Config } from "../config.ts";
 import { resolveModel } from "../config.ts";
-import { createProvider } from "../provider.ts";
-import type { Message, Provider } from "../provider.ts";
-import { runAgent, systemForMode, type AgentMode } from "../agent.ts";
-import type { Tool } from "../tools.ts";
-import { tools as allTools } from "../tools.ts";
-import { webSearchTool } from "../websearch.ts";
-import { readSkillTool, type Skill } from "../skills.ts";
-import { spawnAgentTool, Semaphore } from "../subagents.ts";
-import type { McpConnection } from "../mcp.ts";
-import { SessionStore } from "../session.ts";
 import { initProjectContext } from "../context.ts";
-import { dispatchCommand, completions, type CompletionContext } from "../commands.ts";
+import type { McpConnection } from "../mcp.ts";
+import type { Message, Provider } from "../provider.ts";
+import { createProvider } from "../provider.ts";
+import type { SessionStore } from "../session.ts";
+import { readSkillTool, type Skill } from "../skills.ts";
+import { Semaphore, spawnAgentTool } from "../subagents.ts";
 import {
   budgetFor,
   describeLevel,
   supportsThinking,
   type ThinkingLevel,
 } from "../thinking.ts";
-import { ItemView, tailLines, statusVerb, type Item, type ItemInput } from "./Message.tsx";
-import { PlanView, planChoiceForKey } from "./Plan.tsx";
+import type { Tool } from "../tools.ts";
+import { tools as allTools } from "../tools.ts";
+import { webSearchTool } from "../websearch.ts";
 import { Complete } from "./Complete.tsx";
 import {
-  ConfirmView,
-  confirmChoiceForKey,
   buildConfirmPreview,
   type ConfirmPreview,
+  ConfirmView,
+  confirmChoiceForKey,
 } from "./Confirm.tsx";
-import { modeColor as themeModeColor, SPACING, tint } from "./theme.ts";
 import { Footer } from "./Footer.tsx";
+import { MultilineInput } from "./Input.tsx";
+import {
+  type Item,
+  type ItemInput,
+  ItemView,
+  statusVerb,
+  tailLines,
+} from "./Message.tsx";
+import { PlanView, planChoiceForKey } from "./Plan.tsx";
+import { SPACING, modeColor as themeModeColor, tint } from "./theme.ts";
 
 // ── The component ────────────────────────────────────────────────────────────────
 // The transcript is rendered as a flat list of typed `Item`s (see Message.tsx).
@@ -78,12 +87,17 @@ interface AppProps {
 }
 
 /** Gather the data the `/` autocomplete draws parameter values from. */
-function buildCompletionContext(config: Config, store: SessionStore): CompletionContext {
+function buildCompletionContext(
+  config: Config,
+  store: SessionStore,
+): CompletionContext {
   const models: string[] = [];
   for (const pc of Object.values(config.providers)) {
     for (const m of pc.models ?? []) models.push(m.id);
   }
-  const sessions = store.listSessions(20).map((s) => ({ id: s.id, title: s.title }));
+  const sessions = store
+    .listSessions(20)
+    .map((s) => ({ id: s.id, title: s.title }));
   return { models, sessions };
 }
 
@@ -136,7 +150,11 @@ export function App(props: AppProps): React.ReactElement {
       model: props.modelLabel,
       provider: props.provider.id,
     },
-    ...props.startupNotes.map((text) => ({ id: nextId(), kind: "note" as const, text })),
+    ...props.startupNotes.map((text) => ({
+      id: nextId(),
+      kind: "note" as const,
+      text,
+    })),
   ]);
   const [live, setLive] = useState<Item[]>([]);
   const [input, setInputState] = useState("");
@@ -168,7 +186,9 @@ export function App(props: AppProps): React.ReactElement {
   // paused on `confirmResolverRef`'s promise; y/n/a resolve it. `alwaysRef` is the
   // session-wide "[a]lways" override that disables the gate for the rest of the run.
   // Refs mirror state for the once-captured `useInput` closure.
-  const [pendingConfirm, setPendingConfirm] = useState<ConfirmPreview | null>(null);
+  const [pendingConfirm, setPendingConfirm] = useState<ConfirmPreview | null>(
+    null,
+  );
   const pendingConfirmRef = useRef<ConfirmPreview | null>(null);
   const confirmResolverRef = useRef<((ok: boolean) => void) | null>(null);
   const confirmAlwaysRef = useRef(false);
@@ -244,7 +264,9 @@ export function App(props: AppProps): React.ReactElement {
     let tools = buildTools(controller.signal);
     if (runMode === "plan") tools = tools.filter((t) => t.readOnly);
 
-    const budget = supportsThinking(providerRef.current.id) ? budgetFor(thinking) : 0;
+    const budget = supportsThinking(providerRef.current.id)
+      ? budgetFor(thinking)
+      : 0;
     const maxTurns = runMode === "auto" ? props.config.autoMaxTurns : 25;
 
     // The in-flight turn is built up here and mirrored into React state for render.
@@ -315,7 +337,9 @@ export function App(props: AppProps): React.ReactElement {
             sync();
             break;
           case "tool_end": {
-            const t = local.find((i) => i.kind === "tool" && i.toolId === ev.id);
+            const t = local.find(
+              (i) => i.kind === "tool" && i.toolId === ev.id,
+            );
             if (t && t.kind === "tool") {
               t.pending = false;
               t.result = ev.result;
@@ -326,7 +350,11 @@ export function App(props: AppProps): React.ReactElement {
             break;
           }
           case "usage": {
-            props.store.addUsage(sessionIdRef.current, ev.inputTokens, ev.outputTokens);
+            props.store.addUsage(
+              sessionIdRef.current,
+              ev.inputTokens,
+              ev.outputTokens,
+            );
             const s = props.store.getSession(sessionIdRef.current);
             if (s) {
               setCost(s.costUsd);
@@ -346,7 +374,12 @@ export function App(props: AppProps): React.ReactElement {
           case "done":
             outcome = ev.reason;
             if (ev.reason === "aborted") {
-              local.push({ id: nextId(), kind: "note", text: "⨯ aborted", tone: "error" });
+              local.push({
+                id: nextId(),
+                kind: "note",
+                text: "⨯ aborted",
+                tone: "error",
+              });
             } else if (ev.reason === "max_turns") {
               local.push({
                 id: nextId(),
@@ -360,7 +393,12 @@ export function App(props: AppProps): React.ReactElement {
       }
     } catch (err) {
       outcome = "error";
-      local.push({ id: nextId(), kind: "note", text: `cc: ${(err as Error).message}`, tone: "error" });
+      local.push({
+        id: nextId(),
+        kind: "note",
+        text: `cc: ${(err as Error).message}`,
+        tone: "error",
+      });
     } finally {
       flush(compacted);
       // Commit whatever `sync` hasn't already moved (the last, now-final item plus
@@ -373,7 +411,8 @@ export function App(props: AppProps): React.ReactElement {
       // A clean plan-mode turn produced a plan → surface accept/edit/reject.
       if (runMode === "plan" && outcome === "stop") {
         let planText = "";
-        for (const item of local) if (item.kind === "assistant") planText += item.text;
+        for (const item of local)
+          if (item.kind === "assistant") planText += item.text;
         if (planText.trim()) showPlan(planText);
       }
       // Send a prompt queued while this turn was running (unless it was aborted, a
@@ -383,7 +422,10 @@ export function App(props: AppProps): React.ReactElement {
         queuedRef.current = null;
         setQueued(null);
         push({ kind: "user", text: next });
-        messagesRef.current.push({ role: "user", content: [{ type: "text", text: next }] });
+        messagesRef.current.push({
+          role: "user",
+          content: [{ type: "text", text: next }],
+        });
         void runTurn();
       }
     }
@@ -400,7 +442,10 @@ export function App(props: AppProps): React.ReactElement {
     setMode("normal");
     const instruction = "Proceed with the plan above. Implement it now.";
     push({ kind: "user", text: instruction });
-    messagesRef.current.push({ role: "user", content: [{ type: "text", text: instruction }] });
+    messagesRef.current.push({
+      role: "user",
+      content: [{ type: "text", text: instruction }],
+    });
     note("plan accepted — executing");
     void runTurn("normal");
   }
@@ -424,13 +469,16 @@ export function App(props: AppProps): React.ReactElement {
     runMode: AgentMode,
     call: { id: string; name: string; input: unknown },
   ): Promise<boolean> {
-    if (runMode === "auto" || confirmAlwaysRef.current) return Promise.resolve(true);
+    if (runMode === "auto" || confirmAlwaysRef.current)
+      return Promise.resolve(true);
     const setting = props.config.confirm;
     if (setting === "off") return Promise.resolve(true);
     const gated =
       setting === "bash"
         ? call.name === "bash"
-        : call.name === "bash" || call.name === "write_file" || call.name === "edit_file";
+        : call.name === "bash" ||
+          call.name === "write_file" ||
+          call.name === "edit_file";
     if (!gated) return Promise.resolve(true);
     // Pause the loop: render the call and resolve once the user picks y/n/a.
     return buildConfirmPreview(call).then(
@@ -458,7 +506,8 @@ export function App(props: AppProps): React.ReactElement {
   // This is the canonical mode switch; the status line reflects it immediately.
   // Disabled while a plan awaits review (those keys belong to accept/edit/reject).
   function cycleMode(): void {
-    const next: AgentMode = mode === "normal" ? "plan" : mode === "plan" ? "auto" : "normal";
+    const next: AgentMode =
+      mode === "normal" ? "plan" : mode === "plan" ? "auto" : "normal";
     setMode(next);
     note(`mode → ${next}`);
   }
@@ -480,7 +529,7 @@ export function App(props: AppProps): React.ReactElement {
   function moveSel(delta: number): void {
     const n = completionsRef.current.length;
     if (n === 0) return;
-    setSelected((s) => ((s + delta) % n + n) % n); // wrap both ends
+    setSelected((s) => (((s + delta) % n) + n) % n); // wrap both ends
   }
   function dismissComplete(): void {
     completeDismissedRef.current = true;
@@ -558,7 +607,8 @@ export function App(props: AppProps): React.ReactElement {
   function listModels(): void {
     const ids: string[] = [];
     for (const pc of Object.values(props.config.providers)) {
-      for (const m of pc.models ?? []) ids.push(m.name ? `${m.id} (${m.name})` : m.id);
+      for (const m of pc.models ?? [])
+        ids.push(m.name ? `${m.id} (${m.name})` : m.id);
     }
     note(ids.length ? `models: ${ids.join(", ")}` : "no models configured");
   }
@@ -583,7 +633,10 @@ export function App(props: AppProps): React.ReactElement {
     switch (action.kind) {
       case "message":
         push({ kind: "user", text: line });
-        messagesRef.current.push({ role: "user", content: [{ type: "text", text: line }] });
+        messagesRef.current.push({
+          role: "user",
+          content: [{ type: "text", text: line }],
+        });
         void runTurn();
         break;
       case "set-mode":
@@ -624,12 +677,16 @@ export function App(props: AppProps): React.ReactElement {
       case "cost": {
         const s = props.store.getSession(sessionIdRef.current);
         if (s) {
-          note(`tokens: ${s.inputTokens}→${s.outputTokens} · cost: $${s.costUsd.toFixed(4)}`);
+          note(
+            `tokens: ${s.inputTokens}→${s.outputTokens} · cost: $${s.costUsd.toFixed(4)}`,
+          );
         }
         break;
       }
       case "resume":
-        note("resume from the TUI isn't supported yet — start with `cc --resume`");
+        note(
+          "resume from the TUI isn't supported yet — start with `cc --resume`",
+        );
         break;
       case "init":
         void doInit();
@@ -659,7 +716,10 @@ export function App(props: AppProps): React.ReactElement {
       baseSystemRef.current = `${baseSystemRef.current}\n\n── PROJECT CONTEXT (CC.md) ──\n${res.content!.trim()}`;
       note(`created ${res.path} — loaded as project context`);
     } catch (err) {
-      note(`/init failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+      note(
+        `/init failed: ${err instanceof Error ? err.message : String(err)}`,
+        "error",
+      );
     }
   }
 
@@ -779,12 +839,15 @@ export function App(props: AppProps): React.ReactElement {
   // ── `/` autocomplete suggestions, recomputed each render from the input ──
   // Only while the prompt is an in-progress slash command and the popover isn't
   // dismissed/busy/blocked by a plan. The refs are mirrored for the key handler.
-  const completeActive = !busy && !pendingPlan && input.startsWith("/") && !completeDismissed;
+  const completeActive =
+    !busy && !pendingPlan && input.startsWith("/") && !completeDismissed;
   const suggestions = completeActive
     ? completions(input, buildCompletionContext(props.config, props.store))
     : [];
   const completeOpen = suggestions.length > 0;
-  const sel = completeOpen ? Math.min(Math.max(selected, 0), suggestions.length - 1) : 0;
+  const sel = completeOpen
+    ? Math.min(Math.max(selected, 0), suggestions.length - 1)
+    : 0;
   completeOpenRef.current = completeOpen;
   completionsRef.current = suggestions;
   selRef.current = sel;
@@ -827,7 +890,9 @@ export function App(props: AppProps): React.ReactElement {
                 <Box key={item.id} flexDirection="column">
                   {clamped.trimmed ? (
                     <Text dimColor>
-                      {"  ↑ earlier lines hidden — shown in full when the turn finishes"}
+                      {
+                        "  ↑ earlier lines hidden — shown in full when the turn finishes"
+                      }
                     </Text>
                   ) : null}
                   <ItemView
@@ -859,7 +924,9 @@ export function App(props: AppProps): React.ReactElement {
           {queued !== null ? (
             <Text dimColor>{`⏎ queued: ${queued} (Esc to cancel)`}</Text>
           ) : null}
-          {completeOpen ? <Complete items={suggestions} selected={sel} /> : null}
+          {completeOpen ? (
+            <Complete items={suggestions} selected={sel} />
+          ) : null}
           {/* Framed input: rounded border tinted by mode, dimmed while busy. The
               prompt glyph lives inside the frame; MultilineInput's editing logic is
               untouched — only the surrounding chrome changed. */}
@@ -888,7 +955,11 @@ export function App(props: AppProps): React.ReactElement {
               cursorNonce={cursorNonce}
               onHistoryPrev={historyPrev}
               onHistoryNext={historyNext}
-              placeholder={busy ? "Enter to queue · Esc to cancel" : "message, or /help · Shift+Enter for newline"}
+              placeholder={
+                busy
+                  ? "Enter to queue · Esc to cancel"
+                  : "message, or /help · Shift+Enter for newline"
+              }
             />
           </Box>
         </Box>
@@ -913,7 +984,9 @@ export function startTui(props: AppProps): void {
   // The instance ref lets the App clear the screen via Ink's own clear() (see
   // the /clear handler) instead of writing raw escape sequences, which desync
   // Ink's renderer and cause duplicated lines / runaway layout.
-  const inkInstance: { current: { clear: () => void } | null } = { current: null };
+  const inkInstance: { current: { clear: () => void } | null } = {
+    current: null,
+  };
   const instance = render(<App {...props} inkInstance={inkInstance} />, {
     exitOnCtrlC: false,
   });

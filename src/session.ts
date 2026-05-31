@@ -80,11 +80,18 @@ const PRICES: { match: string; price: Price }[] = [
 ];
 
 /** Estimate USD cost for a token count given a model name. Unknown model → 0. */
-export function estimateCost(model: string, inputTokens: number, outputTokens: number): number {
+export function estimateCost(
+  model: string,
+  inputTokens: number,
+  outputTokens: number,
+): number {
   const m = model.toLowerCase();
   const entry = PRICES.find((p) => m.includes(p.match));
   if (!entry) return 0;
-  return (inputTokens * entry.price.input + outputTokens * entry.price.output) / 1_000_000;
+  return (
+    (inputTokens * entry.price.input + outputTokens * entry.price.output) /
+    1_000_000
+  );
 }
 
 // ── Store ─────────────────────────────────────────────────────────────────────
@@ -146,14 +153,20 @@ export class SessionStore {
   /** Append one message to a session's transcript, in order. Bumps updated_at. */
   appendTurn(sessionId: string, message: Message): void {
     const row = this.db
-      .query("SELECT COALESCE(MAX(idx), -1) AS maxIdx FROM turns WHERE session_id = ?")
+      .query(
+        "SELECT COALESCE(MAX(idx), -1) AS maxIdx FROM turns WHERE session_id = ?",
+      )
       .get(sessionId) as { maxIdx: number };
     const idx = row.maxIdx + 1;
     const now = Date.now();
     this.db
-      .query("INSERT INTO turns (session_id, idx, role, content, created_at) VALUES (?, ?, ?, ?, ?)")
+      .query(
+        "INSERT INTO turns (session_id, idx, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
+      )
       .run(sessionId, idx, message.role, JSON.stringify(message.content), now);
-    this.db.query("UPDATE sessions SET updated_at = ? WHERE id = ?").run(now, sessionId);
+    this.db
+      .query("UPDATE sessions SET updated_at = ? WHERE id = ?")
+      .run(now, sessionId);
   }
 
   /**
@@ -171,7 +184,9 @@ export class SessionStore {
       msgs.forEach((m, idx) => {
         insert.run(sessionId, idx, m.role, JSON.stringify(m.content), now);
       });
-      this.db.query("UPDATE sessions SET updated_at = ? WHERE id = ?").run(now, sessionId);
+      this.db
+        .query("UPDATE sessions SET updated_at = ? WHERE id = ?")
+        .run(now, sessionId);
     });
     tx(messages);
   }
@@ -200,7 +215,9 @@ export class SessionStore {
 
   /** Fetch one session row, or undefined if it doesn't exist. */
   getSession(id: string): SessionRow | undefined {
-    const row = this.db.query("SELECT * FROM sessions WHERE id = ?").get(id) as SessionDbRow | null;
+    const row = this.db
+      .query("SELECT * FROM sessions WHERE id = ?")
+      .get(id) as SessionDbRow | null;
     return row ? toSessionRow(row) : undefined;
   }
 
@@ -209,7 +226,9 @@ export class SessionStore {
     // rowid breaks ties when two sessions share an updated_at millisecond, so
     // the most-recently-created wins deterministically.
     const rows = this.db
-      .query("SELECT * FROM sessions ORDER BY updated_at DESC, rowid DESC LIMIT ?")
+      .query(
+        "SELECT * FROM sessions ORDER BY updated_at DESC, rowid DESC LIMIT ?",
+      )
       .all(limit) as SessionDbRow[];
     return rows.map(toSessionRow);
   }
@@ -217,7 +236,9 @@ export class SessionStore {
   /** Reconstruct a session's Message transcript in order. */
   loadMessages(sessionId: string): Message[] {
     const rows = this.db
-      .query("SELECT role, content FROM turns WHERE session_id = ? ORDER BY idx ASC")
+      .query(
+        "SELECT role, content FROM turns WHERE session_id = ? ORDER BY idx ASC",
+      )
       .all(sessionId) as TurnDbRow[];
     return rows.map((r) => ({
       role: r.role as Message["role"],

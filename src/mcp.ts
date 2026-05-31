@@ -65,7 +65,11 @@ export class McpClient {
   private nextId = 1;
   private readonly pending = new Map<
     number,
-    { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }
+    {
+      resolve: (v: unknown) => void;
+      reject: (e: Error) => void;
+      timer: ReturnType<typeof setTimeout>;
+    }
   >();
   private closeErr: Error | undefined;
 
@@ -74,7 +78,9 @@ export class McpClient {
   /** Run the transport + MCP handshake. Throws if either fails. */
   async connect(): Promise<void> {
     this.transport.onMessage((m) => this.handle(m));
-    this.transport.onClose((err) => this.failAll(err ?? new Error("transport closed")));
+    this.transport.onClose((err) =>
+      this.failAll(err ?? new Error("transport closed")),
+    );
     await this.transport.start();
     await this.request("initialize", {
       protocolVersion: PROTOCOL_VERSION,
@@ -86,7 +92,9 @@ export class McpClient {
 
   /** List the server's tools. */
   async listTools(): Promise<McpTool[]> {
-    const res = (await this.request("tools/list", {})) as { tools?: McpTool[] } | undefined;
+    const res = (await this.request("tools/list", {})) as
+      | { tools?: McpTool[] }
+      | undefined;
     return res?.tools ?? [];
   }
 
@@ -110,14 +118,20 @@ export class McpClient {
     return new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`MCP request "${method}" timed out after ${REQUEST_TIMEOUT_MS}ms`));
+        reject(
+          new Error(
+            `MCP request "${method}" timed out after ${REQUEST_TIMEOUT_MS}ms`,
+          ),
+        );
       }, REQUEST_TIMEOUT_MS);
       this.pending.set(id, { resolve, reject, timer });
-      this.transport.send({ jsonrpc: "2.0", id, method, params }).catch((e: Error) => {
-        clearTimeout(timer);
-        this.pending.delete(id);
-        reject(e);
-      });
+      this.transport
+        .send({ jsonrpc: "2.0", id, method, params })
+        .catch((e: Error) => {
+          clearTimeout(timer);
+          this.pending.delete(id);
+          reject(e);
+        });
     });
   }
 
@@ -133,7 +147,10 @@ export class McpClient {
     if (!entry) return;
     clearTimeout(entry.timer);
     this.pending.delete(id as number);
-    if (msg.error) entry.reject(new Error(`MCP error ${msg.error.code}: ${msg.error.message}`));
+    if (msg.error)
+      entry.reject(
+        new Error(`MCP error ${msg.error.code}: ${msg.error.message}`),
+      );
     else entry.resolve(msg.result);
   }
 
@@ -153,7 +170,10 @@ export class McpClient {
  * agent loop marks the tool_result as an error.
  */
 export function renderToolResult(res: unknown): string {
-  const r = (res ?? {}) as { content?: Array<{ type?: string; text?: string }>; isError?: boolean };
+  const r = (res ?? {}) as {
+    content?: Array<{ type?: string; text?: string }>;
+    isError?: boolean;
+  };
   const text = (r.content ?? [])
     .filter((c) => c.type === "text" && typeof c.text === "string")
     .map((c) => c.text)
@@ -167,10 +187,15 @@ export function renderToolResult(res: unknown): string {
  * so it can't collide with built-ins or other servers; `readOnly` is taken from
  * the `readOnlyHint` annotation (default false), which is what plan mode filters on.
  */
-export function wrapMcpTool(server: string, mt: McpTool, client: McpClient): Tool {
+export function wrapMcpTool(
+  server: string,
+  mt: McpTool,
+  client: McpClient,
+): Tool {
   return {
     name: `mcp__${server}__${mt.name}`,
-    description: mt.description || `MCP tool "${mt.name}" from server "${server}".`,
+    description:
+      mt.description || `MCP tool "${mt.name}" from server "${server}".`,
     schema: mt.inputSchema ?? { type: "object", properties: {} },
     readOnly: mt.annotations?.readOnlyHint === true,
     run(input) {
@@ -232,10 +257,16 @@ export function stdioTransport(cfg: McpServerConfig): Transport {
         env: { ...process.env, ...(cfg.env ?? {}) },
       });
       // Pump stdout in the background; signal close when it ends or the process exits.
-      readJsonLines(proc.stdout as ReadableStream<Uint8Array>, (m) => onMessage(m))
+      readJsonLines(proc.stdout as ReadableStream<Uint8Array>, (m) =>
+        onMessage(m),
+      )
         .catch(() => {})
         .finally(() => onClose());
-      proc.exited.then((code) => onClose(code ? new Error(`MCP server exited (code ${code})`) : undefined));
+      proc.exited.then((code) =>
+        onClose(
+          code ? new Error(`MCP server exited (code ${code})`) : undefined,
+        ),
+      );
     },
     async send(msg) {
       if (!proc) throw new Error("transport not started");
@@ -256,7 +287,10 @@ export function stdioTransport(cfg: McpServerConfig): Transport {
  * `endpoint` event carries the URL to POST client messages to; server messages
  * arrive as `message` events on the stream.
  */
-export function sseTransport(cfg: McpServerConfig, fetchImpl: typeof fetch = fetch): Transport {
+export function sseTransport(
+  cfg: McpServerConfig,
+  fetchImpl: typeof fetch = fetch,
+): Transport {
   let onMessage: (msg: RpcMessage) => void = () => {};
   let onClose: (err?: Error) => void = () => {};
   let endpoint = "";
@@ -278,8 +312,11 @@ export function sseTransport(cfg: McpServerConfig, fetchImpl: typeof fetch = fet
         markReady = res;
         failReady = rej;
       });
-      const resp = await fetchImpl(cfg.url, { headers: { Accept: "text/event-stream", ...headers } });
-      if (!resp.ok || !resp.body) throw new Error(`SSE connect failed: HTTP ${resp.status}`);
+      const resp = await fetchImpl(cfg.url, {
+        headers: { Accept: "text/event-stream", ...headers },
+      });
+      if (!resp.ok || !resp.body)
+        throw new Error(`SSE connect failed: HTTP ${resp.status}`);
       const base = cfg.url;
       // Pump the SSE stream in the background.
       readSse(resp.body as ReadableStream<Uint8Array>, (event, data) => {
@@ -389,7 +426,9 @@ export async function connectMcpServers(
       const mcpTools = await client.listTools();
       for (const mt of mcpTools) tools.push(wrapMcpTool(name, mt, client));
       clients.push(client);
-      notes.push(`${name} (${mcpTools.length} tool${mcpTools.length === 1 ? "" : "s"})`);
+      notes.push(
+        `${name} (${mcpTools.length} tool${mcpTools.length === 1 ? "" : "s"})`,
+      );
     } catch (err) {
       await client.close().catch(() => {});
       notes.push(`${name}: failed (${(err as Error).message})`);
@@ -400,7 +439,10 @@ export async function connectMcpServers(
 }
 
 /** A one-line stderr note summarizing MCP connections (undefined if none configured). */
-export function describeMcp(conn: McpConnection, configured: number): string | undefined {
+export function describeMcp(
+  conn: McpConnection,
+  configured: number,
+): string | undefined {
   if (configured === 0) return undefined;
   return `🔌 mcp: ${conn.notes.join(", ")}`;
 }

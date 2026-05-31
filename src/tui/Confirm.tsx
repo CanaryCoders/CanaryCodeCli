@@ -45,20 +45,28 @@ export async function buildConfirmPreview(call: {
   name: string;
   input: unknown;
 }): Promise<ConfirmPreview> {
-  const input = (call.input ?? {}) as Record<string, any>;
+  const input = (call.input ?? {}) as Record<string, unknown>;
 
   if (call.name === "bash") {
     return { kind: "bash", command: String(input.command ?? "") };
   }
 
-  if (call.name === "write_file" && typeof input.path === "string" && input.path) {
+  if (
+    call.name === "write_file" &&
+    typeof input.path === "string" &&
+    input.path
+  ) {
     const file = Bun.file(input.path);
     const old = (await file.exists()) ? await file.text() : "";
     const content = typeof input.content === "string" ? input.content : "";
     return { kind: "diff", path: input.path, diff: computeDiff(old, content) };
   }
 
-  if (call.name === "edit_file" && typeof input.path === "string" && input.path) {
+  if (
+    call.name === "edit_file" &&
+    typeof input.path === "string" &&
+    input.path
+  ) {
     const file = Bun.file(input.path);
     if (await file.exists()) {
       const text = await file.text();
@@ -71,18 +79,32 @@ export async function buildConfirmPreview(call: {
           ? text.split(oldStr).join(newStr)
           : (() => {
               const at = text.indexOf(oldStr);
-              return text.slice(0, at) + newStr + text.slice(at + oldStr.length);
+              return (
+                text.slice(0, at) + newStr + text.slice(at + oldStr.length)
+              );
             })();
-        return { kind: "diff", path: input.path, diff: computeDiff(text, updated) };
+        return {
+          kind: "diff",
+          path: input.path,
+          diff: computeDiff(text, updated),
+        };
       }
     }
   }
 
-  return { kind: "generic", name: call.name, summary: summarizeToolInput(call.name, call.input) };
+  return {
+    kind: "generic",
+    name: call.name,
+    summary: summarizeToolInput(call.name, call.input),
+  };
 }
 
 /** Render the pending-call confirmation box. */
-export function ConfirmView({ preview }: { preview: ConfirmPreview }): React.ReactElement {
+export function ConfirmView({
+  preview,
+}: {
+  preview: ConfirmPreview;
+}): React.ReactElement {
   return (
     <Box
       flexDirection="column"
@@ -102,7 +124,11 @@ export function ConfirmView({ preview }: { preview: ConfirmPreview }): React.Rea
           <DiffView diff={preview.diff} expanded />
         </Box>
       ) : (
-        <Text>{preview.summary ? `${preview.name}: ${preview.summary}` : preview.name}</Text>
+        <Text>
+          {preview.summary
+            ? `${preview.name}: ${preview.summary}`
+            : preview.name}
+        </Text>
       )}
       <Text dimColor>{"[y]es · [n]o · [a]lways (this session)"}</Text>
     </Box>
