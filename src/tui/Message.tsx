@@ -421,8 +421,10 @@ export function ItemView({
     case "banner":
       return <BannerView {...item} />;
     case "user":
-      // A user line starts a new turn → one blank line above it separates turns
-      // (continuation/within-turn items below carry no top margin).
+      // A user line starts a new turn → one blank line above it separates it
+      // from the previous block. Every item kind now carries its own top gap
+      // (SPACING.blockGap), so spacing is uniform: exactly one blank line
+      // between consecutive blocks throughout the transcript.
       return (
         <Gutter speaker="user" marginTop={SPACING.turnGap}>
           <Text>{item.text}</Text>
