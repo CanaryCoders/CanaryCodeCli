@@ -12,6 +12,39 @@ import type { Tool } from "./tools.ts";
 
 export type AgentMode = "normal" | "plan" | "auto";
 
+/**
+ * Plan-mode instructions appended to the system prompt. In plan mode the agent
+ * runs read-only, investigates the project, then emits ONE structured plan and
+ * stops — it does not implement. The TUI renders this plan with accept/edit/reject
+ * (Phase 4); in headless it simply prints and exits. The fixed section headings
+ * make the output easy to parse and present.
+ */
+export const PLAN_SYSTEM_PROMPT = [
+  "",
+  "── PLAN MODE ──",
+  "You are in read-only planning mode. Inspect the project with your read-only tools",
+  "(read_file, list_dir, grep, web_search). Write, edit, and bash tools are disabled and",
+  "will return an error if called. Investigate as much as you need, then produce ONE",
+  "structured plan and stop. Do NOT implement anything. Format the plan exactly like this:",
+  "",
+  "## Plan",
+  "1. <step — what to do and why>",
+  "2. <next step …>",
+  "",
+  "## Files to touch",
+  "- `path/to/file` — <what changes>",
+  "",
+  "## Risks",
+  '- <risk, or "none">',
+  "",
+  "After emitting the plan, stop. The user will review and accept it before any changes are made.",
+].join("\n");
+
+/** Compose the system prompt for a mode. Plan mode appends the planning rules. */
+export function systemForMode(base: string, mode: AgentMode): string {
+  return mode === "plan" ? `${base}\n${PLAN_SYSTEM_PROMPT}` : base;
+}
+
 export interface AgentOptions {
   provider: Provider;
   /** Concrete model name passed to the API. */

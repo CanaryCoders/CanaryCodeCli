@@ -9,7 +9,7 @@
 
 import { loadConfig, resolveModel } from "./config.ts";
 import { createProvider } from "./provider.ts";
-import { runAgent } from "./agent.ts";
+import { runAgent, systemForMode, type AgentMode } from "./agent.ts";
 import { resolveThinking, supportsThinking, describeLevel } from "./thinking.ts";
 import { tools as allTools } from "./tools.ts";
 import { webSearchTool } from "./websearch.ts";
@@ -23,6 +23,8 @@ interface Args {
   prompt?: string;
   /** --no-tools: run read-only with the tool set withheld entirely. */
   noTools: boolean;
+  /** --plan: read-only planning mode — investigate, emit a structured plan, stop. */
+  plan: boolean;
   /** --model <id>: override the configured model. */
   model?: string;
   /** --think <level>: off | think | think-hard | ultrathink (aliases accepted). */
@@ -36,7 +38,7 @@ interface Args {
 
 /** Parse argv into a small, explicit shape. Unknown flags are ignored for now. */
 function parseArgs(argv: string[]): Args {
-  const out: Args = { help: false, version: false, noTools: false };
+  const out: Args = { help: false, version: false, noTools: false, plan: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     switch (a) {
@@ -53,6 +55,9 @@ function parseArgs(argv: string[]): Args {
         break;
       case "--no-tools":
         out.noTools = true;
+        break;
+      case "--plan":
+        out.plan = true;
         break;
       case "--model":
         out.model = argv[++i];
@@ -97,6 +102,7 @@ function printUsage(): void {
       "  --model <id>       override the configured model",
       "  --think [level]    extended thinking: off | think | think-hard | ultrathink",
       "                     (also triggered by a keyword in the prompt)",
+      "  --plan             planning mode: investigate read-only, emit a plan, stop",
       "  --no-tools         disable tools (read-only quick Q&A)",
       "  --resume [id]      continue a saved session (most recent if id omitted);",
       "                     bare --resume with no prompt lists recent sessions",
@@ -208,8 +214,15 @@ async function runHeadless(args: Args): Promise<number> {
   }
 
   const modelName = resolved.model.name ?? resolved.model.id;
+  // Plan mode runs read-only: investigate, emit a structured plan, stop.
+  const mode: AgentMode = args.plan ? "plan" : "normal";
   // web_search is built from config (backend + key) and joins the static tool set.
-  const tools = args.noTools ? [] : [...allTools, webSearchTool(config.webSearch)];
+  // In plan mode the loop gates non-read-only tools, but we also withhold them from
+  // the model entirely so it only sees what it can actually use.
+  let tools = args.noTools ? [] : [...allTools, webSearchTool(config.webSearch)];
+  if (mode === "plan") tools = tools.filter((t) => t.readOnly);
+  const system = systemForMode(SYSTEM_PROMPT, mode);
+  if (mode === "plan") process.stderr.write("📋 plan mode (read-only)\n");
 
   // ── resolve the thinking level (explicit flag wins, else a prompt keyword) ──
   const thinking = resolveThinking({ flag: args.think, prompt });
@@ -277,9 +290,10 @@ async function runHeadless(args: Args): Promise<number> {
     for await (const ev of runAgent({
       provider,
       model: modelName,
-      system: SYSTEM_PROMPT,
+      system,
       messages,
       tools,
+      mode,
       thinkingBudget,
       compactAtTokens: config.compactAtTokens,
       signal: controller.signal,
