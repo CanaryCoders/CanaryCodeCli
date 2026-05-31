@@ -231,6 +231,9 @@ async function runHeadless(args: Args): Promise<number> {
   // each assistant/tool turn the loop appends) get written after the run.
   const persistedCount = messages.length;
   messages.push({ role: "user", content: [{ type: "text", text: prompt }] });
+  // Compaction rewrites `messages` in place, invalidating the index-based baseline;
+  // when it fires we re-sync the whole transcript instead of appending a tail.
+  let compacted = false;
 
   // Ctrl-C aborts the in-flight request cleanly.
   const controller = new AbortController();
@@ -245,6 +248,7 @@ async function runHeadless(args: Args): Promise<number> {
       system: SYSTEM_PROMPT,
       messages,
       tools,
+      compactAtTokens: config.compactAtTokens,
       signal: controller.signal,
     })) {
       switch (ev.type) {
@@ -263,6 +267,12 @@ async function runHeadless(args: Args): Promise<number> {
         case "usage":
           store.addUsage(sessionId, ev.inputTokens, ev.outputTokens);
           break;
+        case "compaction":
+          compacted = true;
+          process.stderr.write(
+            `\n⌘ compacted context: ${ev.summarized} msgs · ~${ev.beforeTokens}→${ev.afterTokens} tok\n`,
+          );
+          break;
         case "done":
           process.stdout.write("\n");
           if (ev.reason === "aborted") sawError = true;
@@ -272,14 +282,14 @@ async function runHeadless(args: Args): Promise<number> {
   } catch (err) {
     process.stdout.write("\n");
     console.error(`cc: ${(err as Error).message}`);
-    persistNewTurns(store, sessionId, messages, persistedCount);
+    flushTranscript(store, sessionId, messages, persistedCount, compacted);
     store.close();
     return 1;
   } finally {
     process.off("SIGINT", onSigint);
   }
 
-  persistNewTurns(store, sessionId, messages, persistedCount);
+  flushTranscript(store, sessionId, messages, persistedCount, compacted);
   const finalSession = store.getSession(sessionId);
   if (finalSession) {
     process.stderr.write(
@@ -291,13 +301,22 @@ async function runHeadless(args: Args): Promise<number> {
   return sawError ? 1 : 0;
 }
 
-/** Append every message added since `from` to the session transcript, in order. */
-function persistNewTurns(
+/**
+ * Persist the run's transcript. Normally appends just the messages added since
+ * `from`. If compaction rewrote `messages` in place this run, the index baseline
+ * is meaningless, so re-sync the whole (compacted) transcript instead.
+ */
+function flushTranscript(
   store: SessionStore,
   sessionId: string,
   messages: Message[],
   from: number,
+  compacted: boolean,
 ): void {
+  if (compacted) {
+    store.replaceTurns(sessionId, messages);
+    return;
+  }
   for (let i = from; i < messages.length; i++) {
     store.appendTurn(sessionId, messages[i]);
   }

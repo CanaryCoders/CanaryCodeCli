@@ -30,6 +30,13 @@ export interface AgentOptions {
    * tool-using replies still loop, so a cap guards against runaways.
    */
   maxTurns?: number;
+  /**
+   * Compact older history once the estimated context size exceeds this many
+   * tokens. Checked at each turn boundary. Omitted/0 disables compaction.
+   */
+  compactAtTokens?: number;
+  /** When compacting, how many recent messages to keep verbatim. Default 6. */
+  keepRecentMessages?: number;
   /** Abort in-flight work. Checked at each turn boundary and during streaming. */
   signal?: AbortSignal;
 }
@@ -41,6 +48,7 @@ export type AgentEvent =
   | { type: "tool_end"; id: string; name: string; result: string; isError: boolean }
   | { type: "usage"; inputTokens: number; outputTokens: number }
   | { type: "turn_end"; stopReason?: string }
+  | { type: "compaction"; beforeTokens: number; afterTokens: number; summarized: number }
   | { type: "done"; reason: "stop" | "max_turns" | "aborted" };
 
 /** Strip a Tool down to the provider-facing `ToolDef` (no executor). */
@@ -64,12 +72,31 @@ export async function* runAgent(opts: AgentOptions): AsyncGenerator<AgentEvent> 
   const { provider, model, system, messages, tools, signal } = opts;
   const mode: AgentMode = opts.mode ?? "normal";
   const maxTurns = opts.maxTurns ?? 25;
+  const compactAtTokens = opts.compactAtTokens ?? 0;
+  const keepRecent = opts.keepRecentMessages ?? 6;
   const toolDefs = tools.map(toToolDef);
 
   for (let turn = 0; turn < maxTurns; turn++) {
     if (signal?.aborted) {
       yield { type: "done", reason: "aborted" };
       return;
+    }
+
+    // ── compact older history if the context has grown too large ──
+    // Done at the turn boundary (message list is in a valid, paired state here).
+    if (compactAtTokens > 0) {
+      const beforeTokens = estimateTokens(messages, system);
+      if (beforeTokens > compactAtTokens) {
+        const result = await compactConversation({ provider, model, messages, keepRecent, signal });
+        if (result.summarized > 0) {
+          yield {
+            type: "compaction",
+            beforeTokens,
+            afterTokens: estimateTokens(messages, system),
+            summarized: result.summarized,
+          };
+        }
+      }
     }
 
     // ── stream one assistant turn ──
@@ -174,4 +201,125 @@ async function runToolCall(
   } catch (err) {
     return { content: (err as Error).message ?? String(err), isError: true };
   }
+}
+
+// ── Context compaction ─────────────────────────────────────────────────────────
+// When a conversation outgrows the model's useful context window, summarize the
+// older messages into one synthetic message and keep only the recent tail. We
+// estimate token count with a cheap chars/4 heuristic — no tokenizer dependency —
+// which is good enough to decide *when* to compact.
+
+const CHARS_PER_TOKEN = 4;
+
+/** Rough token estimate for a transcript (system + messages), chars/4. */
+export function estimateTokens(messages: Message[], system = ""): number {
+  let chars = system.length;
+  for (const m of messages) chars += JSON.stringify(m.content).length;
+  return Math.ceil(chars / CHARS_PER_TOKEN);
+}
+
+/** Render a message transcript to plain text for the summarizer prompt. */
+function renderTranscript(messages: Message[]): string {
+  const parts: string[] = [];
+  for (const m of messages) {
+    for (const b of m.content) {
+      switch (b.type) {
+        case "text":
+          if (b.text.trim()) parts.push(`${m.role}: ${b.text}`);
+          break;
+        case "tool_use":
+          parts.push(`${m.role} called ${b.name}(${JSON.stringify(b.input).slice(0, 800)})`);
+          break;
+        case "tool_result": {
+          const c = typeof b.content === "string" ? b.content : JSON.stringify(b.content);
+          parts.push(`tool_result${b.is_error ? " (error)" : ""}: ${c.slice(0, 800)}`);
+          break;
+        }
+        // thinking blocks are display-only; omit from the summary input.
+      }
+    }
+  }
+  return parts.join("\n");
+}
+
+/**
+ * Choose the split index: summarize `[0, cut)`, keep `[cut, end)`. `cut` is moved
+ * forward to the first assistant message so the kept tail starts assistant-first
+ * (valid after a synthetic user summary) and never orphans a tool_result from its
+ * tool_use. Returns 0 when no safe, worthwhile split exists.
+ */
+function pickCut(messages: Message[], keepRecent: number): number {
+  let cut = messages.length - keepRecent;
+  if (cut <= 0) return 0;
+  while (cut < messages.length && messages[cut].role !== "assistant") cut++;
+  // Need at least one message kept and at least two summarized to be worthwhile.
+  if (cut >= messages.length || cut < 2) return 0;
+  return cut;
+}
+
+interface CompactOptions {
+  provider: Provider;
+  model: string;
+  messages: Message[];
+  keepRecent: number;
+  signal?: AbortSignal;
+}
+
+/**
+ * Summarize the older portion of `messages` in place, replacing it with a single
+ * synthetic user message. Returns the number of messages that were summarized
+ * away (0 if compaction was skipped or produced no summary). Exported for testing.
+ */
+export async function compactConversation(opts: CompactOptions): Promise<{ summarized: number }> {
+  const { provider, model, messages, keepRecent, signal } = opts;
+  const cut = pickCut(messages, keepRecent);
+  if (cut === 0) return { summarized: 0 };
+
+  const older = messages.slice(0, cut);
+  const transcript = renderTranscript(older);
+  const summary = await summarize(provider, model, transcript, signal);
+  if (!summary.trim()) return { summarized: 0 };
+
+  const synthetic: Message = {
+    role: "user",
+    content: [
+      {
+        type: "text",
+        text:
+          "[Earlier conversation was summarized to conserve context.]\n\n" +
+          "Summary of the work so far:\n" +
+          summary,
+      },
+    ],
+  };
+  // Replace the summarized prefix with the single synthetic message.
+  messages.splice(0, cut, synthetic);
+  return { summarized: cut };
+}
+
+const SUMMARIZER_SYSTEM =
+  "You are a summarizer. Condense the conversation transcript into a compact but " +
+  "complete brief that lets the assistant continue the task seamlessly. Preserve: " +
+  "the user's goal, key decisions, files inspected or modified, important findings, " +
+  "and any pending next steps. Use terse bullet points. Do not invent details.";
+
+/** One-shot, tool-free summarization call against the provider. */
+async function summarize(
+  provider: Provider,
+  model: string,
+  transcript: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const messages: Message[] = [
+    {
+      role: "user",
+      content: [{ type: "text", text: `Summarize this conversation transcript:\n\n${transcript}` }],
+    },
+  ];
+  let out = "";
+  for await (const ev of provider.stream({ model, system: SUMMARIZER_SYSTEM, messages, tools: [] })) {
+    if (signal?.aborted) break;
+    if (ev.type === "text_delta") out += ev.text;
+  }
+  return out;
 }

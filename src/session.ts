@@ -157,6 +157,26 @@ export class SessionStore {
   }
 
   /**
+   * Replace a session's entire transcript with `messages`, in order. Used after
+   * context compaction, which rewrites the in-memory history in place — the stored
+   * turns must mirror it (storing the compacted form so resume doesn't re-bloat).
+   */
+  replaceTurns(sessionId: string, messages: Message[]): void {
+    const now = Date.now();
+    const tx = this.db.transaction((msgs: Message[]) => {
+      this.db.query("DELETE FROM turns WHERE session_id = ?").run(sessionId);
+      const insert = this.db.query(
+        "INSERT INTO turns (session_id, idx, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
+      );
+      msgs.forEach((m, idx) => {
+        insert.run(sessionId, idx, m.role, JSON.stringify(m.content), now);
+      });
+      this.db.query("UPDATE sessions SET updated_at = ? WHERE id = ?").run(now, sessionId);
+    });
+    tx(messages);
+  }
+
+  /**
    * Fold a usage sample into a session's running totals and accrue cost using the
    * session's model. Called once per `usage` event from the agent loop.
    */
