@@ -10,7 +10,7 @@
 // Item rendering lives in Message.tsx (collapsed/expandable tool calls); the plan
 // accept/edit/reject box lands in its own Phase-4 task. Esc aborts the in-flight
 // request; Ctrl+C aborts then (pressed twice) quits; Ctrl+R toggles verbose tool
-// output.
+// output; Shift+Tab cycles the mode (normal → plan → auto → normal).
 
 import { useRef, useState } from "react";
 import { Box, Static, Text, render, useApp, useInput } from "ink";
@@ -299,6 +299,15 @@ export function App(props: AppProps): React.ReactElement {
     note("plan rejected — still in plan mode");
   }
 
+  // ── cycle the agent mode (Shift+Tab): normal → plan → auto → normal ──
+  // This is the canonical mode switch; the status line reflects it immediately.
+  // Disabled while a plan awaits review (those keys belong to accept/edit/reject).
+  function cycleMode(): void {
+    const next: AgentMode = mode === "normal" ? "plan" : mode === "plan" ? "auto" : "normal";
+    setMode(next);
+    note(`mode → ${next}`);
+  }
+
   // ── switch the active model (/model <id>) ──
   function switchModel(id: string): void {
     const resolved = resolveModel(props.config, id);
@@ -439,6 +448,10 @@ export function App(props: AppProps): React.ReactElement {
       if (choice === "accept") acceptPlan();
       else if (choice === "edit") editPlan();
       else if (choice === "reject") rejectPlan();
+      return;
+    }
+    if (key.tab && key.shift) {
+      cycleMode();
       return;
     }
     if (key.ctrl && _input === "r") setVerbose((v) => !v);
