@@ -141,7 +141,8 @@ function migrate(db: Database): void {
       (c) => c.name,
     ),
   );
-  if (!cols.has("thinking")) db.run("ALTER TABLE sessions ADD COLUMN thinking TEXT");
+  if (!cols.has("thinking"))
+    db.run("ALTER TABLE sessions ADD COLUMN thinking TEXT");
   if (!cols.has("mode")) db.run("ALTER TABLE sessions ADD COLUMN mode TEXT");
 }
 

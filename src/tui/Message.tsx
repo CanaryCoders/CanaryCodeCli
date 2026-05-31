@@ -42,8 +42,15 @@ export type Item =
       provider: string;
     }
   | { id: number; kind: "user"; text: string }
-  | { id: number; kind: "assistant"; text: string }
-  | { id: number; kind: "thinking"; text: string }
+  | {
+      id: number;
+      kind: "assistant";
+      text: string;
+      /** This chunk continues an earlier-committed part of the same streamed block,
+       * so its speaker gutter is rendered glyph-less to avoid a repeated marker. */
+      continuation?: boolean;
+    }
+  | { id: number; kind: "thinking"; text: string; continuation?: boolean }
   | {
       id: number;
       kind: "tool";
@@ -186,6 +193,39 @@ export function tailLines(
   return { text, trimmed: false };
 }
 
+/**
+ * Length of the leading run of a streamed text block that is *stable* — i.e. safe
+ * to commit to the permanent `<Static>` scrollback because it will never re-render
+ * differently as more text arrives. This is the key to ghost-free streaming: only
+ * the unstable tail stays in the dynamic region, so that region can't outgrow the
+ * viewport (which is what desyncs Ink's redraw and duplicates lines).
+ *
+ * Stable = whole lines only (never a partial current line), and — for markdown —
+ * never a line *inside* an open ``` code fence (the fence needs its closing marker
+ * to render as one block). For plain `thinking` text it's simply everything up to
+ * the last newline. Returns 0 when nothing is committable yet.
+ */
+export function stablePrefixLen(
+  text: string,
+  kind: "assistant" | "thinking",
+): number {
+  const lastNl = text.lastIndexOf("\n");
+  if (lastNl < 0) return 0; // no complete line yet
+  if (kind === "thinking") return lastNl + 1;
+  // Markdown: walk complete lines, tracking ``` fence parity. The commit point is
+  // the offset after the last complete line that sits *outside* an open fence.
+  const lines = text.split("\n");
+  let fenceOpen = false;
+  let offset = 0;
+  let safe = 0;
+  for (let i = 0; i < lines.length - 1; i++) {
+    if (/^\s*```/.test(lines[i]!)) fenceOpen = !fenceOpen;
+    offset += lines[i]!.length + 1; // + the newline
+    if (!fenceOpen) safe = offset;
+  }
+  return safe;
+}
+
 /** First `n` non-trivial lines of a tool result, with an "(+N more)" marker. */
 function head(text: string, n: number): { lines: string[]; more: number } {
   const all = text.replace(/\n+$/, "").split("\n");
@@ -313,16 +353,20 @@ function Gutter({
   speaker,
   colorOverride,
   marginTop = 0,
+  glyphless = false,
   children,
 }: {
   speaker: Role;
   /** Override the gutter glyph colour (tool calls colour it by status). */
   colorOverride?: string;
   marginTop?: number;
+  /** Suppress the glyph (a two-space gutter) — used for continuation chunks of a
+   * streamed block whose first chunk already carried the marker. */
+  glyphless?: boolean;
   children: React.ReactNode;
 }): React.ReactElement {
   const s = ROLE[speaker];
-  const glyph = s.glyph ? `${s.glyph} ` : "  ";
+  const glyph = !glyphless && s.glyph ? `${s.glyph} ` : "  ";
   return (
     <Box flexDirection="row" marginTop={marginTop}>
       <Text
@@ -364,13 +408,13 @@ export function ItemView({
       );
     case "assistant":
       return (
-        <Gutter speaker="assistant">
+        <Gutter speaker="assistant" glyphless={item.continuation}>
           <Markdown text={item.text} />
         </Gutter>
       );
     case "thinking":
       return (
-        <Gutter speaker="thinking">
+        <Gutter speaker="thinking" glyphless={item.continuation}>
           <Text dimColor italic>
             {item.text}
           </Text>

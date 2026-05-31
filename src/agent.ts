@@ -78,11 +78,25 @@ export interface AgentOptions {
   thinkingBudget?: number;
   maxTokens?: number;
   /**
-   * Maximum number of assistant turns before bailing. In `auto` mode this is the
-   * autonomy cap; in `normal`/`plan` a single user prompt rarely needs many, but
-   * tool-using replies still loop, so a cap guards against runaways.
+   * Hard cap on assistant turns, used only when `checkpointEvery` is 0/unset.
+   * In `auto` mode and headless this is the autonomy/runaway cap; interactive
+   * callers prefer `checkpointEvery` + `onCheckpoint` for an unbounded loop.
    */
   maxTurns?: number;
+  /**
+   * Turns between runaway checkpoints. When > 0 the loop runs unbounded and, every
+   * `checkpointEvery` turns, calls `onCheckpoint` to decide whether to continue.
+   * If no `onCheckpoint` is supplied the checkpoint becomes a hard stop (the
+   * non-interactive backstop). 0/unset → the legacy `maxTurns` hard cap.
+   */
+  checkpointEvery?: number;
+  /**
+   * Called at each checkpoint with the turn count reached. Resolving `false` stops
+   * the loop (reason `stopped`); `true` runs on for another `checkpointEvery`
+   * turns. The TUI surfaces a "keep going?" prompt; auto/headless omit it so a
+   * checkpoint is a hard stop instead.
+   */
+  onCheckpoint?(turn: number): Promise<boolean>;
   /**
    * Compact older history once the estimated context size exceeds this many
    * tokens. Checked at each turn boundary. Omitted/0 disables compaction.
@@ -127,7 +141,8 @@ export type AgentEvent =
       afterTokens: number;
       summarized: number;
     }
-  | { type: "done"; reason: "stop" | "max_turns" | "aborted" };
+  | { type: "checkpoint"; turn: number }
+  | { type: "done"; reason: "stop" | "max_turns" | "aborted" | "stopped" };
 
 /** Strip a Tool down to the provider-facing `ToolDef` (no executor). */
 function toToolDef(t: Tool): ToolDef {
@@ -152,15 +167,45 @@ export async function* runAgent(
   const { provider, model, system, messages, tools, signal } = opts;
   const mode: AgentMode = opts.mode ?? "normal";
   const maxTurns = opts.maxTurns ?? 25;
+  const checkpointEvery = opts.checkpointEvery ?? 0;
   const compactAtTokens = opts.compactAtTokens ?? 0;
   const keepRecent = opts.keepRecentMessages ?? 6;
   const toolDefs = tools.map(toToolDef);
   // Index tools by name once so the per-call lookups below are O(1).
   const toolByName = new Map(tools.map((t) => [t.name, t] as const));
 
-  for (let turn = 0; turn < maxTurns; turn++) {
+  // The loop is unbounded when checkpointing is on (`checkpointEvery > 0`): it runs
+  // until the model stops asking for tools, the signal aborts, or the caller declines
+  // a checkpoint. When checkpointing is off it stops at the legacy `maxTurns` cap.
+  for (let turn = 0; ; turn++) {
     if (signal?.aborted) {
       yield { type: "done", reason: "aborted" };
+      return;
+    }
+
+    // ── turn-boundary cap / checkpoint ──
+    if (checkpointEvery > 0) {
+      if (turn > 0 && turn % checkpointEvery === 0) {
+        // Interactive caller decides whether to continue; without a hook the
+        // checkpoint is a hard stop (the non-interactive runaway backstop).
+        yield { type: "checkpoint", turn };
+        if (opts.onCheckpoint) {
+          const keepGoing = await opts.onCheckpoint(turn);
+          if (signal?.aborted) {
+            yield { type: "done", reason: "aborted" };
+            return;
+          }
+          if (!keepGoing) {
+            yield { type: "done", reason: "stopped" };
+            return;
+          }
+        } else {
+          yield { type: "done", reason: "max_turns" };
+          return;
+        }
+      }
+    } else if (turn >= maxTurns) {
+      yield { type: "done", reason: "max_turns" };
       return;
     }
 
@@ -332,8 +377,6 @@ export async function* runAgent(
     }
     messages.push({ role: "user", content: results });
   }
-
-  yield { type: "done", reason: "max_turns" };
 }
 
 /** Execute one tool call, enforcing plan-mode read-only gating. Never throws. */

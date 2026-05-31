@@ -54,6 +54,13 @@ export interface Config {
 
   /** Auto mode max loop turns before bailing. */
   autoMaxTurns: number;
+  /**
+   * Interactive (normal/plan) turns between runaway checkpoints. The loop runs
+   * unbounded; every `checkpointEvery` turns it pauses and asks whether to keep
+   * going. 0 disables checkpoints (falls back to a hard cap). Auto mode ignores
+   * this and uses `autoMaxTurns` as a hard cap (no human to ask).
+   */
+  checkpointEvery: number;
   /** Sub-agent concurrency cap. */
   maxConcurrent: number;
   /** Sub-agent nesting depth cap. */
@@ -90,6 +97,7 @@ function defaultConfig(): Config {
     webSearch: {},
     mcpServers: {},
     autoMaxTurns: 25,
+    checkpointEvery: 50,
     maxConcurrent: 3,
     maxDepth: 2,
     compactAtTokens: 120_000,
@@ -127,6 +135,7 @@ function mergeConfig(base: Config, user: Partial<Config>): Config {
     webSearch: { ...base.webSearch, ...(user.webSearch ?? {}) },
     mcpServers: { ...base.mcpServers, ...(user.mcpServers ?? {}) },
     autoMaxTurns: user.autoMaxTurns ?? base.autoMaxTurns,
+    checkpointEvery: user.checkpointEvery ?? base.checkpointEvery,
     maxConcurrent: user.maxConcurrent ?? base.maxConcurrent,
     maxDepth: user.maxDepth ?? base.maxDepth,
     compactAtTokens: user.compactAtTokens ?? base.compactAtTokens,
@@ -164,9 +173,7 @@ export async function loadConfig(path: string = configPath()): Promise<Config> {
  * sibling settings, etc.) and that we persist back to `~/.cc/config.json` so it
  * becomes the default next launch.
  */
-export type PersistableSettings = Partial<
-  Pick<Config, "model" | "confirm">
->;
+export type PersistableSettings = Partial<Pick<Config, "model" | "confirm">>;
 
 /**
  * Persist runtime preference changes back to `~/.cc/config.json`, merging onto

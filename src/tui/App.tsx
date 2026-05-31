@@ -53,6 +53,7 @@ import {
   type Item,
   type ItemInput,
   ItemView,
+  stablePrefixLen,
   statusVerb,
   tailLines,
 } from "./Message.tsx";
@@ -214,6 +215,15 @@ function App(props: AppProps): React.ReactElement {
   const confirmResolverRef = useRef<((ok: boolean) => void) | null>(null);
   const confirmAlwaysRef = useRef(false);
 
+  // Runaway checkpoint. Every `checkpointEvery` turns the unbounded loop pauses on
+  // `checkpointResolverRef`'s promise; [y] keeps going, [n] stops. The state holds
+  // the turn count reached (for the prompt); the ref mirrors it for the key handler.
+  const [pendingCheckpoint, setPendingCheckpoint] = useState<number | null>(
+    null,
+  );
+  const pendingCheckpointRef = useRef<number | null>(null);
+  const checkpointResolverRef = useRef<((ok: boolean) => void) | null>(null);
+
   // `/` autocomplete popover. `selected` is the highlighted row; `dismissed`
   // hides it (after Esc, or accepting a no-arg command) until the input changes.
   // `cursorNonce` is bumped when we set the input out-of-band so the MultilineInput
@@ -288,7 +298,11 @@ function App(props: AppProps): React.ReactElement {
     const budget = supportsThinking(providerRef.current.id)
       ? budgetFor(thinking)
       : 0;
-    const maxTurns = runMode === "auto" ? props.config.autoMaxTurns : 25;
+    // Auto mode runs unattended → a hard cap (no human to ask). Normal/plan run
+    // unbounded with a periodic "keep going?" checkpoint instead of a turn limit.
+    const interactive = runMode !== "auto";
+    const maxTurns = props.config.autoMaxTurns;
+    const checkpointEvery = interactive ? props.config.checkpointEvery : 0;
 
     // The in-flight turn is built up here and mirrored into React state for render.
     // Only the *last* item is ever mutated (text appends to it, a tool flips
@@ -300,7 +314,30 @@ function App(props: AppProps): React.ReactElement {
     // of `local` have already been handed to `<Static>`.
     const local: Item[] = [];
     let committed = 0;
+    // Ghost-free streaming: a growing assistant/thinking block is the one item that
+    // can outgrow the viewport. Before each commit, peel its *stable* prefix (whole
+    // lines, never inside an open code fence) into its own finalised chunk inserted
+    // just before it — the existing "commit all but last" pass then moves the chunk
+    // into `<Static>` permanently, leaving only the unstable tail in the live region.
+    // The tail is ≤ one logical line (plus any open fence), so it can't overflow.
+    const splitStableText = () => {
+      const last = local[local.length - 1];
+      if (!last || (last.kind !== "assistant" && last.kind !== "thinking"))
+        return;
+      const cut = stablePrefixLen(last.text, last.kind);
+      if (cut <= 0) return;
+      const chunk: Item = {
+        id: nextId(),
+        kind: last.kind,
+        text: last.text.slice(0, cut),
+        continuation: last.continuation,
+      };
+      last.text = last.text.slice(cut);
+      last.continuation = true; // its head was already committed above
+      local.splice(local.length - 1, 0, chunk); // insert the chunk before the tail
+    };
     const sync = () => {
+      splitStableText();
       const finalCount = local.length - 1; // all but the still-mutating last item
       if (finalCount > committed) {
         const newlyFinal = local.slice(committed, finalCount);
@@ -310,7 +347,9 @@ function App(props: AppProps): React.ReactElement {
       setLive(local.length > committed ? [local[local.length - 1]!] : []);
     };
     let compacted = false;
-    let outcome: "stop" | "max_turns" | "aborted" | "error" = "stop";
+    let lastCheckpoint = 0; // turn count of the most recent checkpoint, for the note
+    let outcome: "stop" | "max_turns" | "aborted" | "stopped" | "error" =
+      "stop";
 
     const appendText = (text: string) => {
       const last = local[local.length - 1];
@@ -332,6 +371,8 @@ function App(props: AppProps): React.ReactElement {
         tools,
         mode: runMode,
         maxTurns,
+        checkpointEvery,
+        onCheckpoint: interactive ? requestCheckpoint : undefined,
         thinkingBudget: budget,
         compactAtTokens: props.config.compactAtTokens,
         signal: controller.signal,
@@ -392,6 +433,11 @@ function App(props: AppProps): React.ReactElement {
             });
             sync();
             break;
+          case "checkpoint":
+            // The onCheckpoint hook surfaces the prompt; just remember the turn
+            // count so a subsequent "stopped" can name it.
+            lastCheckpoint = ev.turn;
+            break;
           case "done":
             outcome = ev.reason;
             if (ev.reason === "aborted") {
@@ -407,6 +453,12 @@ function App(props: AppProps): React.ReactElement {
                 kind: "note",
                 text: `⚠ stopped after ${maxTurns} turns (the turn limit)`,
                 tone: "error",
+              });
+            } else if (ev.reason === "stopped") {
+              local.push({
+                id: nextId(),
+                kind: "note",
+                text: `⏸ stopped at the ${lastCheckpoint}-turn checkpoint — send a message to continue`,
               });
             }
             break;
@@ -523,6 +575,27 @@ function App(props: AppProps): React.ReactElement {
     resolve(ok);
   }
 
+  // ── runaway checkpoint: the hook runAgent calls every `checkpointEvery` turns ──
+  // The loop is unbounded; this pauses it to ask "keep going?" so a stuck tool loop
+  // can't silently burn the budget. Resolving false stops the run cleanly.
+  function requestCheckpoint(turn: number): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      checkpointResolverRef.current = resolve;
+      pendingCheckpointRef.current = turn;
+      setPendingCheckpoint(turn);
+    });
+  }
+
+  /** Resolve a pending checkpoint with the user's choice and tear down the prompt. */
+  function resolveCheckpoint(ok: boolean): void {
+    const resolve = checkpointResolverRef.current;
+    if (!resolve) return;
+    checkpointResolverRef.current = null;
+    pendingCheckpointRef.current = null;
+    setPendingCheckpoint(null);
+    resolve(ok);
+  }
+
   // ── cycle the agent mode (Shift+Tab): normal → plan → auto → normal ──
   // This is the canonical mode switch; the status line reflects it immediately.
   // Disabled while a plan awaits review (those keys belong to accept/edit/reject).
@@ -625,7 +698,10 @@ function App(props: AppProps): React.ReactElement {
     // the preference to ~/.cc/config.json (so it's the default next launch).
     props.store.setModel(sessionIdRef.current, modelNameRef.current);
     void saveConfig({ model: label }).catch((err) =>
-      note(`could not save model preference: ${(err as Error).message}`, "error"),
+      note(
+        `could not save model preference: ${(err as Error).message}`,
+        "error",
+      ),
     );
     note(`model → ${label}`);
   }
@@ -785,9 +861,10 @@ function App(props: AppProps): React.ReactElement {
     // 3. An in-flight request — abort it.
     if (controllerRef.current) {
       controllerRef.current.abort();
-      // A pending confirm holds the loop on an unresolved promise — decline it so
-      // the abort can actually propagate instead of deadlocking.
+      // A pending confirm/checkpoint holds the loop on an unresolved promise —
+      // decline it so the abort can actually propagate instead of deadlocking.
       if (pendingConfirmRef.current) resolveConfirm(false, false);
+      if (pendingCheckpointRef.current !== null) resolveCheckpoint(false);
       quitArmedRef.current = false;
       if (quitTimerRef.current) clearTimeout(quitTimerRef.current);
       return;
@@ -828,6 +905,13 @@ function App(props: AppProps): React.ReactElement {
       if (choice === "yes") resolveConfirm(true, false);
       else if (choice === "no") resolveConfirm(false, false);
       else if (choice === "always") resolveConfirm(true, true);
+      return;
+    }
+    // A pending checkpoint owns y/n (Esc/Ctrl+C handled above stop the run).
+    if (pendingCheckpointRef.current !== null) {
+      const k = _input.toLowerCase();
+      if (k === "y") resolveCheckpoint(true);
+      else if (k === "n") resolveCheckpoint(false);
       return;
     }
     // Autocomplete popover navigation: ↑/↓ or Ctrl-P/Ctrl-N move, Tab/Enter accept.
@@ -946,6 +1030,16 @@ function App(props: AppProps): React.ReactElement {
 
       {pendingConfirm ? (
         <ConfirmView preview={pendingConfirm} />
+      ) : pendingCheckpoint !== null ? (
+        <Box flexDirection="column" marginTop={SPACING.inputGap}>
+          <Text color={tint("yellow")}>
+            {`⏸ ${pendingCheckpoint} turns in — keep going? `}
+            <Text bold>{"[y]"}</Text>
+            <Text dimColor>{"es / "}</Text>
+            <Text bold>{"[n]"}</Text>
+            <Text dimColor>{"o stop"}</Text>
+          </Text>
+        </Box>
       ) : pendingPlan ? (
         <PlanView plan={pendingPlan} mode={mode} />
       ) : (
