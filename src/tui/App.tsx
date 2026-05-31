@@ -14,7 +14,7 @@
 // output; Shift+Tab cycles the mode (normal → plan → auto → normal).
 
 import { useRef, useState } from "react";
-import { Box, Static, Text, render, useApp, useInput } from "ink";
+import { Box, Static, Text, render, useApp, useInput, useStdout } from "ink";
 import Spinner from "ink-spinner";
 import { MultilineInput } from "./Input.tsx";
 
@@ -85,6 +85,7 @@ function buildCompletionContext(config: Config, store: SessionStore): Completion
 
 export function App(props: AppProps): React.ReactElement {
   const app = useApp();
+  const { stdout } = useStdout();
 
   // Mutable engine state lives in refs (read inside async loops); React state
   // mirrors what the UI shows.
@@ -575,6 +576,10 @@ export function App(props: AppProps): React.ReactElement {
           cwd: process.cwd(),
           title: "(cleared)",
         });
+        // Ink's <Static> prints scrollback permanently — resetting React state
+        // alone leaves the old transcript on screen. Wipe the terminal
+        // (screen + scrollback) so the clear is actually visible.
+        stdout?.write("\x1b[2J\x1b[3J\x1b[H");
         setHistory([]);
         setCost(0);
         note("conversation cleared");
