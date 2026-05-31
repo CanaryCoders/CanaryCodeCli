@@ -36,6 +36,7 @@ import {
   type ThinkingLevel,
 } from "../thinking.ts";
 import { ItemView, type Item, type ItemInput } from "./Message.tsx";
+import { PlanView, planChoiceForKey } from "./Plan.tsx";
 
 // ── The component ────────────────────────────────────────────────────────────────
 // The transcript is rendered as a flat list of typed `Item`s (see Message.tsx).
@@ -86,6 +87,14 @@ export function App(props: AppProps): React.ReactElement {
   const [cost, setCost] = useState(0);
   // Verbose expands tool calls to show full input + output head (Ctrl+R toggles).
   const [verbose, setVerbose] = useState(false);
+  // After a plan-mode turn finishes, its plan text awaits accept/edit/reject. The
+  // ref mirrors the state so the (stale-closure) `useInput` handler reads it live.
+  const [pendingPlan, setPendingPlan] = useState<string | null>(null);
+  const pendingPlanRef = useRef<string | null>(null);
+  const showPlan = (text: string | null) => {
+    pendingPlanRef.current = text;
+    setPendingPlan(text);
+  };
 
   const push = (item: ItemInput) =>
     setHistory((prev) => [...prev, { ...item, id: nextId() } as Item]);
@@ -133,12 +142,14 @@ export function App(props: AppProps): React.ReactElement {
   }
 
   // ── run one user prompt through the agent loop ──
-  async function runTurn(): Promise<void> {
+  // `modeOverride` lets callers run in a mode other than the current state value,
+  // which matters when accepting a plan: `setMode("normal")` hasn't flushed yet.
+  async function runTurn(modeOverride?: AgentMode): Promise<void> {
     setBusy(true);
     const controller = new AbortController();
     controllerRef.current = controller;
 
-    const runMode = mode;
+    const runMode = modeOverride ?? mode;
     const system = systemForMode(props.baseSystem, runMode);
     let tools = buildTools(controller.signal);
     if (runMode === "plan") tools = tools.filter((t) => t.readOnly);
@@ -150,6 +161,7 @@ export function App(props: AppProps): React.ReactElement {
     const local: Item[] = [];
     const sync = () => setLive([...local]);
     let compacted = false;
+    let outcome: "stop" | "max_turns" | "aborted" | "error" = "stop";
 
     const appendText = (text: string) => {
       const last = local[local.length - 1];
@@ -221,6 +233,7 @@ export function App(props: AppProps): React.ReactElement {
             sync();
             break;
           case "done":
+            outcome = ev.reason;
             if (ev.reason === "aborted") {
               local.push({ id: nextId(), kind: "note", text: "⨯ aborted", tone: "error" });
             } else if (ev.reason === "max_turns") {
@@ -235,6 +248,7 @@ export function App(props: AppProps): React.ReactElement {
         }
       }
     } catch (err) {
+      outcome = "error";
       local.push({ id: nextId(), kind: "note", text: `cc: ${(err as Error).message}`, tone: "error" });
     } finally {
       flush(compacted);
@@ -244,7 +258,40 @@ export function App(props: AppProps): React.ReactElement {
       setLive([]);
       controllerRef.current = null;
       setBusy(false);
+      // A clean plan-mode turn produced a plan → surface accept/edit/reject.
+      if (runMode === "plan" && outcome === "stop") {
+        let planText = "";
+        for (const item of local) if (item.kind === "assistant") planText += item.text;
+        if (planText.trim()) showPlan(planText);
+      }
     }
+  }
+
+  // ── plan review: accept / edit / reject the pending plan ──
+  // Accept switches to normal mode and executes the plan as the next prompt; edit
+  // drops the plan text into the input box (in normal mode) for tweaking before
+  // running; reject discards it and stays in plan mode.
+  function acceptPlan(): void {
+    const plan = pendingPlanRef.current;
+    showPlan(null);
+    if (!plan) return;
+    setMode("normal");
+    const instruction = "Proceed with the plan above. Implement it now.";
+    push({ kind: "user", text: instruction });
+    messagesRef.current.push({ role: "user", content: [{ type: "text", text: instruction }] });
+    note("plan accepted — executing");
+    void runTurn("normal");
+  }
+  function editPlan(): void {
+    const plan = pendingPlanRef.current;
+    showPlan(null);
+    setMode("normal");
+    if (plan) setInput(plan.trim());
+    note("editing plan — submit to execute, or clear to discard");
+  }
+  function rejectPlan(): void {
+    showPlan(null);
+    note("plan rejected — still in plan mode");
   }
 
   // ── switch the active model (/model <id>) ──
@@ -341,9 +388,22 @@ export function App(props: AppProps): React.ReactElement {
     }
   }
 
-  // Esc aborts an in-flight request; Ctrl+R toggles verbose tool output.
+  // Esc aborts an in-flight request; Ctrl+R toggles verbose tool output. While a
+  // plan awaits review the a/e/r keys drive accept/edit/reject (TextInput is
+  // unmounted then, so they don't reach the prompt). The handler reads the plan
+  // via its ref because Ink's `useInput` closure is captured once (stale state).
   useInput((_input, key) => {
-    if (key.escape && controllerRef.current) controllerRef.current.abort();
+    if (key.escape && controllerRef.current) {
+      controllerRef.current.abort();
+      return;
+    }
+    if (pendingPlanRef.current && !key.ctrl && !key.meta) {
+      const choice = planChoiceForKey(_input);
+      if (choice === "accept") acceptPlan();
+      else if (choice === "edit") editPlan();
+      else if (choice === "reject") rejectPlan();
+      return;
+    }
     if (key.ctrl && _input === "r") setVerbose((v) => !v);
   });
 
@@ -364,21 +424,25 @@ export function App(props: AppProps): React.ReactElement {
         </Box>
       ) : null}
 
-      <Box marginTop={1}>
-        {busy ? (
-          <Text color="yellow">
-            <Spinner type="dots" />{" "}
-          </Text>
-        ) : (
-          <Text color="cyan">{"› "}</Text>
-        )}
-        <TextInput
-          value={input}
-          onChange={setInput}
-          onSubmit={onSubmit}
-          placeholder={busy ? "working… (Esc to abort)" : "message, or /help"}
-        />
-      </Box>
+      {pendingPlan ? (
+        <PlanView plan={pendingPlan} />
+      ) : (
+        <Box marginTop={1}>
+          {busy ? (
+            <Text color="yellow">
+              <Spinner type="dots" />{" "}
+            </Text>
+          ) : (
+            <Text color="cyan">{"› "}</Text>
+          )}
+          <TextInput
+            value={input}
+            onChange={setInput}
+            onSubmit={onSubmit}
+            placeholder={busy ? "working… (Esc to abort)" : "message, or /help"}
+          />
+        </Box>
+      )}
 
       <Box>
         <Text dimColor>{modelLabel}</Text>
