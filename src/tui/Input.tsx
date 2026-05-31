@@ -99,6 +99,8 @@ export interface InputKey {
   downArrow?: boolean;
   backspace?: boolean;
   delete?: boolean;
+  escape?: boolean;
+  tab?: boolean;
 }
 
 /** Map an absolute cursor offset to its {line, col} within the value. */
@@ -267,24 +269,96 @@ export function MultilineInput({
   }
   const effectiveCursor = Math.min(cursor, value.length);
 
+  // Paste coalescing: a terminal delivers a large paste as several back-to-back
+  // stdin chunks, so Ink fires `useInput` once per chunk — each chunk would
+  // otherwise become its *own* `[Pasted …]` chip. We buffer consecutive printable
+  // input that arrives within the same event-loop turn and process it as one
+  // string on a deferred flush, so a single paste collapses into a single chip.
+  // The live `value`/`cursor` are mirrored in refs because the flush runs after
+  // React's state has moved on from the closure that scheduled it.
+  const valueRef = useRef(value);
+  valueRef.current = value;
+  const cursorRef = useRef(effectiveCursor);
+  cursorRef.current = effectiveCursor;
+  const pasteBufRef = useRef("");
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const applyResult = (result: InputResult): void => {
+    if (result.type === "submit") {
+      onSubmit(result.value);
+    } else if (result.type === "update") {
+      cursorRef.current = result.cursor;
+      setCursor(result.cursor);
+      if (result.value !== valueRef.current) {
+        valueRef.current = result.value;
+        onChange(result.value);
+      }
+    } else if (result.type === "history-prev") {
+      onHistoryPrev?.();
+    } else if (result.type === "history-next") {
+      onHistoryNext?.();
+    }
+  };
+
+  // Drain the buffered paste/typed-text burst as a single insert, so a chunked
+  // paste is registered once (one chip) rather than per-chunk.
+  const flushPaste = (): void => {
+    if (flushTimerRef.current) {
+      clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = null;
+    }
+    const text = pasteBufRef.current;
+    pasteBufRef.current = "";
+    if (!text) return;
+    applyResult(
+      reduceInput(
+        { value: valueRef.current, cursor: cursorRef.current },
+        text,
+        {},
+        { capture, registerPaste },
+      ),
+    );
+  };
+
   useInput(
     (input, key) => {
-      const result = reduceInput(
-        { value, cursor: effectiveCursor },
-        input,
-        key,
-        { capture, registerPaste },
-      );
-      if (result.type === "submit") {
-        onSubmit(result.value);
-      } else if (result.type === "update") {
-        setCursor(result.cursor);
-        if (result.value !== value) onChange(result.value);
-      } else if (result.type === "history-prev") {
-        onHistoryPrev?.();
-      } else if (result.type === "history-next") {
-        onHistoryNext?.();
+      // Printable input with no key chord is either a keystroke or one chunk of a
+      // paste — buffer it and flush the whole burst together on the next tick.
+      const printable =
+        input &&
+        !key.ctrl &&
+        !key.return &&
+        !key.backspace &&
+        !key.delete &&
+        !key.leftArrow &&
+        !key.rightArrow &&
+        !key.upArrow &&
+        !key.downArrow &&
+        !key.escape &&
+        !key.tab;
+      if (printable) {
+        // Buffer and flush on the next tick. All the chunks of one paste (whether
+        // the terminal sends it as a few big blocks or many single chars) arrive
+        // within the *same* event-loop turn, so they accumulate into one buffer
+        // and are inserted as a single chip; an ordinary keystroke is a lone chunk
+        // flushed a sub-millisecond tick later, which is imperceptible.
+        pasteBufRef.current += input;
+        if (!flushTimerRef.current) {
+          flushTimerRef.current = setTimeout(flushPaste, 0);
+        }
+        return;
       }
+      // Any control/navigation key first commits the buffered burst (preserving
+      // order), then applies its own effect against the now-current value.
+      flushPaste();
+      applyResult(
+        reduceInput(
+          { value: valueRef.current, cursor: cursorRef.current },
+          input,
+          key,
+          { capture, registerPaste },
+        ),
+      );
     },
     { isActive },
   );
