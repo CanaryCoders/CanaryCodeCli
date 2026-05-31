@@ -177,7 +177,12 @@ function ToolView({
   const mark = item.pending ? "…" : item.isError ? "✗" : "✓";
   const color = item.pending ? "yellow" : item.isError ? "red" : "green";
   const summary = summarizeToolInput(item.name, item.input);
-  const headline = summary ? `${item.name}: ${truncate(summary, 72)}` : item.name;
+  // `bash` shows the FULL command, wrapped, never truncated — "what shell command
+  // ran" is the thing the user most wants to verify. Every other tool keeps the
+  // 72-char one-line summary. Ink `<Text>` wraps by default, so leaving bash's
+  // command un-truncated lets it flow onto the next line instead of `…`-eliding.
+  const shown = summary ? (item.name === "bash" ? summary : truncate(summary, 72)) : "";
+  const headline = shown ? `${item.name}: ${shown}` : item.name;
 
   // Errors always reveal their first line; expansion reveals input + output head.
   const showBody = !item.pending && item.result && (expanded || item.isError);
@@ -188,10 +193,10 @@ function ToolView({
 
   return (
     <Box flexDirection="column">
-      <Box>
-        <Text color={color}>{`⚙ ${headline}`}</Text>
+      <Text color={color}>
+        {`⚙ ${headline}`}
         <Text dimColor>{` ${mark}`}</Text>
-      </Box>
+      </Text>
       {expanded && summary ? (
         <Text dimColor>{`  ${truncate(fmtInput(item.input), 200)}`}</Text>
       ) : null}
