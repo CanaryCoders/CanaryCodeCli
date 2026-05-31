@@ -15,6 +15,7 @@ import { tools as allTools } from "./tools.ts";
 import { webSearchTool } from "./websearch.ts";
 import { SessionStore, type SessionRow } from "./session.ts";
 import { loadProjectContext, composeSystemPrompt, describeContext } from "./context.ts";
+import { discoverSkills, composeSkillsPrompt, describeSkills, readSkillTool } from "./skills.ts";
 import { spawnAgentTool, Semaphore } from "./subagents.ts";
 import type { Message } from "./provider.ts";
 
@@ -237,10 +238,17 @@ async function runHeadless(args: Args): Promise<number> {
   // into sub-agent runs spawned by the spawn_agent tool below.
   const controller = new AbortController();
 
+  // Discover skills (global ~/.cc/skills + project ./.cc/skills). Only their
+  // name+description go into the prompt; bodies load on demand via read_skill.
+  const skills = await discoverSkills();
+  const skillsNote = describeSkills(skills);
+  if (skillsNote) process.stderr.write(`${skillsNote}\n`);
+
   // web_search is built from config (backend + key) and joins the static tool set.
-  // In plan mode the loop gates non-read-only tools, but we also withhold them from
-  // the model entirely so it only sees what it can actually use.
-  let tools = args.noTools ? [] : [...allTools, webSearchTool(config.webSearch)];
+  // read_skill (read-only) lets the model pull a skill's full instructions on
+  // demand. In plan mode the loop gates non-read-only tools, but we also withhold
+  // them from the model entirely so it only sees what it can actually use.
+  let tools = args.noTools ? [] : [...allTools, webSearchTool(config.webSearch), readSkillTool(skills)];
   // spawn_agent lets the model delegate focused sub-tasks to child agents with a
   // fresh context. Added only when sub-agents are enabled (maxDepth > 0); it is
   // mutating, so the plan-mode filter below drops it. The inherited tool set is the
@@ -266,7 +274,10 @@ async function runHeadless(args: Args): Promise<number> {
   const projectContext = await loadProjectContext();
   const contextNote = describeContext(projectContext);
   if (contextNote) process.stderr.write(`${contextNote}\n`);
-  const system = systemForMode(composeSystemPrompt(SYSTEM_PROMPT, projectContext), mode);
+  const system = systemForMode(
+    composeSkillsPrompt(composeSystemPrompt(SYSTEM_PROMPT, projectContext), skills),
+    mode,
+  );
   if (mode === "plan") process.stderr.write("📋 plan mode (read-only)\n");
   if (mode === "auto") process.stderr.write(`🤖 auto mode (autonomous · max ${turnCap} turns)\n`);
 
