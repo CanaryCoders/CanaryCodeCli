@@ -15,6 +15,7 @@ import { tools as allTools } from "./tools.ts";
 import { webSearchTool } from "./websearch.ts";
 import { SessionStore, type SessionRow } from "./session.ts";
 import { loadProjectContext, composeSystemPrompt, describeContext } from "./context.ts";
+import { spawnAgentTool, Semaphore } from "./subagents.ts";
 import type { Message } from "./provider.ts";
 
 interface Args {
@@ -232,10 +233,33 @@ async function runHeadless(args: Args): Promise<number> {
   // Turn cap: auto mode uses the configured autonomy budget; otherwise a fixed
   // runaway guard. Surfaced in the max_turns message below.
   const turnCap = mode === "auto" ? config.autoMaxTurns : 25;
+  // Ctrl-C aborts the in-flight request cleanly. Created early so it can be threaded
+  // into sub-agent runs spawned by the spawn_agent tool below.
+  const controller = new AbortController();
+
   // web_search is built from config (backend + key) and joins the static tool set.
   // In plan mode the loop gates non-read-only tools, but we also withhold them from
   // the model entirely so it only sees what it can actually use.
   let tools = args.noTools ? [] : [...allTools, webSearchTool(config.webSearch)];
+  // spawn_agent lets the model delegate focused sub-tasks to child agents with a
+  // fresh context. Added only when sub-agents are enabled (maxDepth > 0); it is
+  // mutating, so the plan-mode filter below drops it. The inherited tool set is the
+  // base tools (children get their own nested spawn_agent up to the depth cap).
+  if (!args.noTools && config.maxDepth > 0) {
+    const limiter = new Semaphore(config.maxConcurrent);
+    tools = [
+      ...tools,
+      spawnAgentTool({
+        config,
+        parentProvider: provider,
+        parentModel: modelName,
+        inheritedTools: tools,
+        depth: 0,
+        limiter,
+        signal: controller.signal,
+      }),
+    ];
+  }
   if (mode === "plan") tools = tools.filter((t) => t.readOnly);
   // Project memory (CC.md > AGENTS.md > CLAUDE.md, nearest dir first) is prepended
   // to the base prompt before the mode-specific rules are appended.
@@ -293,8 +317,7 @@ async function runHeadless(args: Args): Promise<number> {
   // when it fires we re-sync the whole transcript instead of appending a tail.
   let compacted = false;
 
-  // Ctrl-C aborts the in-flight request cleanly.
-  const controller = new AbortController();
+  // Ctrl-C aborts the in-flight request cleanly (controller created above).
   const onSigint = () => controller.abort();
   process.on("SIGINT", onSigint);
 
