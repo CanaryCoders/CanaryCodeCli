@@ -18,7 +18,7 @@ import { loadProjectContext, composeSystemPrompt, describeContext } from "./cont
 import { discoverSkills, composeSkillsPrompt, describeSkills, readSkillTool } from "./skills.ts";
 import { spawnAgentTool, Semaphore } from "./subagents.ts";
 import { connectMcpServers, describeMcp, closeMcp, type McpConnection } from "./mcp.ts";
-import { renderDiff } from "./diff.ts";
+import { renderDiff, diffStat } from "./diff.ts";
 import { renderAnsi } from "./markdown.ts";
 import { startTui } from "./tui/App.tsx";
 import type { Message } from "./provider.ts";
@@ -32,6 +32,8 @@ interface Args {
   noTools: boolean;
   /** --no-color: force raw markdown to stdout even on a TTY (also honoured: NO_COLOR). */
   noColor: boolean;
+  /** --json: emit one structured JSON event per line on stdout (for scripting). */
+  json: boolean;
   /** --plan: read-only planning mode — investigate, emit a structured plan, stop. */
   plan: boolean;
   /** --auto (alias --yolo): autonomous multi-turn execution, capped at autoMaxTurns. */
@@ -49,7 +51,7 @@ interface Args {
 
 /** Parse argv into a small, explicit shape. Unknown flags are ignored for now. */
 function parseArgs(argv: string[]): Args {
-  const out: Args = { help: false, version: false, noTools: false, noColor: false, plan: false, auto: false };
+  const out: Args = { help: false, version: false, noTools: false, noColor: false, json: false, plan: false, auto: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     switch (a) {
@@ -69,6 +71,9 @@ function parseArgs(argv: string[]): Args {
         break;
       case "--no-color":
         out.noColor = true;
+        break;
+      case "--json":
+        out.json = true;
         break;
       case "--plan":
         out.plan = true;
@@ -125,6 +130,7 @@ function printUsage(): void {
       "                     capped at autoMaxTurns (default 25)",
       "  --no-tools         disable tools (read-only quick Q&A)",
       "  --no-color         raw markdown to stdout even on a TTY (also: NO_COLOR)",
+      "  --json             stream structured JSON events (JSONL) on stdout",
       "  --resume [id]      continue a saved session (most recent if id omitted);",
       "                     bare --resume with no prompt lists recent sessions",
       "  -h, --help         show this help",
@@ -155,7 +161,13 @@ const SYSTEM_PROMPT = [
   "You are cc, a concise terminal coding agent.",
   "You operate in the user's current working directory and can read, search, and modify files and run shell commands via your tools.",
   "Be direct. Use tools to inspect the project before answering; prefer evidence over assumptions.",
-  "When you finish a task, give a short summary of what you did.",
+  "",
+  "ALWAYS end your turn with a recap once you have finished working (i.e. your final reply that makes no further tool calls). Never stop after a tool call without a closing message. The recap is mandatory — even for small tasks or when nothing changed. Format it exactly as:",
+  "",
+  "## Recap",
+  "- <what you did, one bullet per change or finding>",
+  "",
+  "Keep it short: list files touched and the key changes, plus anything the user should know (follow-ups, caveats, how to verify). If the task produced no changes, say so explicitly.",
 ].join("\n");
 
 /** Render a one-line summary per recent session (the `/resume` listing). */
@@ -354,6 +366,12 @@ async function runHeadless(args: Args): Promise<number> {
   process.on("SIGINT", onSigint);
 
   let sawError = false;
+  // --json: emit one structured event per line on stdout so scripts can consume the
+  // run (text, thinking, tool_start/tool_end, usage, compaction, done). Human-facing
+  // formatting (markdown, the ⚙/✓ tool lines, diffs) is suppressed on stdout; the
+  // raw JSONL is the whole output. Startup notes still go to stderr (separate stream).
+  const jsonMode = args.json;
+  const emit = (obj: unknown) => process.stdout.write(`${JSON.stringify(obj)}\n`);
   // Tracks an open (unclosed) dimmed thinking block on stderr so we can reset it
   // before any non-thinking output.
   let thinkingOpen = false;
@@ -367,7 +385,7 @@ async function runHeadless(args: Args): Promise<number> {
   // and render it as ANSI styling once the turn's deltas have all arrived (markdown
   // needs whole blocks; streaming char-by-char can't style). Piped output (not a
   // TTY), NO_COLOR, or --no-color keep the raw markdown streaming so it composes.
-  const renderMd = Boolean(process.stdout.isTTY) && !process.env.NO_COLOR && !args.noColor;
+  const renderMd = !jsonMode && Boolean(process.stdout.isTTY) && !process.env.NO_COLOR && !args.noColor;
   let mdBuf = "";
   const flushMarkdown = () => {
     if (mdBuf) {
@@ -390,6 +408,10 @@ async function runHeadless(args: Args): Promise<number> {
     })) {
       switch (ev.type) {
         case "text":
+          if (jsonMode) {
+            emit({ type: "text", text: ev.text });
+            break;
+          }
           closeThinking();
           // Render mode buffers the turn's text (flushed at turn_end); raw mode
           // streams each delta immediately so piped output stays live.
@@ -397,6 +419,10 @@ async function runHeadless(args: Args): Promise<number> {
           else process.stdout.write(ev.text);
           break;
         case "thinking":
+          if (jsonMode) {
+            emit({ type: "thinking", text: ev.text });
+            break;
+          }
           // Stream reasoning to stderr (dimmed) so it stays out of stdout output.
           if (!thinkingOpen) {
             process.stderr.write("\n💭 \x1b[2m");
@@ -406,32 +432,70 @@ async function runHeadless(args: Args): Promise<number> {
           break;
         case "turn_end":
           // The turn's assistant text is complete — render the buffered markdown.
-          flushMarkdown();
+          if (!jsonMode) flushMarkdown();
           break;
         case "tool_start":
+          // The exact tool call before it runs — full input, so the user (or a
+          // script under --json) can see precisely what is about to execute.
+          if (jsonMode) {
+            emit({ type: "tool_start", id: ev.id, name: ev.name, input: ev.input });
+            break;
+          }
           closeThinking();
           process.stderr.write(`\n⚙ ${ev.name} ${JSON.stringify(ev.input)}\n`);
           break;
         case "tool_end":
+          if (jsonMode) {
+            if (ev.isError) sawError = true;
+            emit({
+              type: "tool_end",
+              id: ev.id,
+              name: ev.name,
+              isError: ev.isError,
+              result: ev.result,
+              ...(ev.diff ? { diff: diffStat(ev.diff) } : {}),
+            });
+            break;
+          }
+          // The exit line after the call completes (✓ ok / ✗ error), mirroring the
+          // ⚙ start line so every tool run shows a begin and an end.
           if (ev.isError) {
             sawError = true;
             process.stderr.write(`✗ ${ev.name}: ${ev.result}\n`);
-          } else if (ev.diff && ev.diff.hunks.length > 0) {
-            // write_file/edit_file carry a diff — show what changed (green/red on a TTY).
-            const color = Boolean(process.stderr.isTTY) && !process.env.NO_COLOR;
-            process.stderr.write(`${renderDiff(ev.diff, { color, maxLines: 60 })}\n`);
+          } else {
+            process.stderr.write(`✓ ${ev.name}\n`);
+            if (ev.diff && ev.diff.hunks.length > 0) {
+              // write_file/edit_file carry a diff — show what changed (green/red on a TTY).
+              const color = Boolean(process.stderr.isTTY) && !process.env.NO_COLOR;
+              process.stderr.write(`${renderDiff(ev.diff, { color, maxLines: 60 })}\n`);
+            }
           }
           break;
         case "usage":
+          if (jsonMode) emit({ type: "usage", inputTokens: ev.inputTokens, outputTokens: ev.outputTokens });
           store.addUsage(sessionId, ev.inputTokens, ev.outputTokens);
           break;
         case "compaction":
           compacted = true;
+          if (jsonMode) {
+            emit({
+              type: "compaction",
+              summarized: ev.summarized,
+              beforeTokens: ev.beforeTokens,
+              afterTokens: ev.afterTokens,
+            });
+            break;
+          }
           process.stderr.write(
             `\n⌘ compacted context: ${ev.summarized} msgs · ~${ev.beforeTokens}→${ev.afterTokens} tok\n`,
           );
           break;
         case "done":
+          if (jsonMode) {
+            emit({ type: "done", reason: ev.reason });
+            if (ev.reason === "aborted" || ev.reason === "max_turns") sawError = true;
+            break;
+          }
           closeThinking();
           flushMarkdown();
           process.stdout.write("\n");
@@ -448,9 +512,13 @@ async function runHeadless(args: Args): Promise<number> {
       }
     }
   } catch (err) {
-    closeThinking();
-    flushMarkdown();
-    process.stdout.write("\n");
+    if (jsonMode) {
+      emit({ type: "error", message: (err as Error).message });
+    } else {
+      closeThinking();
+      flushMarkdown();
+      process.stdout.write("\n");
+    }
     console.error(`cc: ${(err as Error).message}`);
     flushTranscript(store, sessionId, messages, persistedCount, compacted);
     store.close();
