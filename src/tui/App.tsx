@@ -46,7 +46,7 @@ import {
   buildConfirmPreview,
   type ConfirmPreview,
 } from "./Confirm.tsx";
-import { modeColor as themeModeColor } from "./theme.ts";
+import { modeColor as themeModeColor, SPACING, tint } from "./theme.ts";
 
 // ── The component ────────────────────────────────────────────────────────────────
 // The transcript is rendered as a flat list of typed `Item`s (see Message.tsx).
@@ -741,18 +741,26 @@ export function App(props: AppProps): React.ReactElement {
       ) : pendingPlan ? (
         <PlanView plan={pendingPlan} />
       ) : (
-        <Box flexDirection="column" marginTop={1}>
+        <Box flexDirection="column" marginTop={SPACING.inputGap}>
           {queued !== null ? (
             <Text dimColor>{`⏎ queued: ${queued} (Esc to cancel)`}</Text>
           ) : null}
           {completeOpen ? <Complete items={suggestions} selected={sel} /> : null}
-          <Box>
+          {/* Framed input: rounded border tinted by mode, dimmed while busy. The
+              prompt glyph lives inside the frame; MultilineInput's editing logic is
+              untouched — only the surrounding chrome changed. */}
+          <Box
+            borderStyle="round"
+            borderColor={tint(modeColor)}
+            borderDimColor={busy}
+            paddingX={SPACING.boxPadX}
+          >
             {busy ? (
-              <Text color="yellow">
+              <Text color={tint("yellow")}>
                 <Spinner type="dots" />{" "}
               </Text>
             ) : (
-              <Text color="cyan">{"› "}</Text>
+              <Text color={tint(modeColor)}>{"› "}</Text>
             )}
             <MultilineInput
               value={input}
