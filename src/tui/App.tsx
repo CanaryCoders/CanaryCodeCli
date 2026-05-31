@@ -45,6 +45,7 @@ import {
   buildConfirmPreview,
   type ConfirmPreview,
 } from "./Confirm.tsx";
+import { modeColor as themeModeColor } from "./theme.ts";
 
 // ── The component ────────────────────────────────────────────────────────────────
 // The transcript is rendered as a flat list of typed `Item`s (see Message.tsx).
@@ -642,7 +643,7 @@ export function App(props: AppProps): React.ReactElement {
     if (key.ctrl && _input === "r") setVerbose((v) => !v);
   });
 
-  const modeColor = mode === "plan" ? "cyan" : mode === "auto" ? "yellow" : "green";
+  const modeColor = themeModeColor(mode);
   const thinkLabel = thinking === "off" ? "no-think" : describeLevel(thinking);
 
   // ── `/` autocomplete suggestions, recomputed each render from the input ──
