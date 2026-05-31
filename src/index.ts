@@ -19,6 +19,7 @@ import { discoverSkills, composeSkillsPrompt, describeSkills, readSkillTool } fr
 import { spawnAgentTool, Semaphore } from "./subagents.ts";
 import { connectMcpServers, describeMcp, closeMcp, type McpConnection } from "./mcp.ts";
 import { renderDiff } from "./diff.ts";
+import { renderAnsi } from "./markdown.ts";
 import { startTui } from "./tui/App.tsx";
 import type { Message } from "./provider.ts";
 
@@ -29,6 +30,8 @@ interface Args {
   prompt?: string;
   /** --no-tools: run read-only with the tool set withheld entirely. */
   noTools: boolean;
+  /** --no-color: force raw markdown to stdout even on a TTY (also honoured: NO_COLOR). */
+  noColor: boolean;
   /** --plan: read-only planning mode — investigate, emit a structured plan, stop. */
   plan: boolean;
   /** --auto (alias --yolo): autonomous multi-turn execution, capped at autoMaxTurns. */
@@ -46,7 +49,7 @@ interface Args {
 
 /** Parse argv into a small, explicit shape. Unknown flags are ignored for now. */
 function parseArgs(argv: string[]): Args {
-  const out: Args = { help: false, version: false, noTools: false, plan: false, auto: false };
+  const out: Args = { help: false, version: false, noTools: false, noColor: false, plan: false, auto: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     switch (a) {
@@ -63,6 +66,9 @@ function parseArgs(argv: string[]): Args {
         break;
       case "--no-tools":
         out.noTools = true;
+        break;
+      case "--no-color":
+        out.noColor = true;
         break;
       case "--plan":
         out.plan = true;
@@ -118,6 +124,7 @@ function printUsage(): void {
       "  --auto, --yolo     autonomous mode: run to completion, no confirmations,",
       "                     capped at autoMaxTurns (default 25)",
       "  --no-tools         disable tools (read-only quick Q&A)",
+      "  --no-color         raw markdown to stdout even on a TTY (also: NO_COLOR)",
       "  --resume [id]      continue a saved session (most recent if id omitted);",
       "                     bare --resume with no prompt lists recent sessions",
       "  -h, --help         show this help",
@@ -356,6 +363,18 @@ async function runHeadless(args: Args): Promise<number> {
       thinkingOpen = false;
     }
   };
+  // Assistant text is markdown. On a colour-capable TTY we buffer each turn's text
+  // and render it as ANSI styling once the turn's deltas have all arrived (markdown
+  // needs whole blocks; streaming char-by-char can't style). Piped output (not a
+  // TTY), NO_COLOR, or --no-color keep the raw markdown streaming so it composes.
+  const renderMd = Boolean(process.stdout.isTTY) && !process.env.NO_COLOR && !args.noColor;
+  let mdBuf = "";
+  const flushMarkdown = () => {
+    if (mdBuf) {
+      process.stdout.write(renderMd ? renderAnsi(mdBuf) : mdBuf);
+      mdBuf = "";
+    }
+  };
   try {
     for await (const ev of runAgent({
       provider,
@@ -372,7 +391,10 @@ async function runHeadless(args: Args): Promise<number> {
       switch (ev.type) {
         case "text":
           closeThinking();
-          process.stdout.write(ev.text);
+          // Render mode buffers the turn's text (flushed at turn_end); raw mode
+          // streams each delta immediately so piped output stays live.
+          if (renderMd) mdBuf += ev.text;
+          else process.stdout.write(ev.text);
           break;
         case "thinking":
           // Stream reasoning to stderr (dimmed) so it stays out of stdout output.
@@ -381,6 +403,10 @@ async function runHeadless(args: Args): Promise<number> {
             thinkingOpen = true;
           }
           process.stderr.write(ev.text);
+          break;
+        case "turn_end":
+          // The turn's assistant text is complete — render the buffered markdown.
+          flushMarkdown();
           break;
         case "tool_start":
           closeThinking();
@@ -407,6 +433,7 @@ async function runHeadless(args: Args): Promise<number> {
           break;
         case "done":
           closeThinking();
+          flushMarkdown();
           process.stdout.write("\n");
           if (ev.reason === "aborted") {
             sawError = true;
@@ -422,6 +449,7 @@ async function runHeadless(args: Args): Promise<number> {
     }
   } catch (err) {
     closeThinking();
+    flushMarkdown();
     process.stdout.write("\n");
     console.error(`cc: ${(err as Error).message}`);
     flushTranscript(store, sessionId, messages, persistedCount, compacted);
