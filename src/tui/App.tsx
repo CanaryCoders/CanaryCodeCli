@@ -55,7 +55,7 @@ import {
   confirmChoiceForKey,
 } from "./Confirm.tsx";
 import { Footer } from "./Footer.tsx";
-import { MultilineInput } from "./Input.tsx";
+import { expandPastes, MultilineInput, pasteSentinel } from "./Input.tsx";
 import {
   clampLineWidth,
   type Item,
@@ -287,6 +287,18 @@ function App(props: AppProps): React.ReactElement {
   const completionsRef = useRef<ReturnType<typeof completions>>([]);
   const selRef = useRef(0);
   const completeDismissedRef = useRef(false);
+
+  // Pasted-text chips: a large paste is stored here by id and embedded in the
+  // input buffer as a single sentinel char (see Input.tsx). The buffer (`input`)
+  // carries sentinels; we expand them to real text only when a prompt is sent.
+  const pasteMapRef = useRef<Map<number, string>>(new Map());
+  const nextPasteIdRef = useRef(0);
+  const registerPaste = (text: string): string | null => {
+    const id = nextPasteIdRef.current++;
+    if (id > 0xff) return null; // exhausted the sentinel range — paste verbatim
+    pasteMapRef.current.set(id, text);
+    return pasteSentinel(id);
+  };
 
   const push = (item: ItemInput) =>
     setHistory((prev) => [...prev, { ...item, id: nextId() } as Item]);
@@ -871,7 +883,10 @@ function App(props: AppProps): React.ReactElement {
   }
 
   // ── handle a submitted input line (command or prompt) ──
-  function onSubmit(value: string): void {
+  function onSubmit(rawValue: string): void {
+    // The buffer may carry paste sentinels — expand them to the real pasted text
+    // before the prompt is sent, recorded to history, or dispatched as a command.
+    const value = expandPastes(rawValue, pasteMapRef.current);
     const line = value.trim();
     if (!line) return;
     // Busy → queue this line to send when the current turn finishes. A second
@@ -1251,22 +1266,31 @@ function App(props: AppProps): React.ReactElement {
             borderColor={tint(modeColor)}
             borderDimColor={busy}
             paddingX={SPACING.boxPadX}
+            flexDirection="row"
           >
             <Text color={tint(modeColor)}>{"› "}</Text>
-            <MultilineInput
-              value={input}
-              onChange={handleInputChange}
-              onSubmit={onSubmit}
-              capture={completeOpen}
-              cursorNonce={cursorNonce}
-              onHistoryPrev={historyPrev}
-              onHistoryNext={historyNext}
-              placeholder={
-                busy
-                  ? "Enter to queue · Esc to cancel"
-                  : "message, or /help · Shift+Enter for newline"
-              }
-            />
+            <Box flexGrow={1} flexShrink={1} minWidth={0}>
+              <MultilineInput
+                value={input}
+                onChange={handleInputChange}
+                onSubmit={onSubmit}
+                capture={completeOpen}
+                cursorNonce={cursorNonce}
+                onHistoryPrev={historyPrev}
+                onHistoryNext={historyNext}
+                registerPaste={registerPaste}
+                pastes={pasteMapRef.current}
+                // Inner content width = terminal − border (2) − paddingX (2) −
+                // the "› " prefix (2) − 1 spare so the EOL cursor block never
+                // pushes a row past the border (which smears on redraw).
+                width={Math.max(1, columns - 2 - 2 * SPACING.boxPadX - 2 - 1)}
+                placeholder={
+                  busy
+                    ? "Enter to queue · Esc to cancel"
+                    : "message, or /help · Shift+Enter for newline"
+                }
+              />
+            </Box>
           </Box>
         </Box>
       )}

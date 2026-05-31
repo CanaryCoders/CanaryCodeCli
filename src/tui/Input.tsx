@@ -7,12 +7,69 @@
 // Left/Right/Up/Down move the cursor (Up/Down across lines), Backspace/Delete
 // remove the char before it. Pasted text is inserted verbatim, newlines and all.
 //
+// Large pastes collapse to a single `[Pasted text #N +M lines]` chip so a wall of
+// pasted text never floods the prompt box. The chip is one sentinel character in
+// the editing model (a private-use codepoint that maps to the paste's real text),
+// so the cursor steps over it and Backspace deletes it as a single unit; the host
+// only ever sees the *expanded* text on change/submit.
+//
 // The editing logic lives in the pure `reduceInput` reducer so it can be unit
 // tested without a render; the component is a thin shell that mirrors the cursor
 // in state and renders the value with a fake inverse-block cursor (no chalk dep).
 
 import { Box, Text, useInput } from "ink";
 import { useRef, useState } from "react";
+
+// ── pasted-text chips ───────────────────────────────────────────────────────────
+//
+// A large paste is replaced in the edit buffer by a single sentinel codepoint from
+// the Unicode Private Use Area, keyed by id (`PASTE_BASE + id`). The id→text map
+// lives in the component; `expandPastes` swaps sentinels back to real text before
+// the value leaves the component, and the renderer swaps them to a `[Pasted …]`
+// chip for display. Because each chip is one codepoint, all cursor/Backspace logic
+// in `reduceInput` treats it atomically for free.
+
+/** First Private Use Area codepoint used as a paste sentinel (U+E000…U+E0FF). */
+const PASTE_BASE = 0xe000;
+/** A paste collapses into a chip when it has >3 newlines or is very long. */
+const PASTE_MIN_LINES = 4;
+const PASTE_MIN_CHARS = 400;
+
+/** The sentinel character for paste `id` (0-based). */
+export function pasteSentinel(id: number): string {
+  return String.fromCodePoint(PASTE_BASE + id);
+}
+
+/** Is `ch` a paste sentinel? Returns its id, or -1. */
+function pasteId(ch: string): number {
+  const cp = ch.codePointAt(0);
+  if (cp === undefined || cp < PASTE_BASE || cp > PASTE_BASE + 0xff) return -1;
+  return cp - PASTE_BASE;
+}
+
+/** Should this pasted text collapse into a chip rather than insert verbatim? */
+export function shouldCollapsePaste(text: string): boolean {
+  let nl = 0;
+  for (const c of text) if (c === "\n") nl++;
+  return nl + 1 >= PASTE_MIN_LINES || text.length >= PASTE_MIN_CHARS;
+}
+
+/** Replace every paste sentinel in `value` with its real text from `map`. */
+export function expandPastes(value: string, map: Map<number, string>): string {
+  let out = "";
+  for (const ch of value) {
+    const id = pasteId(ch);
+    out += id >= 0 ? (map.get(id) ?? "") : ch;
+  }
+  return out;
+}
+
+/** The `[Pasted text #N +M lines]` chip label for a paste's real text. Spaces are
+ *  non-breaking (U+00A0) so Ink never wraps the label across a line/border. */
+export function pasteChipLabel(id: number, text: string): string {
+  const lines = text.split("\n").length;
+  return `[Pasted\u00a0text\u00a0#${id + 1}\u00a0+${lines}\u00a0lines]`;
+}
 
 // ── pure editing reducer ──────────────────────────────────────────────────────
 
@@ -78,6 +135,9 @@ export interface ReduceOptions {
   /** When true, the autocomplete popover owns Enter and Up/Down — the input
    *  ignores them (Shift+Enter still inserts a newline, editing keys still work). */
   capture?: boolean;
+  /** Register a large paste and return the sentinel char to insert in its place.
+   *  When absent (or it returns null) the paste is inserted verbatim. */
+  registerPaste?: (text: string) => string | null;
 }
 
 /** Decide what a keypress does to the input. Pure — no Ink, no React. */
@@ -139,7 +199,14 @@ function reduceInput(
   // any carriage returns in pasted text to plain newlines.
   if (input && !key.ctrl) {
     const text = input.replace(/\r\n?/g, "\n");
-    if (text) return insert(value, cursor, text);
+    if (!text) return { type: "none" };
+    // A large multi-line/long paste collapses into a single sentinel chip, so a
+    // wall of pasted text doesn't flood the prompt. Short input inserts verbatim.
+    if (opts.registerPaste && shouldCollapsePaste(text)) {
+      const sentinel = opts.registerPaste(text);
+      if (sentinel) return insert(value, cursor, sentinel);
+    }
+    return insert(value, cursor, text);
   }
   return { type: "none" };
 }
@@ -147,6 +214,9 @@ function reduceInput(
 // ── the component ─────────────────────────────────────────────────────────────
 
 interface MultilineInputProps {
+  /** The edit buffer — may contain paste sentinels (the chips). The host stores
+   *  it verbatim and expands it with `expandPastes` only when it needs the real
+   *  text (e.g. on submit). */
   value: string;
   onChange: (value: string) => void;
   onSubmit: (value: string) => void;
@@ -161,6 +231,15 @@ interface MultilineInputProps {
   onHistoryPrev?: () => void;
   /** Down pressed on the last line — walk forward toward the current draft. */
   onHistoryNext?: () => void;
+  /** Register a large paste (host owns the id→text map) and return the sentinel
+   *  char to embed in the buffer. Omit to insert all pastes verbatim. */
+  registerPaste?: (text: string) => string | null;
+  /** The host's paste map, for rendering sentinels as `[Pasted …]` chips. */
+  pastes?: Map<number, string>;
+  /** Visible content width (columns) available to the input. Display lines are
+   *  hard-wrapped to this width so Ink never soft-wraps a live row — a soft-wrapped
+   *  row is what Ink mis-erases and smears across the box border. */
+  width?: number;
 }
 
 export function MultilineInput({
@@ -173,6 +252,9 @@ export function MultilineInput({
   cursorNonce = 0,
   onHistoryPrev,
   onHistoryNext,
+  registerPaste,
+  pastes = EMPTY_PASTES,
+  width = 0,
 }: MultilineInputProps): React.ReactElement {
   const [cursor, setCursor] = useState(value.length);
   // When the host replaces `value` out-of-band (completion accept), snap the
@@ -191,7 +273,7 @@ export function MultilineInput({
         { value, cursor: effectiveCursor },
         input,
         key,
-        { capture },
+        { capture, registerPaste },
       );
       if (result.type === "submit") {
         onSubmit(result.value);
@@ -221,32 +303,154 @@ export function MultilineInput({
   const lines = value.split("\n");
   const { line: curLine, col: curCol } = cursorLineCol(value, effectiveCursor);
 
+  // Hard-wrap each logical line into display rows of at most `width` columns,
+  // keeping paste chips atomic. This stops Ink from soft-wrapping a live row,
+  // which it mis-erases and smears across the input border on edits.
+  const rows: { text: string; cursorCol: number | null }[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const wrapped = wrapDisplayLine(lines[i]!, width, pastes);
+    const onCursorLine = i === curLine;
+    for (let r = 0; r < wrapped.length; r++) {
+      const seg = wrapped[r]!;
+      let cursorCol: number | null = null;
+      if (onCursorLine && curCol >= seg.start && curCol <= seg.end) {
+        // The cursor's own row owns it; a cursor exactly at a wrap boundary
+        // belongs to the *next* row's start (so it shows before the next char),
+        // except on the final row where it sits at end-of-line.
+        if (curCol === seg.end && r < wrapped.length - 1) {
+          cursorCol = null;
+        } else {
+          cursorCol = curCol - seg.start;
+        }
+      }
+      rows.push({ text: seg.text, cursorCol });
+    }
+  }
+
   return (
     <Box flexDirection="column">
-      {lines.map((text, i) => (
+      {rows.map((row, i) => (
+        // A blank row still needs a space so Ink gives it height (otherwise a
+        // Shift+Enter newline renders zero-height and appears to do nothing).
         <Text key={i}>
-          {i === curLine ? renderCursorLine(text, curCol) : text}
+          {row.cursorCol !== null
+            ? renderCursorLine(row.text, row.cursorCol, pastes)
+            : renderLine(row.text, pastes) || " "}
         </Text>
       ))}
     </Box>
   );
 }
 
-/** Render one line with an inverse block at `col` (a trailing space if at EOL). */
-function renderCursorLine(text: string, col: number): React.ReactNode {
-  if (col >= text.length) {
+/** A display row carved out of one logical line by `wrapDisplayLine`: its text
+ *  plus the [start, end) range of cursor columns (logical line offsets) it owns. */
+interface DisplayRow {
+  text: string;
+  start: number;
+  end: number;
+}
+
+/** Split a logical line into display rows no wider than `width` visible columns,
+ *  treating each paste sentinel as an atomic unit of its chip-label width. With
+ *  `width <= 0` (unknown) the whole line is one row — Ink's own wrap then applies. */
+export function wrapDisplayLine(
+  line: string,
+  width: number,
+  pastes: Map<number, string>,
+): DisplayRow[] {
+  const chars = [...line];
+  if (width <= 0 || chars.length === 0) {
+    return [{ text: line, start: 0, end: chars.length }];
+  }
+  const rows: DisplayRow[] = [];
+  let buf = "";
+  let bufCols = 0;
+  let start = 0;
+  let col = 0; // logical column (index into chars)
+  for (const ch of chars) {
+    const id = pasteId(ch);
+    const w = id >= 0 ? pasteChipLabel(id, pastes.get(id) ?? "").length : 1;
+    if (bufCols + w > width && bufCols > 0) {
+      rows.push({ text: buf, start, end: col });
+      buf = "";
+      bufCols = 0;
+      start = col;
+    }
+    buf += ch;
+    bufCols += w;
+    col++;
+  }
+  rows.push({ text: buf, start, end: col });
+  return rows;
+}
+
+const EMPTY_PASTES: Map<number, string> = new Map();
+
+/** Render a line, swapping paste sentinels for their `[Pasted …]` chip label. A
+ *  chip is dim so it reads as a placeholder, not literal typed text. */
+function renderLine(
+  text: string,
+  pastes: Map<number, string>,
+): React.ReactNode {
+  const parts: React.ReactNode[] = [];
+  let buf = "";
+  let k = 0;
+  for (const ch of text) {
+    const id = pasteId(ch);
+    if (id >= 0) {
+      if (buf) {
+        parts.push(buf);
+        buf = "";
+      }
+      parts.push(
+        <Text key={`p${k++}`} dimColor>
+          {pasteChipLabel(id, pastes.get(id) ?? "")}
+        </Text>,
+      );
+    } else {
+      buf += ch;
+    }
+  }
+  if (buf) parts.push(buf);
+  return parts.length > 0 ? parts : "";
+}
+
+/** Render one line with an inverse block at `col` (a trailing space if at EOL),
+ *  splitting around the cursor and swapping paste sentinels for their chips. */
+function renderCursorLine(
+  text: string,
+  col: number,
+  pastes: Map<number, string>,
+): React.ReactNode {
+  const chars = [...text];
+  const before = chars.slice(0, col).join("");
+  const at = chars[col];
+  const after = chars.slice(col + 1).join("");
+  // The cursor sits on a paste chip: highlight the whole chip label.
+  if (at !== undefined && pasteId(at) >= 0) {
     return (
       <>
-        {text}
+        {renderLine(before, pastes)}
+        <Text inverse>
+          {pasteChipLabel(pasteId(at), pastes.get(pasteId(at)) ?? "")}
+        </Text>
+        {renderLine(after, pastes)}
+      </>
+    );
+  }
+  if (at === undefined) {
+    return (
+      <>
+        {renderLine(before, pastes)}
         <Text inverse> </Text>
       </>
     );
   }
   return (
     <>
-      {text.slice(0, col)}
-      <Text inverse>{text[col]}</Text>
-      {text.slice(col + 1)}
+      {renderLine(before, pastes)}
+      <Text inverse>{at}</Text>
+      {renderLine(after, pastes)}
     </>
   );
 }

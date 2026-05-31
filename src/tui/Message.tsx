@@ -300,10 +300,16 @@ function spanProps(span: Span): {
  * marker, so the live region can grow delta-by-delta.
  */
 function Markdown({ text }: { text: string }): React.ReactElement {
-  const lines = parseMarkdown(text);
+  // Drop a single trailing newline: streaming commits each block at a line
+  // boundary (its text ends with "\n"), and `"…\n".split("\n")` yields a trailing
+  // empty element that would render as a spurious blank row between chunks. The
+  // newline is a separator, not content, so trimming one keeps prose tight while
+  // leaving genuine `\n\n` paragraph gaps intact.
+  const body = text.endsWith("\n") ? text.slice(0, -1) : text;
+  const lines = parseMarkdown(body);
   // Code-fence/indented lines get a faint left gutter rule so the block reads as a
   // distinct unit (`codeLineFlags` aligns 1:1 with `lines`).
-  const code = codeLineFlags(text);
+  const code = codeLineFlags(body);
   return (
     <Box flexDirection="column">
       {lines.map((line, li) => {
