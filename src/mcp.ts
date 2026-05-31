@@ -174,10 +174,12 @@ function renderToolResult(res: unknown): string {
     content?: Array<{ type?: string; text?: string }>;
     isError?: boolean;
   };
-  const text = (r.content ?? [])
-    .filter((c) => c.type === "text" && typeof c.text === "string")
-    .map((c) => c.text)
-    .join("\n");
+  // Single pass: collect the text blocks instead of filter()+map() over content.
+  const parts: string[] = [];
+  for (const c of r.content ?? []) {
+    if (c.type === "text" && typeof c.text === "string") parts.push(c.text);
+  }
+  const text = parts.join("\n");
   if (r.isError) throw new Error(text || "MCP tool returned an error");
   return text || "(no output)";
 }

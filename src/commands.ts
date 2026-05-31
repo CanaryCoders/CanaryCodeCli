@@ -249,7 +249,10 @@ export function completions(
   // First token still being typed → complete the command name.
   if (space === -1) {
     const q = rest;
-    const scored = COMMANDS.map((c) => {
+    // Single pass: score each command and keep only the matches (avoids a
+    // separate map()+filter() over the registry).
+    const scored: Array<{ c: CommandSpec; best: number }> = [];
+    for (const c of COMMANDS) {
       // Score against the name, any alias, and the description; keep the best.
       const keys = [c.name, ...(c.aliases ?? []), c.description];
       let best = -Infinity;
@@ -257,8 +260,8 @@ export function completions(
         const m = fuzzyScore(q, k);
         if (m && m.score > best) best = m.score;
       }
-      return { c, best };
-    }).filter((x) => x.best > -Infinity);
+      if (best > -Infinity) scored.push({ c, best });
+    }
     scored.sort((a, b) => b.best - a.best);
     return scored.map(({ c }) => ({
       value: `/${c.name}${c.usage ? " " : ""}`,
