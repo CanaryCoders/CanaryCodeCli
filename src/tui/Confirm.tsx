@@ -11,6 +11,7 @@
 import { Box, Text } from "ink";
 import { computeDiff, type Diff } from "../diff.ts";
 import { DiffView, summarizeToolInput } from "./Message.tsx";
+import { SPACING, tint } from "./theme.ts";
 
 /** A previewable description of a pending mutating call. */
 export type ConfirmPreview =
@@ -83,8 +84,14 @@ export async function buildConfirmPreview(call: {
 /** Render the pending-call confirmation box. */
 export function ConfirmView({ preview }: { preview: ConfirmPreview }): React.ReactElement {
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1} marginTop={1}>
-      <Text color="yellow" bold>
+    <Box
+      flexDirection="column"
+      borderStyle="round"
+      borderColor={tint("yellow")}
+      paddingX={SPACING.boxPadX}
+      marginTop={SPACING.inputGap}
+    >
+      <Text color={tint("yellow")} bold>
         Run this?
       </Text>
       {preview.kind === "bash" ? (

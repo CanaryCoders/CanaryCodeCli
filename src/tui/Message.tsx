@@ -406,7 +406,7 @@ function ToolView({
       ) : null}
       {body
         ? body.lines.map((line, i) => (
-            <Text key={i} color={item.isError ? "red" : undefined} dimColor={!item.isError}>
+            <Text key={i} color={tint(item.isError ? "red" : undefined)} dimColor={!item.isError}>
               {`  ${line}`}
             </Text>
           ))
