@@ -12,6 +12,7 @@ import { createProvider } from "./provider.ts";
 import { runAgent } from "./agent.ts";
 import { resolveThinking, supportsThinking, describeLevel } from "./thinking.ts";
 import { tools as allTools } from "./tools.ts";
+import { webSearchTool } from "./websearch.ts";
 import { SessionStore, type SessionRow } from "./session.ts";
 import type { Message } from "./provider.ts";
 
@@ -207,7 +208,8 @@ async function runHeadless(args: Args): Promise<number> {
   }
 
   const modelName = resolved.model.name ?? resolved.model.id;
-  const tools = args.noTools ? [] : allTools;
+  // web_search is built from config (backend + key) and joins the static tool set.
+  const tools = args.noTools ? [] : [...allTools, webSearchTool(config.webSearch)];
 
   // ── resolve the thinking level (explicit flag wins, else a prompt keyword) ──
   const thinking = resolveThinking({ flag: args.think, prompt });
