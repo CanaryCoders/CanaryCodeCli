@@ -92,6 +92,15 @@ export interface AgentOptions {
   keepRecentMessages?: number;
   /** Abort in-flight work. Checked at each turn boundary and during streaming. */
   signal?: AbortSignal;
+  /**
+   * Optional confirmation gate. Called just before a mutating (non-read-only)
+   * tool runs; resolving `false` declines the call — the model gets a
+   * "user declined" tool_result and can adapt, and the tool never executes.
+   * Read-only tools are never gated. The TUI supplies this to implement the
+   * confirm-before-running box; headless leaves it undefined so every tool runs.
+   * Keeping it a caller-supplied hook keeps this loop a pure engine.
+   */
+  confirm?(call: { id: string; name: string; input: unknown }): Promise<boolean>;
 }
 
 export type AgentEvent =
@@ -224,6 +233,27 @@ export async function* runAgent(opts: AgentOptions): AsyncGenerator<AgentEvent> 
         return;
       }
       yield { type: "tool_start", id: call.id, name: call.name, input: call.input };
+
+      // ── confirm gate: pause for caller approval on mutating tools ──
+      // Only mutating (non-read-only) tools are ever gated. A declined call is
+      // reported back to the model as an error tool_result so it can adapt.
+      if (opts.confirm) {
+        const tool = tools.find((t) => t.name === call.name);
+        if (tool && !tool.readOnly) {
+          const ok = await opts.confirm(call);
+          if (signal?.aborted) {
+            yield { type: "done", reason: "aborted" };
+            return;
+          }
+          if (!ok) {
+            const declined = `user declined to run ${call.name}`;
+            yield { type: "tool_end", id: call.id, name: call.name, result: declined, isError: true };
+            results.push({ type: "tool_result", tool_use_id: call.id, content: declined, is_error: true });
+            continue;
+          }
+        }
+      }
+
       const { content, isError, diff } = await runToolCall(tools, mode, call);
       yield { type: "tool_end", id: call.id, name: call.name, result: content, isError, diff };
       results.push({ type: "tool_result", tool_use_id: call.id, content, is_error: isError });
