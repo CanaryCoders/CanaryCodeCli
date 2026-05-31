@@ -47,6 +47,7 @@ import {
   readSkillTool,
 } from "./skills.ts";
 import { Semaphore, spawnAgentTool } from "./subagents.ts";
+import { statusMark, updateTasksTool } from "./tasks.ts";
 import {
   describeLevel,
   parseLevel,
@@ -210,6 +211,14 @@ const SYSTEM_PROMPT = [
   "You are cc, a concise terminal coding agent.",
   "You operate in the user's current working directory and can read, search, and modify files and run shell commands via your tools.",
   "Be direct. Use tools to inspect the project before answering; prefer evidence over assumptions.",
+  "",
+  "## Tasks and delegation",
+  'When a request spans multiple distinct issues (e.g. "X is broken; also Y bothers me; also fix Z") OR is a large, multi-step feature, you MUST:',
+  "1. Call update_tasks FIRST to lay the work out as a task list (one task per distinct issue or major step), then keep it current — mark a task in_progress before you start it and completed the moment it is finished.",
+  "2. Work each task by delegating it to a sub-agent via spawn_agent with a complete, self-contained brief. This keeps your own context small, which matters most on large features where earlier context is lost to compaction.",
+  "3. When a custom agent (see the CUSTOM AGENTS section, if present) fits a task, dispatch to it by name via spawn_agent's `agent` argument instead of a generic sub-agent.",
+  "4. Decide per task whether the sub-agents can run in parallel (independent tasks — issue several spawn_agent calls in one turn) or must run sequentially (tasks that touch the same files or depend on each other's output).",
+  "For a single, small, self-contained request, skip all of this and just do the work inline — do not create a task list or spawn sub-agents for trivial work.",
   "",
   "ALWAYS end your turn with a recap once you have finished working (i.e. your final reply that makes no further tool calls). Never stop after a tool call without a closing message. The recap is mandatory — even for small tasks or when nothing changed. Format it exactly as:",
   "",
@@ -385,6 +394,20 @@ async function runHeadless(args: Args): Promise<number> {
         limiter,
         signal: controller.signal,
         agents,
+      }),
+    ];
+  }
+  // update_tasks: the agent's own todo list. Headless prints each snapshot to
+  // stderr as a compact checklist (stdout stays clean for piped/--json output).
+  // Top-level only — deliberately not in spawn_agent's inheritedTools above.
+  if (!args.noTools) {
+    tools = [
+      ...tools,
+      updateTasksTool((list) => {
+        const lines = list
+          .map((t) => `  ${statusMark(t.status)} ${t.content}`)
+          .join("\n");
+        process.stderr.write(`\n📋 tasks:\n${lines}\n`);
       }),
     ];
   }

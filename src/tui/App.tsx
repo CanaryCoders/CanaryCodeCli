@@ -37,6 +37,7 @@ import { createProvider } from "../provider.ts";
 import type { SessionStore } from "../session.ts";
 import { readSkillTool, type Skill } from "../skills.ts";
 import { Semaphore, spawnAgentTool } from "../subagents.ts";
+import { type Task, updateTasksTool } from "../tasks.ts";
 import {
   budgetFor,
   describeLevel,
@@ -47,6 +48,7 @@ import type { Tool } from "../tools.ts";
 import { tools as allTools } from "../tools.ts";
 import { webSearchTool } from "../websearch.ts";
 import { AskUserView } from "./AskUser.tsx";
+import { Tasks } from "./Tasks.tsx";
 import { Complete } from "./Complete.tsx";
 import {
   buildConfirmPreview,
@@ -270,6 +272,9 @@ function App(props: AppProps): React.ReactElement {
   // resets cleanly. The ref mirrors state for the once-captured `useInput` closure.
   const [pendingAsk, setPendingAsk] = useState<AskQuestion[] | null>(null);
   const [askKey, setAskKey] = useState(0);
+  // The agent's live task list (from the update_tasks tool), shown in the Tasks
+  // panel above the input. Ephemeral: it lives only for the session.
+  const [tasks, setTasks] = useState<Task[]>([]);
   const pendingAskRef = useRef<AskQuestion[] | null>(null);
   const askResolverRef = useRef<((answers: AskAnswer[] | null) => void) | null>(
     null,
@@ -331,6 +336,11 @@ function App(props: AppProps): React.ReactElement {
         }),
       ];
     }
+    // update_tasks is the orchestrator's own todo list — added top-level only (it
+    // is deliberately NOT in spawn_agent's inheritedTools above), so the panel
+    // reflects the main agent's plan while children just do their one task and
+    // return a summary.
+    tools = [...tools, updateTasksTool(setTasks)];
     return tools;
   }
 
@@ -1221,6 +1231,8 @@ function App(props: AppProps): React.ReactElement {
           })}
         </Box>
       ) : null}
+
+      <Tasks tasks={tasks} />
 
       {pendingConfirm ? (
         <ConfirmView preview={pendingConfirm} reason={pendingConfirmReason} />
