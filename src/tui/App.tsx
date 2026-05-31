@@ -9,7 +9,8 @@
 //
 // Item rendering lives in Message.tsx (collapsed/expandable tool calls); the plan
 // accept/edit/reject box lands in its own Phase-4 task. Esc aborts the in-flight
-// request; Ctrl+R toggles verbose tool output.
+// request; Ctrl+C aborts then (pressed twice) quits; Ctrl+R toggles verbose tool
+// output.
 
 import { useRef, useState } from "react";
 import { Box, Static, Text, render, useApp, useInput } from "ink";
@@ -72,6 +73,10 @@ export function App(props: AppProps): React.ReactElement {
   const persistedRef = useRef(0);
   const sessionIdRef = useRef(props.sessionId);
   const controllerRef = useRef<AbortController | null>(null);
+  // Ctrl+C is "armed" after a first press with nothing to abort; a second press
+  // before the timer fires quits. The timer disarms it so a lone press never quits.
+  const quitArmedRef = useRef(false);
+  const quitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const idRef = useRef(0);
   const nextId = () => ++idRef.current;
 
@@ -379,8 +384,7 @@ export function App(props: AppProps): React.ReactElement {
         note(action.text);
         break;
       case "exit":
-        props.store.close();
-        app.exit();
+        quit();
         break;
       case "error":
         note(action.message, "error");
@@ -388,11 +392,44 @@ export function App(props: AppProps): React.ReactElement {
     }
   }
 
-  // Esc aborts an in-flight request; Ctrl+R toggles verbose tool output. While a
-  // plan awaits review the a/e/r keys drive accept/edit/reject (TextInput is
-  // unmounted then, so they don't reach the prompt). The handler reads the plan
-  // via its ref because Ink's `useInput` closure is captured once (stale state).
+  function quit(): void {
+    if (quitTimerRef.current) clearTimeout(quitTimerRef.current);
+    props.store.close();
+    app.exit();
+  }
+
+  // Ctrl+C: if a request is in flight, abort it (like Esc) and disarm. Otherwise
+  // the first press arms a quit and shows a hint; a second press within the window
+  // exits. The timer disarms so a single stray Ctrl+C never quits.
+  function handleCtrlC(): void {
+    if (controllerRef.current) {
+      controllerRef.current.abort();
+      quitArmedRef.current = false;
+      if (quitTimerRef.current) clearTimeout(quitTimerRef.current);
+      return;
+    }
+    if (quitArmedRef.current) {
+      quit();
+      return;
+    }
+    quitArmedRef.current = true;
+    note("press Ctrl+C again to quit");
+    if (quitTimerRef.current) clearTimeout(quitTimerRef.current);
+    quitTimerRef.current = setTimeout(() => {
+      quitArmedRef.current = false;
+    }, 1500);
+  }
+
+  // Esc aborts an in-flight request; Ctrl+C aborts then (twice) quits; Ctrl+R
+  // toggles verbose tool output. While a plan awaits review the a/e/r keys drive
+  // accept/edit/reject (TextInput is unmounted then, so they don't reach the
+  // prompt). The handler reads the plan via its ref because Ink's `useInput`
+  // closure is captured once (stale state).
   useInput((_input, key) => {
+    if (key.ctrl && _input === "c") {
+      handleCtrlC();
+      return;
+    }
     if (key.escape && controllerRef.current) {
       controllerRef.current.abort();
       return;
@@ -457,5 +494,6 @@ export function App(props: AppProps): React.ReactElement {
 
 /** Launch the Ink TUI. The caller resolves config/provider/system and passes them in. */
 export function startTui(props: AppProps): void {
-  render(<App {...props} />);
+  // exitOnCtrlC:false — the App handles Ctrl+C itself (abort once, quit twice).
+  render(<App {...props} />, { exitOnCtrlC: false });
 }
