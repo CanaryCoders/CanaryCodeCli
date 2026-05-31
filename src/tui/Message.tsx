@@ -13,7 +13,7 @@
 import { Box, Text } from "ink";
 import { diffStat, type Diff, type DiffLine } from "../diff.ts";
 import { parseMarkdown, type Span } from "../markdown.ts";
-import { tint } from "./theme.ts";
+import { ROLE, SPACING, TOOL_STATUS, tint, toolStatus, type Role } from "./theme.ts";
 
 // ── Display items ───────────────────────────────────────────────────────────────
 
@@ -185,6 +185,41 @@ export function BannerView({
   );
 }
 
+// ── Speaker gutter ─────────────────────────────────────────────────────────────────
+//
+// Every transcript item renders behind a two-cell left gutter (the role glyph + a
+// space, or two spaces when glyph-less) so the eye instantly separates who/what
+// produced each line. Content lives in a flex column beside the gutter, so when a
+// long line wraps the continuation stays tucked under the gutter instead of
+// reflowing to the screen edge. Colours pass through `tint` so `NO_COLOR` keeps the
+// glyphs + spacing but drops the colour.
+
+function Gutter({
+  role,
+  colorOverride,
+  marginTop = 0,
+  children,
+}: {
+  role: Role;
+  /** Override the gutter glyph colour (tool calls colour it by status). */
+  colorOverride?: string;
+  marginTop?: number;
+  children: React.ReactNode;
+}): React.ReactElement {
+  const s = ROLE[role];
+  const glyph = s.glyph ? `${s.glyph} ` : "  ";
+  return (
+    <Box flexDirection="row" marginTop={marginTop}>
+      <Text color={tint(colorOverride ?? s.color)} bold={s.bold} dimColor={s.dim}>
+        {glyph}
+      </Text>
+      <Box flexDirection="column" flexGrow={1}>
+        {children}
+      </Box>
+    </Box>
+  );
+}
+
 // ── Rendering ────────────────────────────────────────────────────────────────────
 
 export function ItemView({
@@ -198,20 +233,39 @@ export function ItemView({
     case "banner":
       return <BannerView {...item} />;
     case "user":
+      // A user line starts a new turn → one blank line above it separates turns
+      // (continuation/within-turn items below carry no top margin).
       return (
-        <Box>
-          <Text color="cyan" bold>{"› "}</Text>
+        <Gutter role="user" marginTop={SPACING.turnGap}>
           <Text>{item.text}</Text>
-        </Box>
+        </Gutter>
       );
     case "assistant":
-      return <Markdown text={item.text} />;
+      return (
+        <Gutter role="assistant">
+          <Markdown text={item.text} />
+        </Gutter>
+      );
     case "thinking":
-      return <Text dimColor>{`💭 ${item.text}`}</Text>;
-    case "tool":
-      return <ToolView item={item} expanded={expanded} />;
+      return (
+        <Gutter role="thinking">
+          <Text dimColor italic>{item.text}</Text>
+        </Gutter>
+      );
+    case "tool": {
+      const statusColor = TOOL_STATUS[toolStatus(item.pending, item.isError)].color;
+      return (
+        <Gutter role="tool" colorOverride={statusColor}>
+          <ToolView item={item} expanded={expanded} />
+        </Gutter>
+      );
+    }
     case "note":
-      return <Text color={item.tone === "error" ? "red" : "gray"}>{item.text}</Text>;
+      return (
+        <Gutter role={item.tone === "error" ? "error" : "note"}>
+          <Text color={tint(item.tone === "error" ? "red" : "gray")}>{item.text}</Text>
+        </Gutter>
+      );
   }
 }
 
@@ -241,8 +295,8 @@ function ToolView({
 
   return (
     <Box flexDirection="column">
-      <Text color={color}>
-        {`⚙ ${headline}`}
+      <Text color={tint(color)}>
+        {headline}
         <Text dimColor>{` ${mark}`}</Text>
       </Text>
       {expanded && summary ? (
