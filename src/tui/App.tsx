@@ -14,7 +14,7 @@
 // output; Shift+Tab cycles the mode (normal → plan → auto → normal).
 
 import { useRef, useState } from "react";
-import { Box, Static, Text, render, useApp, useInput } from "ink";
+import { Box, Static, Text, render, useApp, useInput, useStdout } from "ink";
 import Spinner from "ink-spinner";
 import { MultilineInput } from "./Input.tsx";
 
@@ -37,7 +37,7 @@ import {
   supportsThinking,
   type ThinkingLevel,
 } from "../thinking.ts";
-import { ItemView, type Item, type ItemInput } from "./Message.tsx";
+import { ItemView, tailLines, statusVerb, type Item, type ItemInput } from "./Message.tsx";
 import { PlanView, planChoiceForKey } from "./Plan.tsx";
 import { Complete } from "./Complete.tsx";
 import {
@@ -88,6 +88,11 @@ function buildCompletionContext(config: Config, store: SessionStore): Completion
 
 export function App(props: AppProps): React.ReactElement {
   const app = useApp();
+  // Terminal size, used to cap the live (in-flight) region so it never grows past
+  // the viewport — overflowing the dynamic region desyncs Ink's redraw and
+  // duplicates lines into the scrollback. Ink re-renders on resize, so these stay
+  // fresh. `<Static>` scrollback is printed once and is unaffected by height.
+  const { stdout } = useStdout();
 
   // Mutable engine state lives in refs (read inside async loops); React state
   // mirrors what the UI shows.
@@ -239,8 +244,24 @@ export function App(props: AppProps): React.ReactElement {
     const maxTurns = runMode === "auto" ? props.config.autoMaxTurns : 25;
 
     // The in-flight turn is built up here and mirrored into React state for render.
+    // Only the *last* item is ever mutated (text appends to it, a tool flips
+    // pending→done); every earlier item is final. So as the turn progresses we
+    // move finalised items into the `<Static>` scrollback and keep just the live
+    // (mutating) item in the dynamic region. This is what stops the dynamic region
+    // from growing past the terminal viewport — overflowing it desyncs Ink's
+    // redraw and duplicates lines into the scrollback. `committed` tracks how many
+    // of `local` have already been handed to `<Static>`.
     const local: Item[] = [];
-    const sync = () => setLive([...local]);
+    let committed = 0;
+    const sync = () => {
+      const finalCount = local.length - 1; // all but the still-mutating last item
+      if (finalCount > committed) {
+        const newlyFinal = local.slice(committed, finalCount);
+        setHistory((prev) => [...prev, ...newlyFinal]);
+        committed = finalCount;
+      }
+      setLive(local.length > committed ? [local[local.length - 1]!] : []);
+    };
     let compacted = false;
     let outcome: "stop" | "max_turns" | "aborted" | "error" = "stop";
 
@@ -338,9 +359,10 @@ export function App(props: AppProps): React.ReactElement {
       local.push({ id: nextId(), kind: "note", text: `cc: ${(err as Error).message}`, tone: "error" });
     } finally {
       flush(compacted);
-      // Move the completed turn into the scrollback and clear the live region.
-      const finished = [...local];
-      setHistory((prev) => [...prev, ...finished]);
+      // Commit whatever `sync` hasn't already moved (the last, now-final item plus
+      // anything appended after the loop) into the scrollback and clear the live region.
+      const remaining = local.slice(committed);
+      if (remaining.length > 0) setHistory((prev) => [...prev, ...remaining]);
       setLive([]);
       controllerRef.current = null;
       setBusy(false);
@@ -729,6 +751,10 @@ export function App(props: AppProps): React.ReactElement {
   // (and re-render) leaves the hint to that single item.
   const firstToolId = [...history, ...live].find((i) => i.kind === "tool")?.id;
 
+  // Short status verb shown beside the busy spinner ("thinking…", "running
+  // bash…", "searching…"), derived from the live transcript's most recent item.
+  const verb = statusVerb(live);
+
   // ── `/` autocomplete suggestions, recomputed each render from the input ──
   // Only while the prompt is an in-progress slash command and the popover isn't
   // dismissed/busy/blocked by a plan. The refs are mirrored for the key handler.
@@ -741,6 +767,18 @@ export function App(props: AppProps): React.ReactElement {
   completeOpenRef.current = completeOpen;
   completionsRef.current = suggestions;
   selRef.current = sel;
+
+  // Cap the live (in-flight) region to the terminal viewport. `live` holds only
+  // the currently-streaming item (finished items have moved to `<Static>`), so the
+  // one thing that can outgrow the screen is a long assistant/thinking block — we
+  // show just its trailing lines while it streams. The complete, correctly-parsed
+  // text still lands in the scrollback when the block finalises. Reserve rows for
+  // the input frame, footer, gaps, and the trim marker; over-reserving only trims
+  // a little more tail, which is harmless.
+  const rows = stdout?.rows ?? 24;
+  const columns = stdout?.columns ?? 80;
+  const liveCap = Math.max(3, rows - 10);
+  const liveContentWidth = Math.max(1, columns - 2); // minus the 2-cell speaker gutter
 
   return (
     <Box flexDirection="column">
@@ -757,14 +795,37 @@ export function App(props: AppProps): React.ReactElement {
 
       {live.length > 0 ? (
         <Box flexDirection="column">
-          {live.map((item) => (
-            <ItemView
-              key={item.id}
-              item={item}
-              expanded={verbose}
-              showExpandHint={item.id === firstToolId}
-            />
-          ))}
+          {live.map((item) => {
+            // A streaming assistant/thinking block is the one live item that can
+            // outgrow the viewport — show only its trailing lines so the dynamic
+            // region stays within the terminal (the full text lands in `<Static>`
+            // when the block finalises). Other kinds are short by construction.
+            if (item.kind === "assistant" || item.kind === "thinking") {
+              const clamped = tailLines(item.text, liveCap, liveContentWidth);
+              return (
+                <Box key={item.id} flexDirection="column">
+                  {clamped.trimmed ? (
+                    <Text dimColor>
+                      {"  ↑ earlier lines hidden — shown in full when the turn finishes"}
+                    </Text>
+                  ) : null}
+                  <ItemView
+                    item={{ ...item, text: clamped.text }}
+                    expanded={verbose}
+                    showExpandHint={item.id === firstToolId}
+                  />
+                </Box>
+              );
+            }
+            return (
+              <ItemView
+                key={item.id}
+                item={item}
+                expanded={verbose}
+                showExpandHint={item.id === firstToolId}
+              />
+            );
+          })}
         </Box>
       ) : null}
 
@@ -788,8 +849,12 @@ export function App(props: AppProps): React.ReactElement {
             paddingX={SPACING.boxPadX}
           >
             {busy ? (
+              // Spinner + live status verb in the input frame's prompt position.
+              // Inline (not a separate row) so toggling busy never shifts the
+              // input box vertically.
               <Text color={tint("yellow")}>
-                <Spinner type="dots" />{" "}
+                <Spinner type="dots" />
+                <Text dimColor>{` ${verb} `}</Text>
               </Text>
             ) : (
               <Text color={tint(modeColor)}>{"› "}</Text>
@@ -802,7 +867,7 @@ export function App(props: AppProps): React.ReactElement {
               cursorNonce={cursorNonce}
               onHistoryPrev={historyPrev}
               onHistoryNext={historyNext}
-              placeholder={busy ? "working… (Enter to queue · Esc to cancel)" : "message, or /help · Shift+Enter for newline"}
+              placeholder={busy ? "Enter to queue · Esc to cancel" : "message, or /help · Shift+Enter for newline"}
             />
           </Box>
         </Box>

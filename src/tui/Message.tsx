@@ -109,8 +109,70 @@ function collapseWhitespace(s: string): string {
   return s.replace(/\s+/g, " ").trim();
 }
 
+// ── Live status verb ───────────────────────────────────────────────────────────
+//
+// While a turn is in flight the spinner pairs with a short verb describing what's
+// happening *right now*, derived from the live items (the most recent one is the
+// best indicator). A pending tool maps to a tool-specific verb ("running bash…",
+// "searching…"); streaming assistant text is "responding…"; everything else
+// (waiting on the model, a just-finished tool, a fresh turn) is "thinking…".
+
+/** Tool → present-tense verb shown beside the spinner while the tool runs. */
+const TOOL_VERB: Record<string, string> = {
+  bash: "running bash",
+  web_search: "searching",
+  grep: "searching",
+  read_file: "reading",
+  list_dir: "listing",
+  read_skill: "reading",
+  write_file: "writing",
+  edit_file: "editing",
+  spawn_agent: "delegating",
+};
+
+/** A short status verb for the busy spinner, derived from the live transcript. */
+export function statusVerb(live: Item[]): string {
+  const last = live[live.length - 1];
+  if (!last) return "thinking…";
+  if (last.kind === "tool" && last.pending) {
+    return `${TOOL_VERB[last.name] ?? `running ${last.name}`}…`;
+  }
+  if (last.kind === "assistant") return "responding…";
+  // A finished tool, a note, or thinking → the model is (about to be) speaking.
+  return "thinking…";
+}
+
 function truncate(s: string, max: number): string {
   return s.length > max ? `${s.slice(0, max - 1)}…` : s;
+}
+
+/**
+ * Keep only the trailing `maxRows` *visual* lines of `text`, accounting for
+ * wrapping at `width` columns. Used to cap the live (in-flight) streaming block
+ * so the dynamic region never grows past the terminal viewport — overflowing it
+ * is what desyncs Ink's redraw and duplicates lines into the scrollback. The
+ * complete text is still committed to `<Static>` when the block finalises, so
+ * trimming here only affects what's shown *while* it streams.
+ */
+export function tailLines(
+  text: string,
+  maxRows: number,
+  width: number,
+): { text: string; trimmed: boolean } {
+  if (maxRows <= 0) return { text: "", trimmed: text.length > 0 };
+  const w = Math.max(1, width);
+  const segs = text.split("\n");
+  const kept: string[] = [];
+  let used = 0;
+  for (let i = segs.length - 1; i >= 0; i--) {
+    const rows = Math.max(1, Math.ceil(segs[i]!.length / w));
+    if (used + rows > maxRows && kept.length > 0) {
+      return { text: kept.join("\n"), trimmed: true };
+    }
+    kept.unshift(segs[i]!);
+    used += rows;
+  }
+  return { text, trimmed: false };
 }
 
 /** First `n` non-trivial lines of a tool result, with an "(+N more)" marker. */
