@@ -23,6 +23,9 @@ import { renderAnsi } from "./markdown.ts";
 import { startTui } from "./tui/App.tsx";
 import type { Message } from "./provider.ts";
 
+/** App version, shown by `--version` and in the TUI launch banner. */
+const VERSION = "0.0.1";
+
 interface Args {
   help: boolean;
   version: boolean;
@@ -623,13 +626,16 @@ async function runTui(args: Args): Promise<number> {
   const store = SessionStore.open();
   const sessionId = store.createSession({ model: modelName, cwd: process.cwd() });
 
-  startupNotes.unshift(`cc — ${modelLabel} · type /help for commands`);
+  // The launch banner (in the TUI) shows app/version/cwd/model — keep the startup
+  // notes to the /help hint plus context/skills/mcp lines.
+  startupNotes.unshift("type /help for commands");
 
   startTui({
     config,
     provider,
     modelName,
     modelLabel,
+    version: VERSION,
     baseSystem,
     skills,
     mcp,
@@ -649,7 +655,7 @@ async function main(): Promise<void> {
     return;
   }
   if (args.version) {
-    console.log("cc 0.0.1");
+    console.log(`cc ${VERSION}`);
     return;
   }
   // Headless when a prompt is given, or when --resume is used (with a prompt to

@@ -58,6 +58,8 @@ interface AppProps {
   provider: Provider;
   modelName: string;
   modelLabel: string;
+  /** App version, shown in the launch banner. */
+  version: string;
   /** Base system prompt (project context + skills already folded in). */
   baseSystem: string;
   skills: Skill[];
@@ -105,11 +107,29 @@ export function App(props: AppProps): React.ReactElement {
   const historyIdxRef = useRef<number | null>(null);
   const historyDraftRef = useRef("");
 
-  const [history, setHistory] = useState<Item[]>(() =>
-    props.startupNotes.map((text) => ({ id: nextId(), kind: "note" as const, text })),
-  );
+  // The launch banner is the first `<Static>` item so it scrolls away naturally;
+  // startup notes (context/skills/mcp) follow it.
+  const [history, setHistory] = useState<Item[]>(() => [
+    {
+      id: nextId(),
+      kind: "banner" as const,
+      appName: "cc",
+      version: props.version,
+      cwd: process.cwd(),
+      model: props.modelLabel,
+      provider: props.provider.id,
+    },
+    ...props.startupNotes.map((text) => ({ id: nextId(), kind: "note" as const, text })),
+  ]);
   const [live, setLive] = useState<Item[]>([]);
-  const [input, setInput] = useState("");
+  const [input, setInputState] = useState("");
+  // Mirrors `input` for the once-captured `useInput` closure (which sees stale
+  // state). The `setInput` wrapper keeps both in sync.
+  const inputRef = useRef("");
+  const setInput = (value: string) => {
+    inputRef.current = value;
+    setInputState(value);
+  };
   const [busy, setBusy] = useState(false);
   const [mode, setMode] = useState<AgentMode>("normal");
   const [thinking, setThinking] = useState<ThinkingLevel>("off");

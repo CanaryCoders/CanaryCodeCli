@@ -13,10 +13,25 @@
 import { Box, Text } from "ink";
 import { diffStat, type Diff, type DiffLine } from "../diff.ts";
 import { parseMarkdown, type Span } from "../markdown.ts";
+import { tint } from "./theme.ts";
 
 // ── Display items ───────────────────────────────────────────────────────────────
 
 export type Item =
+  | {
+      id: number;
+      kind: "banner";
+      /** App name (e.g. "cc"). */
+      appName: string;
+      /** Version string (e.g. "0.0.1"). */
+      version: string;
+      /** Working directory (rendered `~`-abbreviated). */
+      cwd: string;
+      /** Active model label. */
+      model: string;
+      /** Active provider id (anthropic / openai-compat / …). */
+      provider: string;
+    }
   | { id: number; kind: "user"; text: string }
   | { id: number; kind: "assistant"; text: string }
   | { id: number; kind: "thinking"; text: string }
@@ -139,6 +154,37 @@ export function Markdown({ text }: { text: string }): React.ReactElement {
   );
 }
 
+// ── Launch banner ──────────────────────────────────────────────────────────────
+
+/** Abbreviate a home-relative path with `~` (e.g. `/Users/me/src` → `~/src`). */
+export function abbreviateCwd(cwd: string): string {
+  const home = process.env.HOME;
+  if (home && (cwd === home || cwd.startsWith(`${home}/`))) {
+    return `~${cwd.slice(home.length)}`;
+  }
+  return cwd;
+}
+
+/**
+ * The one-time launch banner: app name + version, the `~`-abbreviated cwd, and the
+ * active model/provider — a slim, dim rounded box. Rendered as the first `<Static>`
+ * scrollback item so it scrolls away naturally as the session grows.
+ */
+export function BannerView({
+  appName,
+  version,
+  cwd,
+  model,
+  provider,
+}: Extract<Item, { kind: "banner" }>): React.ReactElement {
+  return (
+    <Box borderStyle="round" borderColor={tint("gray")} paddingX={1}>
+      <Text bold dimColor>{`${appName} v${version}`}</Text>
+      <Text dimColor>{`  ${abbreviateCwd(cwd)}  ·  ${model} · ${provider}`}</Text>
+    </Box>
+  );
+}
+
 // ── Rendering ────────────────────────────────────────────────────────────────────
 
 export function ItemView({
@@ -149,6 +195,8 @@ export function ItemView({
   expanded?: boolean;
 }): React.ReactElement {
   switch (item.kind) {
+    case "banner":
+      return <BannerView {...item} />;
     case "user":
       return (
         <Box>
