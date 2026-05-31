@@ -65,7 +65,10 @@ export function parseTasks(input: Record<string, unknown>): Task[] {
     const o = t as Record<string, unknown>;
     const content = asString(o.content, `tasks[${i}].content`);
     const status = o.status;
-    if (typeof status !== "string" || !STATUSES.includes(status as TaskStatus)) {
+    if (
+      typeof status !== "string" ||
+      !STATUSES.includes(status as TaskStatus)
+    ) {
       throw new Error(
         `update_tasks: tasks[${i}].status must be one of ${STATUSES.join(", ")}`,
       );

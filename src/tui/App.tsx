@@ -48,7 +48,6 @@ import type { Tool } from "../tools.ts";
 import { tools as allTools } from "../tools.ts";
 import { webSearchTool } from "../websearch.ts";
 import { AskUserView } from "./AskUser.tsx";
-import { Tasks } from "./Tasks.tsx";
 import { Complete } from "./Complete.tsx";
 import {
   buildConfirmPreview,
@@ -68,6 +67,7 @@ import {
   tailLines,
 } from "./Message.tsx";
 import { PlanView, planChoiceForKey } from "./Plan.tsx";
+import { Tasks } from "./Tasks.tsx";
 import { SPACING, modeColor as themeModeColor, tint } from "./theme.ts";
 
 // `/init` instruction: drives a real generation turn so the agent investigates
@@ -952,6 +952,7 @@ function App(props: AppProps): React.ReactElement {
         // duplicated re-renders and a runaway layout. Reset history first, then
         // clear on the next tick so the <Static> count is in sync.
         setHistory([]);
+        setTasks([]);
         queueMicrotask(() => props.inkInstance?.current?.clear());
         setCost(0);
         setTokens(0);
