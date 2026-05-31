@@ -8,8 +8,9 @@
 // applied against this component's state.
 //
 // Item rendering lives in Message.tsx (collapsed/expandable tool calls); the plan
-// accept/edit/reject box lands in its own Phase-4 task. Esc aborts the in-flight
-// request; Ctrl+C aborts then (pressed twice) quits; Ctrl+R toggles verbose tool
+// accept/edit/reject box lands in its own Phase-4 task. Esc and Ctrl+C share one
+// escalation: cancel a queued prompt → clear the prompt → abort the in-flight
+// request → quit (the last step needs a second press). Ctrl+R toggles verbose tool
 // output; Shift+Tab cycles the mode (normal → plan → auto → normal).
 
 import { useRef, useState } from "react";
@@ -97,6 +98,10 @@ export function App(props: AppProps): React.ReactElement {
   // before the timer fires quits. The timer disarms it so a lone press never quits.
   const quitArmedRef = useRef(false);
   const quitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // A prompt typed and submitted while a turn is in flight; it sends automatically
+  // once the turn finishes. The ref mirrors state for the `useInput` closure.
+  const [queued, setQueued] = useState<string | null>(null);
+  const queuedRef = useRef<string | null>(null);
   const idRef = useRef(0);
   const nextId = () => ++idRef.current;
 
@@ -338,6 +343,16 @@ export function App(props: AppProps): React.ReactElement {
         for (const item of local) if (item.kind === "assistant") planText += item.text;
         if (planText.trim()) showPlan(planText);
       }
+      // Send a prompt queued while this turn was running (unless it was aborted, a
+      // plan is now awaiting review, or it got canceled meanwhile).
+      const next = queuedRef.current;
+      if (next !== null && outcome !== "aborted" && !pendingPlanRef.current) {
+        queuedRef.current = null;
+        setQueued(null);
+        push({ kind: "user", text: next });
+        messagesRef.current.push({ role: "user", content: [{ type: "text", text: next }] });
+        void runTurn();
+      }
     }
   }
 
@@ -518,7 +533,16 @@ export function App(props: AppProps): React.ReactElement {
   // ── handle a submitted input line (command or prompt) ──
   function onSubmit(value: string): void {
     const line = value.trim();
-    if (!line || busy) return;
+    if (!line) return;
+    // Busy → queue this line to send when the current turn finishes. A second
+    // submit replaces the queued prompt rather than stacking.
+    if (busy) {
+      setInput("");
+      recordHistory(line);
+      queuedRef.current = line;
+      setQueued(line);
+      return;
+    }
     setInput("");
     recordHistory(line);
 
@@ -587,10 +611,31 @@ export function App(props: AppProps): React.ReactElement {
     app.exit();
   }
 
-  // Ctrl+C: if a request is in flight, abort it (like Esc) and disarm. Otherwise
-  // the first press arms a quit and shows a hint; a second press within the window
-  // exits. The timer disarms so a single stray Ctrl+C never quits.
-  function handleCtrlC(): void {
+  // Shared cancel escalation for both Ctrl+C and Esc. In priority order it:
+  //   1. cancels a queued prompt (the typed-while-busy line waiting to send),
+  //   2. clears the current prompt if there's text in it,
+  //   3. aborts the in-flight AI request,
+  //   4. arms quit (first press) then quits (second press within the window).
+  // `label` is the key name shown in the "press … again to quit" hint.
+  function handleCancel(label: string): void {
+    // 1. A queued prompt waiting to be sent after the current turn.
+    if (queuedRef.current !== null) {
+      queuedRef.current = null;
+      setQueued(null);
+      note("queued prompt canceled");
+      quitArmedRef.current = false;
+      if (quitTimerRef.current) clearTimeout(quitTimerRef.current);
+      return;
+    }
+    // 2. A non-empty prompt buffer — clear it.
+    if (inputRef.current.length > 0) {
+      setInput("");
+      setCursorNonce((n) => n + 1);
+      quitArmedRef.current = false;
+      if (quitTimerRef.current) clearTimeout(quitTimerRef.current);
+      return;
+    }
+    // 3. An in-flight request — abort it.
     if (controllerRef.current) {
       controllerRef.current.abort();
       // A pending confirm holds the loop on an unresolved promise — decline it so
@@ -600,36 +645,34 @@ export function App(props: AppProps): React.ReactElement {
       if (quitTimerRef.current) clearTimeout(quitTimerRef.current);
       return;
     }
+    // 4. Nothing left to cancel — arm, then quit on the second press.
     if (quitArmedRef.current) {
       quit();
       return;
     }
     quitArmedRef.current = true;
-    note("press Ctrl+C again to quit");
+    note(`press ${label} again to quit`);
     if (quitTimerRef.current) clearTimeout(quitTimerRef.current);
     quitTimerRef.current = setTimeout(() => {
       quitArmedRef.current = false;
     }, 1500);
   }
 
-  // Esc aborts an in-flight request; Ctrl+C aborts then (twice) quits; Ctrl+R
-  // toggles verbose tool output. While a plan awaits review the a/e/r keys drive
+  // Esc and Ctrl+C share handleCancel (cancel queue → clear prompt → abort →
+  // quit); Ctrl+R toggles verbose tool output. While a plan awaits review the a/e/r keys drive
   // accept/edit/reject (TextInput is unmounted then, so they don't reach the
   // prompt). The handler reads the plan via its ref because Ink's `useInput`
   // closure is captured once (stale state).
   useInput((_input, key) => {
     if (key.ctrl && _input === "c") {
-      handleCtrlC();
+      handleCancel("Ctrl+C");
       return;
     }
     if (key.escape) {
-      // Esc dismisses the autocomplete popover first; while a confirm is pending it
-      // declines the call and aborts the turn; otherwise it aborts a request.
+      // Esc dismisses the autocomplete popover first; otherwise it escalates the
+      // same way as Ctrl+C: cancel queued prompt → clear prompt → abort → quit.
       if (completeOpenRef.current) dismissComplete();
-      else if (pendingConfirmRef.current) {
-        resolveConfirm(false, false);
-        controllerRef.current?.abort();
-      } else if (controllerRef.current) controllerRef.current.abort();
+      else handleCancel("Esc");
       return;
     }
     // A pending confirm owns y/n/a (and swallows other keys) until answered.
@@ -699,6 +742,9 @@ export function App(props: AppProps): React.ReactElement {
         <PlanView plan={pendingPlan} />
       ) : (
         <Box flexDirection="column" marginTop={1}>
+          {queued !== null ? (
+            <Text dimColor>{`⏎ queued: ${queued} (Esc to cancel)`}</Text>
+          ) : null}
           {completeOpen ? <Complete items={suggestions} selected={sel} /> : null}
           <Box>
             {busy ? (
@@ -716,7 +762,7 @@ export function App(props: AppProps): React.ReactElement {
               cursorNonce={cursorNonce}
               onHistoryPrev={historyPrev}
               onHistoryNext={historyNext}
-              placeholder={busy ? "working… (Esc to abort)" : "message, or /help · Shift+Enter for newline"}
+              placeholder={busy ? "working… (Enter to queue · Esc to cancel)" : "message, or /help · Shift+Enter for newline"}
             />
           </Box>
         </Box>
