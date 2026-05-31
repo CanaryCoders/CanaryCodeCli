@@ -18,6 +18,7 @@ import { loadProjectContext, composeSystemPrompt, describeContext } from "./cont
 import { discoverSkills, composeSkillsPrompt, describeSkills, readSkillTool } from "./skills.ts";
 import { spawnAgentTool, Semaphore } from "./subagents.ts";
 import { connectMcpServers, describeMcp, closeMcp, type McpConnection } from "./mcp.ts";
+import { renderDiff } from "./diff.ts";
 import { startTui } from "./tui/App.tsx";
 import type { Message } from "./provider.ts";
 
@@ -389,6 +390,10 @@ async function runHeadless(args: Args): Promise<number> {
           if (ev.isError) {
             sawError = true;
             process.stderr.write(`✗ ${ev.name}: ${ev.result}\n`);
+          } else if (ev.diff && ev.diff.hunks.length > 0) {
+            // write_file/edit_file carry a diff — show what changed (green/red on a TTY).
+            const color = Boolean(process.stderr.isTTY) && !process.env.NO_COLOR;
+            process.stderr.write(`${renderDiff(ev.diff, { color, maxLines: 60 })}\n`);
           }
           break;
         case "usage":

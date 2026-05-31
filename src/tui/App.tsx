@@ -242,6 +242,7 @@ export function App(props: AppProps): React.ReactElement {
               t.pending = false;
               t.result = ev.result;
               t.isError = ev.isError;
+              t.diff = ev.diff;
             }
             sync();
             break;
