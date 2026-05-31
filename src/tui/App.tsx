@@ -14,7 +14,7 @@
 // output; Shift+Tab cycles the mode (normal → plan → auto → normal).
 
 import { useRef, useState } from "react";
-import { Box, Static, Text, render, useApp, useInput, useStdout } from "ink";
+import { Box, Static, Text, render, useApp, useInput } from "ink";
 import Spinner from "ink-spinner";
 import { MultilineInput } from "./Input.tsx";
 
@@ -47,6 +47,7 @@ import {
   type ConfirmPreview,
 } from "./Confirm.tsx";
 import { modeColor as themeModeColor, SPACING, tint } from "./theme.ts";
+import { Footer } from "./Footer.tsx";
 
 // ── The component ────────────────────────────────────────────────────────────────
 // The transcript is rendered as a flat list of typed `Item`s (see Message.tsx).
@@ -71,6 +72,8 @@ interface AppProps {
   noTools: boolean;
   /** Startup notes (context/skills/mcp) to show in the scrollback. */
   startupNotes: string[];
+  /** Ink render instance (populated after render); used to clear the screen. */
+  inkInstance?: { current: { clear: () => void } | null };
 }
 
 /** Gather the data the `/` autocomplete draws parameter values from. */
@@ -85,7 +88,6 @@ function buildCompletionContext(config: Config, store: SessionStore): Completion
 
 export function App(props: AppProps): React.ReactElement {
   const app = useApp();
-  const { stdout } = useStdout();
 
   // Mutable engine state lives in refs (read inside async loops); React state
   // mirrors what the UI shows.
@@ -141,6 +143,7 @@ export function App(props: AppProps): React.ReactElement {
   const [thinking, setThinking] = useState<ThinkingLevel>("off");
   const [modelLabel, setModelLabel] = useState(props.modelLabel);
   const [cost, setCost] = useState(0);
+  const [tokens, setTokens] = useState(0);
   // Verbose expands tool calls to show full input + output head (Ctrl+R toggles).
   const [verbose, setVerbose] = useState(false);
   // After a plan-mode turn finishes, its plan text awaits accept/edit/reject. The
@@ -300,7 +303,10 @@ export function App(props: AppProps): React.ReactElement {
           case "usage": {
             props.store.addUsage(sessionIdRef.current, ev.inputTokens, ev.outputTokens);
             const s = props.store.getSession(sessionIdRef.current);
-            if (s) setCost(s.costUsd);
+            if (s) {
+              setCost(s.costUsd);
+              setTokens(s.inputTokens + s.outputTokens);
+            }
             break;
           }
           case "compaction":
@@ -577,11 +583,15 @@ export function App(props: AppProps): React.ReactElement {
           title: "(cleared)",
         });
         // Ink's <Static> prints scrollback permanently — resetting React state
-        // alone leaves the old transcript on screen. Wipe the terminal
-        // (screen + scrollback) so the clear is actually visible.
-        stdout?.write("\x1b[2J\x1b[3J\x1b[H");
+        // alone leaves the old transcript on screen. We must clear via Ink's own
+        // instance.clear() so Ink resets its internal cursor/output bookkeeping;
+        // writing a raw clear escape (\x1b[2J…) out-of-band desyncs Ink and causes
+        // duplicated re-renders and a runaway layout. Reset history first, then
+        // clear on the next tick so the <Static> count is in sync.
         setHistory([]);
+        queueMicrotask(() => props.inkInstance?.current?.clear());
         setCost(0);
+        setTokens(0);
         note("conversation cleared");
         break;
       }
@@ -781,13 +791,15 @@ export function App(props: AppProps): React.ReactElement {
         </Box>
       )}
 
-      <Box>
-        <Text dimColor>{modelLabel}</Text>
-        <Text dimColor>{" · "}</Text>
-        <Text color={modeColor}>{mode}</Text>
-        <Text dimColor>{` · ${thinkLabel} · $${cost.toFixed(4)}`}</Text>
-        {verbose ? <Text dimColor>{" · verbose"}</Text> : null}
-      </Box>
+      <Footer
+        modelLabel={modelLabel}
+        mode={mode}
+        modeColor={modeColor}
+        thinkLabel={thinkLabel}
+        cost={cost}
+        tokens={tokens}
+        verbose={verbose}
+      />
     </Box>
   );
 }
@@ -795,5 +807,12 @@ export function App(props: AppProps): React.ReactElement {
 /** Launch the Ink TUI. The caller resolves config/provider/system and passes them in. */
 export function startTui(props: AppProps): void {
   // exitOnCtrlC:false — the App handles Ctrl+C itself (abort once, quit twice).
-  render(<App {...props} />, { exitOnCtrlC: false });
+  // The instance ref lets the App clear the screen via Ink's own clear() (see
+  // the /clear handler) instead of writing raw escape sequences, which desync
+  // Ink's renderer and cause duplicated lines / runaway layout.
+  const inkInstance: { current: { clear: () => void } | null } = { current: null };
+  const instance = render(<App {...props} inkInstance={inkInstance} />, {
+    exitOnCtrlC: false,
+  });
+  inkInstance.current = instance;
 }
