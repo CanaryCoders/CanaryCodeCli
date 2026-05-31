@@ -252,16 +252,18 @@ function anthropicProvider(opts: AnthropicOptions): Provider {
               };
             }
             break;
-          case "content_block_delta":
-            if (ev.delta?.type === "text_delta") {
-              yield { type: "text_delta", text: ev.delta.text };
-            } else if (ev.delta?.type === "thinking_delta") {
-              yield { type: "thinking_delta", text: ev.delta.thinking };
-            } else if (ev.delta?.type === "input_json_delta") {
+          case "content_block_delta": {
+            const delta = ev.delta;
+            if (delta?.type === "text_delta") {
+              yield { type: "text_delta", text: delta.text };
+            } else if (delta?.type === "thinking_delta") {
+              yield { type: "thinking_delta", text: delta.thinking };
+            } else if (delta?.type === "input_json_delta") {
               const t = pending[ev.index];
-              if (t) t.json += ev.delta.partial_json ?? "";
+              if (t) t.json += delta.partial_json ?? "";
             }
             break;
+          }
           case "content_block_stop": {
             const t = pending[ev.index];
             if (t) {

@@ -155,6 +155,8 @@ export async function* runAgent(
   const compactAtTokens = opts.compactAtTokens ?? 0;
   const keepRecent = opts.keepRecentMessages ?? 6;
   const toolDefs = tools.map(toToolDef);
+  // Index tools by name once so the per-call lookups below are O(1).
+  const toolByName = new Map(tools.map((t) => [t.name, t] as const));
 
   for (let turn = 0; turn < maxTurns; turn++) {
     if (signal?.aborted) {
@@ -281,7 +283,7 @@ export async function* runAgent(
       // Only mutating (non-read-only) tools are ever gated. A declined call is
       // reported back to the model as an error tool_result so it can adapt.
       if (opts.confirm) {
-        const tool = tools.find((t) => t.name === call.name);
+        const tool = toolByName.get(call.name);
         if (tool && !tool.readOnly) {
           const ok = await opts.confirm(call);
           if (signal?.aborted) {
@@ -308,7 +310,11 @@ export async function* runAgent(
         }
       }
 
-      const { content, isError, diff } = await runToolCall(tools, mode, call);
+      const { content, isError, diff } = await runToolCall(
+        toolByName,
+        mode,
+        call,
+      );
       yield {
         type: "tool_end",
         id: call.id,
@@ -332,11 +338,11 @@ export async function* runAgent(
 
 /** Execute one tool call, enforcing plan-mode read-only gating. Never throws. */
 async function runToolCall(
-  tools: Tool[],
+  toolByName: Map<string, Tool>,
   mode: AgentMode,
   call: { id: string; name: string; input: unknown },
 ): Promise<{ content: string; isError: boolean; diff?: Diff }> {
-  const tool = tools.find((t) => t.name === call.name);
+  const tool = toolByName.get(call.name);
   if (!tool) {
     return { content: `unknown tool: ${call.name}`, isError: true };
   }

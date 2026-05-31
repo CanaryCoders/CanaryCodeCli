@@ -99,7 +99,7 @@ export async function discoverSkills(
       byName.set(name, { name, description, path, source });
     }
   }
-  return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+  return [...byName.values()].toSorted((a, b) => a.name.localeCompare(b.name));
 }
 
 /**
