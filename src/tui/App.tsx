@@ -7,9 +7,9 @@
 // (model · mode · thinking · $cost). Slash commands are parsed by commands.ts and
 // applied against this component's state.
 //
-// Tool-call rendering here is intentionally simple (one line per call); the richer
-// collapsed/expandable Message view and the plan accept/edit/reject box land in
-// their own Phase-4 tasks. Esc aborts the in-flight request.
+// Item rendering lives in Message.tsx (collapsed/expandable tool calls); the plan
+// accept/edit/reject box lands in its own Phase-4 task. Esc aborts the in-flight
+// request; Ctrl+R toggles verbose tool output.
 
 import { useRef, useState } from "react";
 import { Box, Static, Text, render, useApp, useInput } from "ink";
@@ -35,70 +35,12 @@ import {
   supportsThinking,
   type ThinkingLevel,
 } from "../thinking.ts";
-
-// ── Display items ───────────────────────────────────────────────────────────────
-// The transcript is rendered as a flat list of typed items. Finished items live in
-// the `<Static>` scrollback; the in-flight turn accumulates in `live` and is moved
-// into the scrollback when the turn completes.
-
-type Item =
-  | { id: number; kind: "user"; text: string }
-  | { id: number; kind: "assistant"; text: string }
-  | { id: number; kind: "thinking"; text: string }
-  | { id: number; kind: "tool"; toolId: string; name: string; input: unknown; result?: string; isError?: boolean; pending: boolean }
-  | { id: number; kind: "note"; text: string; tone?: "info" | "error" };
-
-/** Distributive `Omit` so each union member keeps its own shape (a plain
- * `Omit<Item, "id">` collapses to the members' common keys). */
-type DistributiveOmit<T, K extends keyof any> = T extends unknown ? Omit<T, K> : never;
-type ItemInput = DistributiveOmit<Item, "id">;
-
-/** Compact one-line rendering of a tool's input arguments. */
-function fmtInput(input: unknown): string {
-  let s: string;
-  try {
-    s = JSON.stringify(input);
-  } catch {
-    s = String(input);
-  }
-  if (s === "{}" || s === undefined) return "";
-  return s.length > 72 ? `${s.slice(0, 71)}…` : s;
-}
-
-function ItemView({ item }: { item: Item }): React.ReactElement {
-  switch (item.kind) {
-    case "user":
-      return (
-        <Box>
-          <Text color="cyan" bold>{"› "}</Text>
-          <Text>{item.text}</Text>
-        </Box>
-      );
-    case "assistant":
-      return <Text>{item.text}</Text>;
-    case "thinking":
-      return <Text dimColor>{`💭 ${item.text}`}</Text>;
-    case "tool": {
-      const mark = item.pending ? "…" : item.isError ? "✗" : "✓";
-      const color = item.pending ? "yellow" : item.isError ? "red" : "green";
-      return (
-        <Box flexDirection="column">
-          <Box>
-            <Text color={color}>{`⚙ ${item.name}`}</Text>
-            <Text dimColor>{` ${fmtInput(item.input)} ${mark}`}</Text>
-          </Box>
-          {item.isError && item.result ? (
-            <Text color="red">{`  ${item.result.split("\n")[0].slice(0, 200)}`}</Text>
-          ) : null}
-        </Box>
-      );
-    }
-    case "note":
-      return <Text color={item.tone === "error" ? "red" : "gray"}>{item.text}</Text>;
-  }
-}
+import { ItemView, type Item, type ItemInput } from "./Message.tsx";
 
 // ── The component ────────────────────────────────────────────────────────────────
+// The transcript is rendered as a flat list of typed `Item`s (see Message.tsx).
+// Finished items live in the `<Static>` scrollback; the in-flight turn accumulates
+// in `live` and is moved into the scrollback when the turn completes.
 
 interface AppProps {
   config: Config;
@@ -142,6 +84,8 @@ export function App(props: AppProps): React.ReactElement {
   const [thinking, setThinking] = useState<ThinkingLevel>("off");
   const [modelLabel, setModelLabel] = useState(props.modelLabel);
   const [cost, setCost] = useState(0);
+  // Verbose expands tool calls to show full input + output head (Ctrl+R toggles).
+  const [verbose, setVerbose] = useState(false);
 
   const push = (item: ItemInput) =>
     setHistory((prev) => [...prev, { ...item, id: nextId() } as Item]);
@@ -397,9 +341,10 @@ export function App(props: AppProps): React.ReactElement {
     }
   }
 
-  // Esc aborts an in-flight request.
+  // Esc aborts an in-flight request; Ctrl+R toggles verbose tool output.
   useInput((_input, key) => {
     if (key.escape && controllerRef.current) controllerRef.current.abort();
+    if (key.ctrl && _input === "r") setVerbose((v) => !v);
   });
 
   const modeColor = mode === "plan" ? "cyan" : mode === "auto" ? "yellow" : "green";
@@ -407,12 +352,14 @@ export function App(props: AppProps): React.ReactElement {
 
   return (
     <Box flexDirection="column">
-      <Static items={history}>{(item) => <ItemView key={item.id} item={item} />}</Static>
+      <Static items={history}>
+        {(item) => <ItemView key={item.id} item={item} expanded={verbose} />}
+      </Static>
 
       {live.length > 0 ? (
         <Box flexDirection="column">
           {live.map((item) => (
-            <ItemView key={item.id} item={item} />
+            <ItemView key={item.id} item={item} expanded={verbose} />
           ))}
         </Box>
       ) : null}
@@ -438,6 +385,7 @@ export function App(props: AppProps): React.ReactElement {
         <Text dimColor>{" · "}</Text>
         <Text color={modeColor}>{mode}</Text>
         <Text dimColor>{` · ${thinkLabel} · $${cost.toFixed(4)}`}</Text>
+        {verbose ? <Text dimColor>{" · verbose"}</Text> : null}
       </Box>
     </Box>
   );
