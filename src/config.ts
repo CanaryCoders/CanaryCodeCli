@@ -3,8 +3,9 @@
 // Resolution: built-in defaults  <  ~/.cc/config.json  <  (CLI overrides applied by callers).
 // Any string value of the form "${VAR}" is replaced with process.env.VAR (empty if unset).
 
+import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { CANARY_PROVIDER, canaryProviderConfig } from "./canary.ts";
 
@@ -156,6 +157,46 @@ export async function loadConfig(path: string = configPath()): Promise<Config> {
     }
   }
   return interpolateEnv(mergeConfig(defaultConfig(), user));
+}
+
+/**
+ * The subset of config a user can change at runtime (via `/model`, `/think`'s
+ * sibling settings, etc.) and that we persist back to `~/.cc/config.json` so it
+ * becomes the default next launch.
+ */
+export type PersistableSettings = Partial<
+  Pick<Config, "model" | "confirm">
+>;
+
+/**
+ * Persist runtime preference changes back to `~/.cc/config.json`, merging onto
+ * whatever the user already has on disk. Only the keys in `settings` are touched —
+ * every other key (providers, secrets, MCP servers) is read back from the raw file
+ * and written through verbatim, so we never serialize an env-interpolated secret
+ * (e.g. an expanded `${ANTHROPIC_API_KEY}`) into the file. A missing file is created.
+ */
+export async function saveConfig(
+  settings: PersistableSettings,
+  path: string = configPath(),
+): Promise<void> {
+  // Read the raw on-disk file (NOT the interpolated in-memory Config) so we
+  // preserve `${VAR}` placeholders and any hand-edited keys exactly.
+  let raw: Record<string, unknown> = {};
+  const file = Bun.file(path);
+  if (await file.exists()) {
+    try {
+      raw = JSON.parse(await file.text()) as Record<string, unknown>;
+    } catch (err) {
+      throw new Error(
+        `cc: cannot update config at ${path}: invalid JSON (${(err as Error).message})`,
+      );
+    }
+  }
+  for (const [k, v] of Object.entries(settings)) {
+    if (v !== undefined) raw[k] = v;
+  }
+  await mkdir(dirname(path), { recursive: true });
+  await Bun.write(path, `${JSON.stringify(raw, null, 2)}\n`);
 }
 
 /** Resolve a model id to its provider + concrete model. `--model`/config id are accepted. */

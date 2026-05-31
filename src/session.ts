@@ -30,6 +30,10 @@ export interface SessionRow {
   inputTokens: number;
   outputTokens: number;
   costUsd: number;
+  /** Last-active thinking level (e.g. "off" | "think" | "ultrathink"). */
+  thinking: string | null;
+  /** Last-active agent mode ("normal" | "plan" | "auto"). */
+  mode: string | null;
 }
 
 interface SessionDbRow {
@@ -42,6 +46,8 @@ interface SessionDbRow {
   input_tokens: number;
   output_tokens: number;
   cost_usd: number;
+  thinking: string | null;
+  mode: string | null;
 }
 
 interface TurnDbRow {
@@ -60,6 +66,8 @@ function toSessionRow(r: SessionDbRow): SessionRow {
     inputTokens: r.input_tokens,
     outputTokens: r.output_tokens,
     costUsd: r.cost_usd,
+    thinking: r.thinking ?? null,
+    mode: r.mode ?? null,
   };
 }
 
@@ -106,7 +114,9 @@ CREATE TABLE IF NOT EXISTS sessions (
   title         TEXT,
   input_tokens  INTEGER NOT NULL DEFAULT 0,
   output_tokens INTEGER NOT NULL DEFAULT 0,
-  cost_usd      REAL NOT NULL DEFAULT 0
+  cost_usd      REAL NOT NULL DEFAULT 0,
+  thinking      TEXT,
+  mode          TEXT
 );
 CREATE TABLE IF NOT EXISTS turns (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -118,6 +128,22 @@ CREATE TABLE IF NOT EXISTS turns (
 );
 CREATE INDEX IF NOT EXISTS idx_turns_session ON turns(session_id, idx);
 `;
+
+/**
+ * Add columns introduced after the original schema to pre-existing databases.
+ * `CREATE TABLE IF NOT EXISTS` never alters an existing table, so older
+ * sessions.db files miss `thinking`/`mode` — add them idempotently. SQLite has no
+ * `ADD COLUMN IF NOT EXISTS`, so we check the catalog first.
+ */
+function migrate(db: Database): void {
+  const cols = new Set(
+    (db.query("PRAGMA table_info(sessions)").all() as { name: string }[]).map(
+      (c) => c.name,
+    ),
+  );
+  if (!cols.has("thinking")) db.run("ALTER TABLE sessions ADD COLUMN thinking TEXT");
+  if (!cols.has("mode")) db.run("ALTER TABLE sessions ADD COLUMN mode TEXT");
+}
 
 export class SessionStore {
   private db: Database;
@@ -135,19 +161,56 @@ export class SessionStore {
     const db = new Database(path, { create: true });
     db.exec("PRAGMA journal_mode = WAL;");
     db.run(SCHEMA);
+    migrate(db);
     return new SessionStore(db);
   }
 
   /** Create a new session row and return its generated id. */
-  createSession(opts: { model: string; cwd: string; title?: string }): string {
+  createSession(opts: {
+    model: string;
+    cwd: string;
+    title?: string;
+    thinking?: string;
+    mode?: string;
+  }): string {
     const id = crypto.randomUUID();
     const now = Date.now();
     this.db
       .query(
-        "INSERT INTO sessions (id, created_at, updated_at, model, cwd, title) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO sessions (id, created_at, updated_at, model, cwd, title, thinking, mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       )
-      .run(id, now, now, opts.model, opts.cwd, opts.title ?? null);
+      .run(
+        id,
+        now,
+        now,
+        opts.model,
+        opts.cwd,
+        opts.title ?? null,
+        opts.thinking ?? null,
+        opts.mode ?? null,
+      );
     return id;
+  }
+
+  /** Update the session's active model (e.g. after a runtime `/model` switch). */
+  setModel(sessionId: string, model: string): void {
+    this.db
+      .query("UPDATE sessions SET model = ?, updated_at = ? WHERE id = ?")
+      .run(model, Date.now(), sessionId);
+  }
+
+  /** Update the session's last-active thinking level. */
+  setThinking(sessionId: string, thinking: string): void {
+    this.db
+      .query("UPDATE sessions SET thinking = ?, updated_at = ? WHERE id = ?")
+      .run(thinking, Date.now(), sessionId);
+  }
+
+  /** Update the session's last-active agent mode. */
+  setMode(sessionId: string, mode: string): void {
+    this.db
+      .query("UPDATE sessions SET mode = ?, updated_at = ? WHERE id = ?")
+      .run(mode, Date.now(), sessionId);
   }
 
   /** Append one message to a session's transcript, in order. Bumps updated_at. */

@@ -23,7 +23,7 @@ import {
   dispatchCommand,
 } from "../commands.ts";
 import type { Config } from "../config.ts";
-import { resolveModel } from "../config.ts";
+import { resolveModel, saveConfig } from "../config.ts";
 import { initProjectContext } from "../context.ts";
 import type { McpConnection } from "../mcp.ts";
 import type { Message, Provider } from "../provider.ts";
@@ -80,6 +80,11 @@ interface AppProps {
   sessionId: string;
   /** Whether tools are disabled entirely (--no-tools). */
   noTools: boolean;
+  /** Resumed initial state (model/think/mode restored from a prior session). */
+  initialMode?: AgentMode;
+  initialThinking?: ThinkingLevel;
+  /** Prior transcript to seed the conversation when resuming a session. */
+  resumedMessages?: Message[];
   /** Startup notes (context/skills/mcp) to show in the scrollback. */
   startupNotes: string[];
   /** Ink render instance (populated after render); used to clear the screen. */
@@ -116,8 +121,10 @@ function App(props: AppProps): React.ReactElement {
   // Base system prompt (project context + skills already folded in). Held in a
   // ref so `/init` can fold a freshly generated CC.md in live, mid-session.
   const baseSystemRef = useRef(props.baseSystem);
-  const messagesRef = useRef<Message[]>([]);
-  const persistedRef = useRef(0);
+  // Seed with any resumed transcript; those turns are already stored, so the
+  // persist baseline starts past them (only new turns get appended).
+  const messagesRef = useRef<Message[]>(props.resumedMessages ?? []);
+  const persistedRef = useRef(props.resumedMessages?.length ?? 0);
   const sessionIdRef = useRef(props.sessionId);
   const controllerRef = useRef<AbortController | null>(null);
   // Ctrl+C is "armed" after a first press with nothing to abort; a second press
@@ -166,8 +173,22 @@ function App(props: AppProps): React.ReactElement {
     setInputState(value);
   };
   const [busy, setBusy] = useState(false);
-  const [mode, setMode] = useState<AgentMode>("normal");
-  const [thinking, setThinking] = useState<ThinkingLevel>("off");
+  const [mode, setModeState] = useState<AgentMode>(
+    props.initialMode ?? "normal",
+  );
+  const [thinking, setThinkingState] = useState<ThinkingLevel>(
+    props.initialThinking ?? "off",
+  );
+  // Persist mode / thinking onto the session row as they change, so a later
+  // `--resume` restores them. Wrappers keep React state + the stored row in sync.
+  const setMode = (next: AgentMode) => {
+    setModeState(next);
+    props.store.setMode(sessionIdRef.current, next);
+  };
+  const setThinking = (next: ThinkingLevel) => {
+    setThinkingState(next);
+    props.store.setThinking(sessionIdRef.current, next);
+  };
   const [modelLabel, setModelLabel] = useState(props.modelLabel);
   const [cost, setCost] = useState(0);
   const [tokens, setTokens] = useState(0);
@@ -600,6 +621,12 @@ function App(props: AppProps): React.ReactElement {
     modelNameRef.current = resolved.model.name ?? resolved.model.id;
     const label = resolved.model.id;
     setModelLabel(label);
+    // Persist: update the session row (so --resume restores this model) and write
+    // the preference to ~/.cc/config.json (so it's the default next launch).
+    props.store.setModel(sessionIdRef.current, modelNameRef.current);
+    void saveConfig({ model: label }).catch((err) =>
+      note(`could not save model preference: ${(err as Error).message}`, "error"),
+    );
     note(`model → ${label}`);
   }
 
@@ -660,6 +687,8 @@ function App(props: AppProps): React.ReactElement {
           model: modelNameRef.current,
           cwd: process.cwd(),
           title: "(cleared)",
+          thinking,
+          mode,
         });
         // Ink's <Static> prints scrollback permanently — resetting React state
         // alone leaves the old transcript on screen. We must clear via Ink's own
