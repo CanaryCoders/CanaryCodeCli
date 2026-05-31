@@ -12,6 +12,7 @@
 
 import { Box, Text } from "ink";
 import { diffStat, type Diff, type DiffLine } from "../diff.ts";
+import { parseMarkdown, type Span } from "../markdown.ts";
 
 // ── Display items ───────────────────────────────────────────────────────────────
 
@@ -94,6 +95,50 @@ function head(text: string, n: number): { lines: string[]; more: number } {
   return { lines: all.slice(0, n).map((l) => truncate(l, 200)), more: Math.max(0, all.length - n) };
 }
 
+// ── Markdown ─────────────────────────────────────────────────────────────────────────
+
+/** Map a markdown `Span`'s styling onto Ink `<Text>` props. */
+function spanProps(span: Span): {
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  strikethrough?: boolean;
+  dimColor?: boolean;
+  color?: string;
+} {
+  return {
+    bold: span.bold,
+    italic: span.italic,
+    underline: span.underline,
+    strikethrough: span.strikethrough,
+    dimColor: span.dim,
+    color: span.color,
+  };
+}
+
+/**
+ * Render assistant text as markdown: each parsed line is a `<Text>` row whose
+ * styled spans become nested `<Text>` runs. Streaming-safe — `parseMarkdown`
+ * re-parses the accumulated text on every render and never throws on a partial
+ * marker, so the live region can grow delta-by-delta.
+ */
+export function Markdown({ text }: { text: string }): React.ReactElement {
+  const lines = parseMarkdown(text);
+  return (
+    <Box flexDirection="column">
+      {lines.map((line, li) => (
+        <Text key={li}>
+          {line.spans.map((span, si) => (
+            <Text key={si} {...spanProps(span)}>
+              {span.text}
+            </Text>
+          ))}
+        </Text>
+      ))}
+    </Box>
+  );
+}
+
 // ── Rendering ────────────────────────────────────────────────────────────────────
 
 export function ItemView({
@@ -112,7 +157,7 @@ export function ItemView({
         </Box>
       );
     case "assistant":
-      return <Text>{item.text}</Text>;
+      return <Markdown text={item.text} />;
     case "thinking":
       return <Text dimColor>{`💭 ${item.text}`}</Text>;
     case "tool":
