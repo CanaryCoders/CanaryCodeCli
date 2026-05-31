@@ -10,6 +10,7 @@
 import { loadConfig, resolveModel } from "./config.ts";
 import { createProvider } from "./provider.ts";
 import { runAgent } from "./agent.ts";
+import { resolveThinking, supportsThinking, describeLevel } from "./thinking.ts";
 import { tools as allTools } from "./tools.ts";
 import { SessionStore, type SessionRow } from "./session.ts";
 import type { Message } from "./provider.ts";
@@ -23,6 +24,8 @@ interface Args {
   noTools: boolean;
   /** --model <id>: override the configured model. */
   model?: string;
+  /** --think <level>: off | think | think-hard | ultrathink (aliases accepted). */
+  think?: string;
   /**
    * --resume: a session id (or id prefix) to continue, or `true` for a bare
    * `--resume` (resume the most recent session, or list sessions if no prompt).
@@ -52,6 +55,10 @@ function parseArgs(argv: string[]): Args {
         break;
       case "--model":
         out.model = argv[++i];
+        break;
+      case "--think":
+        // An optional level may follow; a bare `--think` means the default level.
+        out.think = argv[i + 1] !== undefined && !argv[i + 1].startsWith("-") ? argv[++i] : "think";
         break;
       case "--resume": {
         // An optional session id (or prefix) may follow. A value that looks like
@@ -87,6 +94,8 @@ function printUsage(): void {
       "Flags:",
       "  -p, --print <s>    run a single prompt headless",
       "  --model <id>       override the configured model",
+      "  --think [level]    extended thinking: off | think | think-hard | ultrathink",
+      "                     (also triggered by a keyword in the prompt)",
       "  --no-tools         disable tools (read-only quick Q&A)",
       "  --resume [id]      continue a saved session (most recent if id omitted);",
       "                     bare --resume with no prompt lists recent sessions",
@@ -200,6 +209,18 @@ async function runHeadless(args: Args): Promise<number> {
   const modelName = resolved.model.name ?? resolved.model.id;
   const tools = args.noTools ? [] : allTools;
 
+  // ── resolve the thinking level (explicit flag wins, else a prompt keyword) ──
+  const thinking = resolveThinking({ flag: args.think, prompt });
+  let thinkingBudget = thinking.budget;
+  if (thinkingBudget > 0 && !supportsThinking(provider.id)) {
+    process.stderr.write(
+      `note: ${modelName} (${provider.id}) does not support extended thinking; ignoring ${describeLevel(thinking.level)}\n`,
+    );
+    thinkingBudget = 0;
+  } else if (thinkingBudget > 0) {
+    process.stderr.write(`💭 ${describeLevel(thinking.level)}\n`);
+  }
+
   // ── Open the store and resolve which session to write into ──
   const store = SessionStore.open();
   let sessionId: string;
@@ -241,6 +262,15 @@ async function runHeadless(args: Args): Promise<number> {
   process.on("SIGINT", onSigint);
 
   let sawError = false;
+  // Tracks an open (unclosed) dimmed thinking block on stderr so we can reset it
+  // before any non-thinking output.
+  let thinkingOpen = false;
+  const closeThinking = () => {
+    if (thinkingOpen) {
+      process.stderr.write("\x1b[0m\n");
+      thinkingOpen = false;
+    }
+  };
   try {
     for await (const ev of runAgent({
       provider,
@@ -248,14 +278,25 @@ async function runHeadless(args: Args): Promise<number> {
       system: SYSTEM_PROMPT,
       messages,
       tools,
+      thinkingBudget,
       compactAtTokens: config.compactAtTokens,
       signal: controller.signal,
     })) {
       switch (ev.type) {
         case "text":
+          closeThinking();
           process.stdout.write(ev.text);
           break;
+        case "thinking":
+          // Stream reasoning to stderr (dimmed) so it stays out of stdout output.
+          if (!thinkingOpen) {
+            process.stderr.write("\n💭 \x1b[2m");
+            thinkingOpen = true;
+          }
+          process.stderr.write(ev.text);
+          break;
         case "tool_start":
+          closeThinking();
           process.stderr.write(`\n⚙ ${ev.name} ${JSON.stringify(ev.input)}\n`);
           break;
         case "tool_end":
@@ -274,12 +315,14 @@ async function runHeadless(args: Args): Promise<number> {
           );
           break;
         case "done":
+          closeThinking();
           process.stdout.write("\n");
           if (ev.reason === "aborted") sawError = true;
           break;
       }
     }
   } catch (err) {
+    closeThinking();
     process.stdout.write("\n");
     console.error(`cc: ${(err as Error).message}`);
     flushTranscript(store, sessionId, messages, persistedCount, compacted);
