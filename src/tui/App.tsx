@@ -14,8 +14,8 @@
 
 import { useRef, useState } from "react";
 import { Box, Static, Text, render, useApp, useInput } from "ink";
-import TextInput from "ink-text-input";
 import Spinner from "ink-spinner";
+import { MultilineInput } from "./Input.tsx";
 
 import type { Config } from "../config.ts";
 import { resolveModel } from "../config.ts";
@@ -485,11 +485,11 @@ export function App(props: AppProps): React.ReactElement {
           ) : (
             <Text color="cyan">{"› "}</Text>
           )}
-          <TextInput
+          <MultilineInput
             value={input}
             onChange={setInput}
             onSubmit={onSubmit}
-            placeholder={busy ? "working… (Esc to abort)" : "message, or /help"}
+            placeholder={busy ? "working… (Esc to abort)" : "message, or /help · Shift+Enter for newline"}
           />
         </Box>
       )}
