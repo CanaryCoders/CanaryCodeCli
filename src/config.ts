@@ -8,6 +8,13 @@ import { join } from "node:path";
 
 export type ProviderApi = "anthropic" | "openai-compat";
 
+/**
+ * Confirm-before-running gate (a TUI-only concern). "off" runs every tool;
+ * "bash" prompts before each `bash`; "writes" prompts before `bash`/`write_file`/
+ * `edit_file`. Auto mode and `--yolo` bypass it; headless ignores it entirely.
+ */
+export type ConfirmMode = "off" | "bash" | "writes";
+
 export interface ModelConfig {
   id: string;
   /** Optional display name / alias. */
@@ -50,6 +57,8 @@ export interface Config {
   maxDepth: number;
   /** Compact context once estimated tokens exceed this. */
   compactAtTokens: number;
+  /** TUI confirm-before-running gate: off | bash | writes (headless ignores). */
+  confirm: ConfirmMode;
 }
 
 /** Path to the config file (~/.cc/config.json). */
@@ -78,6 +87,7 @@ export function defaultConfig(): Config {
     maxConcurrent: 3,
     maxDepth: 2,
     compactAtTokens: 120_000,
+    confirm: "off",
   };
 }
 
@@ -108,6 +118,7 @@ function mergeConfig(base: Config, user: Partial<Config>): Config {
     maxConcurrent: user.maxConcurrent ?? base.maxConcurrent,
     maxDepth: user.maxDepth ?? base.maxDepth,
     compactAtTokens: user.compactAtTokens ?? base.compactAtTokens,
+    confirm: user.confirm ?? base.confirm,
   };
 }
 

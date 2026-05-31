@@ -117,6 +117,31 @@ export interface AnthropicOptions {
   version?: string;
 }
 
+/**
+ * Whether a model uses the adaptive thinking API (`thinking.type: "adaptive"` +
+ * `output_config.effort`) instead of the classic `thinking.type: "enabled"`
+ * budget form. Opus 4.5 and later reject the old shape.
+ */
+function usesAdaptiveThinking(model: string): boolean {
+  // Opus 4.5 / Sonnet 4.5+ / Haiku 4.5 and the newer dated builds (e.g.
+  // claude-opus-4-8, claude-sonnet-4-6) require adaptive thinking; the classic
+  // `thinking.type: "enabled"` budget form is rejected for these.
+  const m = /claude-(opus|sonnet|haiku)-(\d+)[-.](\d+)/i.exec(model);
+  if (!m) return false;
+  const major = Number(m[2]);
+  const minor = Number(m[3]);
+  if (major > 4) return true;
+  if (major < 4) return false;
+  return minor >= 5;
+}
+
+/** Map a token budget onto an adaptive effort level. */
+function effortForBudget(budget: number): "low" | "medium" | "high" {
+  if (budget <= 4_000) return "low";
+  if (budget <= 10_000) return "medium";
+  return "high";
+}
+
 export function anthropicProvider(opts: AnthropicOptions): Provider {
   const baseUrl = (opts.baseUrl ?? "https://api.anthropic.com").replace(/\/$/, "");
   const version = opts.version ?? "2023-06-01";
@@ -139,9 +164,16 @@ export function anthropicProvider(opts: AnthropicOptions): Provider {
         }));
       }
       if (req.thinkingBudget && req.thinkingBudget > 0) {
-        // max_tokens must exceed the thinking budget.
-        if (maxTokens <= req.thinkingBudget) maxTokens = req.thinkingBudget + 4096;
-        body.thinking = { type: "enabled", budget_tokens: req.thinkingBudget };
+        if (usesAdaptiveThinking(req.model)) {
+          // Newer models (Opus 4.5+) reject `thinking.type: "enabled"` and want
+          // adaptive thinking with an effort level on output_config.
+          body.thinking = { type: "adaptive" };
+          body.output_config = { effort: effortForBudget(req.thinkingBudget) };
+        } else {
+          // max_tokens must exceed the thinking budget.
+          if (maxTokens <= req.thinkingBudget) maxTokens = req.thinkingBudget + 4096;
+          body.thinking = { type: "enabled", budget_tokens: req.thinkingBudget };
+        }
       }
       body.max_tokens = maxTokens;
 
