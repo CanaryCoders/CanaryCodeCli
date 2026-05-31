@@ -9,6 +9,7 @@
 
 import type { Message, ContentBlock, Provider, ToolDef } from "./provider.ts";
 import type { Tool } from "./tools.ts";
+import type { Diff } from "./diff.ts";
 
 export type AgentMode = "normal" | "plan" | "auto";
 
@@ -97,7 +98,7 @@ export type AgentEvent =
   | { type: "text"; text: string }
   | { type: "thinking"; text: string }
   | { type: "tool_start"; id: string; name: string; input: unknown }
-  | { type: "tool_end"; id: string; name: string; result: string; isError: boolean }
+  | { type: "tool_end"; id: string; name: string; result: string; isError: boolean; diff?: Diff }
   | { type: "usage"; inputTokens: number; outputTokens: number }
   | { type: "turn_end"; stopReason?: string }
   | { type: "compaction"; beforeTokens: number; afterTokens: number; summarized: number }
@@ -223,8 +224,8 @@ export async function* runAgent(opts: AgentOptions): AsyncGenerator<AgentEvent> 
         return;
       }
       yield { type: "tool_start", id: call.id, name: call.name, input: call.input };
-      const { content, isError } = await runToolCall(tools, mode, call);
-      yield { type: "tool_end", id: call.id, name: call.name, result: content, isError };
+      const { content, isError, diff } = await runToolCall(tools, mode, call);
+      yield { type: "tool_end", id: call.id, name: call.name, result: content, isError, diff };
       results.push({ type: "tool_result", tool_use_id: call.id, content, is_error: isError });
     }
     messages.push({ role: "user", content: results });
@@ -238,7 +239,7 @@ async function runToolCall(
   tools: Tool[],
   mode: AgentMode,
   call: { id: string; name: string; input: unknown },
-): Promise<{ content: string; isError: boolean }> {
+): Promise<{ content: string; isError: boolean; diff?: Diff }> {
   const tool = tools.find((t) => t.name === call.name);
   if (!tool) {
     return { content: `unknown tool: ${call.name}`, isError: true };
@@ -249,7 +250,9 @@ async function runToolCall(
   const input = (call.input ?? {}) as Record<string, any>;
   try {
     const out = await tool.run(input);
-    return { content: out, isError: false };
+    // Tools may return a bare string or a `{ content, diff }` result.
+    if (typeof out === "string") return { content: out, isError: false };
+    return { content: out.content, isError: false, diff: out.diff };
   } catch (err) {
     return { content: (err as Error).message ?? String(err), isError: true };
   }

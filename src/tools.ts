@@ -8,6 +8,19 @@
 
 import { resolve, relative, sep } from "node:path";
 import { readdir } from "node:fs/promises";
+import { computeDiff, type Diff } from "./diff.ts";
+
+/**
+ * A tool's result. Tools may simply return the string that becomes the
+ * tool_result content, or — for the file-mutating tools — a `{ content, diff }`
+ * object so the front-ends can show a unified diff of what changed. The `diff`
+ * is display-only: it never enters the tool_result the model sees (keeping token
+ * cost down); the agent loop surfaces it on the `tool_end` event instead.
+ */
+export interface ToolRunResult {
+  content: string;
+  diff?: Diff;
+}
 
 export interface Tool {
   name: string;
@@ -16,7 +29,7 @@ export interface Tool {
   schema: Record<string, unknown>;
   /** True if the tool cannot mutate anything — the gate for plan mode. */
   readOnly: boolean;
-  run(input: Record<string, any>): Promise<string>;
+  run(input: Record<string, any>): Promise<string | ToolRunResult>;
 }
 
 // ── small helpers ─────────────────────────────────────────────────────────────
@@ -78,8 +91,11 @@ const writeFile: Tool = {
   async run(input) {
     const path = reqStr(input, "path");
     const content = typeof input.content === "string" ? input.content : "";
+    const file = Bun.file(path);
+    // Capture prior contents for the diff (a brand-new file diffs against "").
+    const old = (await file.exists()) ? await file.text() : "";
     await Bun.write(path, content);
-    return `wrote ${content.length} bytes to ${path}`;
+    return { content: `wrote ${content.length} bytes to ${path}`, diff: computeDiff(old, content) };
   },
 };
 
@@ -111,8 +127,9 @@ const editFile: Tool = {
     if (input.replace_all) {
       if (!text.includes(oldStr)) throw new Error(`"old" string not found in ${path}`);
       const count = text.split(oldStr).length - 1;
-      await Bun.write(path, text.split(oldStr).join(newStr));
-      return `replaced ${count} occurrence(s) in ${path}`;
+      const updated = text.split(oldStr).join(newStr);
+      await Bun.write(path, updated);
+      return { content: `replaced ${count} occurrence(s) in ${path}`, diff: computeDiff(text, updated) };
     }
 
     const first = text.indexOf(oldStr);
@@ -120,8 +137,9 @@ const editFile: Tool = {
     if (text.indexOf(oldStr, first + oldStr.length) !== -1) {
       throw new Error(`"old" string is not unique in ${path}; add more context or set replace_all`);
     }
-    await Bun.write(path, text.slice(0, first) + newStr + text.slice(first + oldStr.length));
-    return `edited ${path}`;
+    const updated = text.slice(0, first) + newStr + text.slice(first + oldStr.length);
+    await Bun.write(path, updated);
+    return { content: `edited ${path}`, diff: computeDiff(text, updated) };
   },
 };
 
