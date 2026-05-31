@@ -724,6 +724,11 @@ export function App(props: AppProps): React.ReactElement {
   const modeColor = themeModeColor(mode);
   const thinkLabel = thinking === "off" ? "no-think" : describeLevel(thinking);
 
+  // The session's first tool call gets a one-time `ctrl+r to expand` hint so the
+  // user discovers the verbose affordance. Its id is stable, so every other tool
+  // (and re-render) leaves the hint to that single item.
+  const firstToolId = [...history, ...live].find((i) => i.kind === "tool")?.id;
+
   // ── `/` autocomplete suggestions, recomputed each render from the input ──
   // Only while the prompt is an in-progress slash command and the popover isn't
   // dismissed/busy/blocked by a plan. The refs are mirrored for the key handler.
@@ -740,13 +745,25 @@ export function App(props: AppProps): React.ReactElement {
   return (
     <Box flexDirection="column">
       <Static items={history}>
-        {(item) => <ItemView key={item.id} item={item} expanded={verbose} />}
+        {(item) => (
+          <ItemView
+            key={item.id}
+            item={item}
+            expanded={verbose}
+            showExpandHint={item.id === firstToolId}
+          />
+        )}
       </Static>
 
       {live.length > 0 ? (
         <Box flexDirection="column">
           {live.map((item) => (
-            <ItemView key={item.id} item={item} expanded={verbose} />
+            <ItemView
+              key={item.id}
+              item={item}
+              expanded={verbose}
+              showExpandHint={item.id === firstToolId}
+            />
           ))}
         </Box>
       ) : null}

@@ -12,8 +12,17 @@
 
 import { Box, Text } from "ink";
 import { diffStat, type Diff, type DiffLine } from "../diff.ts";
-import { parseMarkdown, type Span } from "../markdown.ts";
-import { ROLE, SPACING, TOOL_STATUS, tint, toolStatus, type Role } from "./theme.ts";
+import { codeLineFlags, parseMarkdown, type Span } from "../markdown.ts";
+import {
+  DIFF,
+  GUTTER_RULE,
+  ROLE,
+  SPACING,
+  TOOL_STATUS,
+  tint,
+  toolStatus,
+  type Role,
+} from "./theme.ts";
 
 // ── Display items ───────────────────────────────────────────────────────────────
 
@@ -110,6 +119,22 @@ function head(text: string, n: number): { lines: string[]; more: number } {
   return { lines: all.slice(0, n).map((l) => truncate(l, 200)), more: Math.max(0, all.length - n) };
 }
 
+// ── Block gutter rule ──────────────────────────────────────────────────────────────
+//
+// A faint left rule (`│ `) drawn down the side of a block — diffs and markdown code
+// fences — so each reads as a distinct unit rather than text inline with prose.
+// Content lives in a flex column beside the rule so wrapped lines stay tucked under
+// it; the rule colour passes through `tint` for `NO_COLOR` safety.
+
+function RuleRow({ children }: { children: React.ReactNode }): React.ReactElement {
+  return (
+    <Box flexDirection="row">
+      <Text color={tint(DIFF.gutter)} dimColor>{`${GUTTER_RULE} `}</Text>
+      <Box flexGrow={1}>{children}</Box>
+    </Box>
+  );
+}
+
 // ── Markdown ─────────────────────────────────────────────────────────────────────────
 
 /** Map a markdown `Span`'s styling onto Ink `<Text>` props. */
@@ -139,17 +164,25 @@ function spanProps(span: Span): {
  */
 export function Markdown({ text }: { text: string }): React.ReactElement {
   const lines = parseMarkdown(text);
+  // Code-fence/indented lines get a faint left gutter rule so the block reads as a
+  // distinct unit (`codeLineFlags` aligns 1:1 with `lines`).
+  const code = codeLineFlags(text);
   return (
     <Box flexDirection="column">
-      {lines.map((line, li) => (
-        <Text key={li}>
-          {line.spans.map((span, si) => (
-            <Text key={si} {...spanProps(span)}>
-              {span.text}
-            </Text>
-          ))}
-        </Text>
-      ))}
+      {lines.map((line, li) => {
+        const spans = line.spans.map((span, si) => (
+          <Text key={si} {...spanProps(span)}>
+            {span.text}
+          </Text>
+        ));
+        return code[li] ? (
+          <RuleRow key={li}>
+            <Text>{spans}</Text>
+          </RuleRow>
+        ) : (
+          <Text key={li}>{spans}</Text>
+        );
+      })}
     </Box>
   );
 }
@@ -225,9 +258,12 @@ function Gutter({
 export function ItemView({
   item,
   expanded = false,
+  showExpandHint = false,
 }: {
   item: Item;
   expanded?: boolean;
+  /** Render a one-time `ctrl+r to expand` hint (the session's first tool call). */
+  showExpandHint?: boolean;
 }): React.ReactElement {
   switch (item.kind) {
     case "banner":
@@ -256,7 +292,7 @@ export function ItemView({
       const statusColor = TOOL_STATUS[toolStatus(item.pending, item.isError)].color;
       return (
         <Gutter role="tool" colorOverride={statusColor}>
-          <ToolView item={item} expanded={expanded} />
+          <ToolView item={item} expanded={expanded} showHint={showExpandHint} />
         </Gutter>
       );
     }
@@ -272,9 +308,12 @@ export function ItemView({
 function ToolView({
   item,
   expanded,
+  showHint = false,
 }: {
   item: Extract<Item, { kind: "tool" }>;
   expanded: boolean;
+  /** Show the one-time `ctrl+r to expand` affordance hint (collapsed only). */
+  showHint?: boolean;
 }): React.ReactElement {
   const mark = item.pending ? "…" : item.isError ? "✗" : "✓";
   const color = item.pending ? "yellow" : item.isError ? "red" : "green";
@@ -298,6 +337,7 @@ function ToolView({
       <Text color={tint(color)}>
         {headline}
         <Text dimColor>{` ${mark}`}</Text>
+        {showHint && !expanded ? <Text dimColor>{"  (ctrl+r to expand)"}</Text> : null}
       </Text>
       {expanded && summary ? (
         <Text dimColor>{`  ${truncate(fmtInput(item.input), 200)}`}</Text>
@@ -363,13 +403,24 @@ export function DiffView({
   const rows = diffRows(hunks).slice(0, cap);
   const hidden = totalRows - rows.length;
 
+  // The whole diff renders behind a faint left gutter rule (stat header + body +
+  // overflow marker) so it reads as one distinct block, not coloured text inline
+  // with the tool's output.
   return (
     <Box flexDirection="column">
-      <Text dimColor>{`  ${diffStat(diff)}`}</Text>
+      <RuleRow>
+        <Text dimColor>{diffStat(diff)}</Text>
+      </RuleRow>
       {rows.map((r, i) => (
-        <Text key={i} color={r.color}>{`  ${truncate(r.text, 200)}`}</Text>
+        <RuleRow key={i}>
+          <Text color={tint(r.color)}>{truncate(r.text, 200)}</Text>
+        </RuleRow>
       ))}
-      {hidden > 0 ? <Text dimColor>{`  …(+${hidden} more lines)`}</Text> : null}
+      {hidden > 0 ? (
+        <RuleRow>
+          <Text dimColor>{`…(+${hidden} more lines)`}</Text>
+        </RuleRow>
+      ) : null}
     </Box>
   );
 }

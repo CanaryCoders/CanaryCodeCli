@@ -195,6 +195,31 @@ export function parseMarkdown(src: string): MdLine[] {
   return out;
 }
 
+/**
+ * Per-line flags marking which lines of `src` are code (fenced or indented). The
+ * TUI draws a faint left gutter rule down code blocks so they read as a distinct
+ * unit. The array aligns 1:1 with both `src.split("\n")` and `parseMarkdown`'s
+ * output (each consumes exactly one line per row), so the renderer can index it
+ * directly. Mirrors `parseMarkdown`'s fence/indent logic — keep them in sync.
+ */
+export function codeLineFlags(src: string): boolean[] {
+  const flags: boolean[] = [];
+  let inFence = false;
+  for (const raw of src.split("\n")) {
+    if (FENCE.test(raw)) {
+      inFence = !inFence;
+      flags.push(true); // the ``` delimiter line is part of the block
+      continue;
+    }
+    if (inFence) {
+      flags.push(true);
+      continue;
+    }
+    flags.push(INDENT_CODE.test(raw) && raw.trim() !== "");
+  }
+  return flags;
+}
+
 // ── ANSI rendering (headless) ────────────────────────────────────────────────────────
 
 const RESET = "\x1b[0m";
