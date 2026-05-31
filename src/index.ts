@@ -14,6 +14,7 @@ import { resolveThinking, supportsThinking, describeLevel } from "./thinking.ts"
 import { tools as allTools } from "./tools.ts";
 import { webSearchTool } from "./websearch.ts";
 import { SessionStore, type SessionRow } from "./session.ts";
+import { loadProjectContext, composeSystemPrompt, describeContext } from "./context.ts";
 import type { Message } from "./provider.ts";
 
 interface Args {
@@ -236,7 +237,12 @@ async function runHeadless(args: Args): Promise<number> {
   // the model entirely so it only sees what it can actually use.
   let tools = args.noTools ? [] : [...allTools, webSearchTool(config.webSearch)];
   if (mode === "plan") tools = tools.filter((t) => t.readOnly);
-  const system = systemForMode(SYSTEM_PROMPT, mode);
+  // Project memory (CC.md > AGENTS.md > CLAUDE.md, nearest dir first) is prepended
+  // to the base prompt before the mode-specific rules are appended.
+  const projectContext = await loadProjectContext();
+  const contextNote = describeContext(projectContext);
+  if (contextNote) process.stderr.write(`${contextNote}\n`);
+  const system = systemForMode(composeSystemPrompt(SYSTEM_PROMPT, projectContext), mode);
   if (mode === "plan") process.stderr.write("📋 plan mode (read-only)\n");
   if (mode === "auto") process.stderr.write(`🤖 auto mode (autonomous · max ${turnCap} turns)\n`);
 
