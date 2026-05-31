@@ -91,6 +91,13 @@ export function App(props: AppProps): React.ReactElement {
   const idRef = useRef(0);
   const nextId = () => ++idRef.current;
 
+  // Prompt history (shell-style, in-memory per session). `list` holds submitted
+  // lines oldest-first; `idx` is the browse position (null = not browsing, on the
+  // live draft); `draft` stashes the in-progress text so the final Down restores it.
+  const historyListRef = useRef<string[]>([]);
+  const historyIdxRef = useRef<number | null>(null);
+  const historyDraftRef = useRef("");
+
   const [history, setHistory] = useState<Item[]>(() =>
     props.startupNotes.map((text) => ({ id: nextId(), kind: "note" as const, text })),
   );
@@ -340,6 +347,8 @@ export function App(props: AppProps): React.ReactElement {
   function handleInputChange(value: string): void {
     setInput(value);
     setSelected(0);
+    // Typing leaves history browsing — the next Up re-stashes this edited draft.
+    historyIdxRef.current = null;
     if (completeDismissedRef.current) {
       completeDismissedRef.current = false;
       setCompleteDismissed(false);
@@ -365,6 +374,42 @@ export function App(props: AppProps): React.ReactElement {
     const keepOpen = choice.value.endsWith(" ");
     completeDismissedRef.current = !keepOpen;
     setCompleteDismissed(!keepOpen);
+  }
+
+  // ── prompt history (Up/Down at the input boundary) ──
+  // Up walks back through submitted prompts (stashing the live draft on the first
+  // press); Down walks forward, the last step restoring the stashed draft. Editing
+  // the input (handleInputChange) resets browsing so the next Up re-stashes.
+  function historyPrev(): void {
+    const list = historyListRef.current;
+    if (list.length === 0) return;
+    if (historyIdxRef.current === null) {
+      historyDraftRef.current = input;
+      historyIdxRef.current = list.length - 1;
+    } else {
+      historyIdxRef.current = Math.max(0, historyIdxRef.current - 1);
+    }
+    setInput(list[historyIdxRef.current]!);
+    setCursorNonce((n) => n + 1);
+  }
+  function historyNext(): void {
+    if (historyIdxRef.current === null) return; // already on the live draft
+    const list = historyListRef.current;
+    const next = historyIdxRef.current + 1;
+    if (next >= list.length) {
+      historyIdxRef.current = null;
+      setInput(historyDraftRef.current);
+    } else {
+      historyIdxRef.current = next;
+      setInput(list[next]!);
+    }
+    setCursorNonce((n) => n + 1);
+  }
+  /** Record a submitted line (de-dup consecutive) and exit history browsing. */
+  function recordHistory(line: string): void {
+    const list = historyListRef.current;
+    if (list[list.length - 1] !== line) list.push(line);
+    historyIdxRef.current = null;
   }
 
   // ── switch the active model (/model <id>) ──
@@ -400,6 +445,7 @@ export function App(props: AppProps): React.ReactElement {
     const line = value.trim();
     if (!line || busy) return;
     setInput("");
+    recordHistory(line);
 
     const action = dispatchCommand(line);
     switch (action.kind) {
@@ -576,6 +622,8 @@ export function App(props: AppProps): React.ReactElement {
               onSubmit={onSubmit}
               capture={completeOpen}
               cursorNonce={cursorNonce}
+              onHistoryPrev={historyPrev}
+              onHistoryNext={historyNext}
               placeholder={busy ? "working… (Esc to abort)" : "message, or /help · Shift+Enter for newline"}
             />
           </Box>

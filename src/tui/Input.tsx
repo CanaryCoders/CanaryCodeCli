@@ -24,6 +24,10 @@ export interface InputState {
 export type InputResult =
   | { type: "update"; value: string; cursor: number }
   | { type: "submit"; value: string }
+  // Up on the first line / Down on the last line: the host walks prompt history
+  // instead of moving the cursor (single-line input always navigates history).
+  | { type: "history-prev" }
+  | { type: "history-next" }
   | { type: "none" };
 
 /** The `key` shape Ink's `useInput` passes — only the fields we read. */
@@ -102,7 +106,10 @@ export function reduceInput(
     const { line, col } = cursorLineCol(value, cursor);
     const lines = value.split("\n");
     const target = line + (key.upArrow ? -1 : 1);
-    if (target < 0 || target >= lines.length) return { type: "none" };
+    // At the top/bottom boundary the cursor can't move further — hand off to the
+    // host to browse prompt history (Up on the first line, Down on the last).
+    if (target < 0) return { type: "history-prev" };
+    if (target >= lines.length) return { type: "history-next" };
     const nextCol = Math.min(col, lines[target]!.length);
     return { type: "update", value, cursor: lineStart(value, target) + nextCol };
   }
@@ -134,6 +141,10 @@ interface MultilineInputProps {
   /** A counter the host bumps when it sets `value` externally (e.g. accepting a
    *  completion); a change jumps the cursor to the end of the new value. */
   cursorNonce?: number;
+  /** Up pressed on the first line — recall the previous prompt from history. */
+  onHistoryPrev?: () => void;
+  /** Down pressed on the last line — walk forward toward the current draft. */
+  onHistoryNext?: () => void;
 }
 
 export function MultilineInput({
@@ -144,6 +155,8 @@ export function MultilineInput({
   isActive = true,
   capture = false,
   cursorNonce = 0,
+  onHistoryPrev,
+  onHistoryNext,
 }: MultilineInputProps): React.ReactElement {
   const [cursor, setCursor] = useState(value.length);
   // When the host replaces `value` out-of-band (completion accept), snap the
@@ -164,6 +177,10 @@ export function MultilineInput({
       } else if (result.type === "update") {
         setCursor(result.cursor);
         if (result.value !== value) onChange(result.value);
+      } else if (result.type === "history-prev") {
+        onHistoryPrev?.();
+      } else if (result.type === "history-next") {
+        onHistoryNext?.();
       }
     },
     { isActive },
