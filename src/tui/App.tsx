@@ -30,6 +30,7 @@ import { readSkillTool, type Skill } from "../skills.ts";
 import { spawnAgentTool, Semaphore } from "../subagents.ts";
 import type { McpConnection } from "../mcp.ts";
 import { SessionStore } from "../session.ts";
+import { initProjectContext } from "../context.ts";
 import { dispatchCommand, completions, type CompletionContext } from "../commands.ts";
 import {
   budgetFor,
@@ -98,6 +99,9 @@ export function App(props: AppProps): React.ReactElement {
   // mirrors what the UI shows.
   const providerRef = useRef(props.provider);
   const modelNameRef = useRef(props.modelName);
+  // Base system prompt (project context + skills already folded in). Held in a
+  // ref so `/init` can fold a freshly generated CC.md in live, mid-session.
+  const baseSystemRef = useRef(props.baseSystem);
   const messagesRef = useRef<Message[]>([]);
   const persistedRef = useRef(0);
   const sessionIdRef = useRef(props.sessionId);
@@ -236,7 +240,7 @@ export function App(props: AppProps): React.ReactElement {
     controllerRef.current = controller;
 
     const runMode = modeOverride ?? mode;
-    const system = systemForMode(props.baseSystem, runMode);
+    const system = systemForMode(baseSystemRef.current, runMode);
     let tools = buildTools(controller.signal);
     if (runMode === "plan") tools = tools.filter((t) => t.readOnly);
 
@@ -628,7 +632,7 @@ export function App(props: AppProps): React.ReactElement {
         note("resume from the TUI isn't supported yet — start with `cc --resume`");
         break;
       case "init":
-        note("`/init` (generate CC.md) is not implemented yet");
+        void doInit();
         break;
       case "help":
         note(action.text);
@@ -639,6 +643,23 @@ export function App(props: AppProps): React.ReactElement {
       case "error":
         note(action.message, "error");
         break;
+    }
+  }
+
+  // `/init` — generate a starter CC.md in the cwd and fold it into the live
+  // system prompt so it takes effect immediately (no restart). Refuses to
+  // overwrite an existing CC.md.
+  async function doInit(): Promise<void> {
+    try {
+      const res = await initProjectContext();
+      if (!res.created) {
+        note(`CC.md already exists — left intact (${res.path})`, "error");
+        return;
+      }
+      baseSystemRef.current = `${baseSystemRef.current}\n\n── PROJECT CONTEXT (CC.md) ──\n${res.content!.trim()}`;
+      note(`created ${res.path} — loaded as project context`);
+    } catch (err) {
+      note(`/init failed: ${err instanceof Error ? err.message : String(err)}`, "error");
     }
   }
 
