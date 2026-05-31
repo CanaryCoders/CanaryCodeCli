@@ -36,11 +36,15 @@ export interface RoleStyle {
   bold?: boolean;
   /** Whether the whole line is dimmed (thinking, notes). */
   dim?: boolean;
+  /** Optional background colour painted behind the whole line (user highlight). */
+  bg?: string;
 }
 
 export const ROLE: Record<Role, RoleStyle> = {
-  user: { glyph: "›", color: "cyan", bold: true },
-  assistant: { glyph: "", color: undefined },
+  // A filled dot marks the start of each distinct AI answer (Claude-Code style),
+  // so consecutive answers/tool groups read as separate units at a glance.
+  user: { glyph: "›", color: "cyan", bold: true, bg: "gray" },
+  assistant: { glyph: "⏺", color: undefined, bold: true },
   thinking: { glyph: "💭", color: undefined, dim: true },
   tool: { glyph: "⚙", color: undefined }, // coloured by status — see TOOL_STATUS
   note: { glyph: "ℹ", color: "gray", dim: true },
@@ -100,11 +104,16 @@ export const GUTTER_RULE = "│";
 export const SPACING = {
   /** Blank lines between finished turns in the scrollback. */
   turnGap: 1,
-  /** Blank line between distinct items within a turn (assistant text, a tool
-   * call, a diff, a note) so they read as separate blocks rather than one
-   * run-on wall of text. Continuation chunks of a single streamed block stay
-   * glued (no gap) — see Message.tsx. */
+  /** Blank line between distinct *logical groups* (a new AI answer, a user
+   * line, a standalone note) so each group reads as a separate unit rather
+   * than one run-on wall of text. Continuation chunks of a single streamed
+   * block stay glued (no gap) — see Message.tsx. */
   blockGap: 1,
+  /** No gap between items that belong to the *same* logical group — e.g. the
+   * tool calls a model fires right after (or between) its prose. They tuck
+   * directly under the assistant text that introduced them so the eye reads
+   * "this answer + the actions it took" as one block. */
+  groupGap: 0,
   /** Top margin above the input frame. */
   inputGap: 1,
   /** Horizontal padding inside bordered boxes (input frame, plan, confirm). */

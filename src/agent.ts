@@ -255,6 +255,11 @@ export async function* runAgent(
     const collected: CollectedTurn = { blocks: [], toolUses: [] };
     let textBuf = "";
     let thinkingBuf = "";
+    // Some OpenAI-compatible gateways never return token usage when streaming
+    // (even with `include_usage`). Track whether the provider reported any so we
+    // can fall back to a local estimate, keeping the footer counter live.
+    let reportedUsage = false;
+    const promptTokens = estimateTokens(messages, system);
 
     const flushText = () => {
       if (textBuf) {
@@ -300,6 +305,7 @@ export async function* runAgent(
           });
           break;
         case "usage":
+          reportedUsage = true;
           yield {
             type: "usage",
             inputTokens: ev.inputTokens,
@@ -312,6 +318,16 @@ export async function* runAgent(
       }
     }
     flushText();
+    // Fallback usage: if the provider never reported token counts, estimate them
+    // (prompt size in, generated blocks out) so the session counter still moves.
+    if (!reportedUsage) {
+      const outputTokens = Math.ceil(
+        JSON.stringify(collected.blocks).length / CHARS_PER_TOKEN,
+      );
+      if (promptTokens > 0 || outputTokens > 0) {
+        yield { type: "usage", inputTokens: promptTokens, outputTokens };
+      }
+    }
     // Record thinking for display continuity; unsigned thinking is dropped by the
     // provider on replay, so it is safe to keep but won't be sent back.
     if (thinkingBuf)

@@ -371,6 +371,7 @@ function Gutter({
   colorOverride,
   marginTop = 0,
   glyphless = false,
+  highlight = false,
   children,
 }: {
   speaker: Role;
@@ -380,21 +381,26 @@ function Gutter({
   /** Suppress the glyph (a two-space gutter) — used for continuation chunks of a
    * streamed block whose first chunk already carried the marker. */
   glyphless?: boolean;
+  /** Paint the role's highlight background behind the whole row (user lines), so
+   * they stand out from tool calls and AI output. */
+  highlight?: boolean;
   children: React.ReactNode;
 }): React.ReactElement {
   const s = ROLE[speaker];
   const glyph = !glyphless && s.glyph ? `${s.glyph} ` : "  ";
+  const bg = highlight ? tint(s.bg) : undefined;
   return (
     <Box flexDirection="row" marginTop={marginTop}>
       <Text
         color={tint(colorOverride ?? s.color)}
+        backgroundColor={bg}
         bold={s.bold}
         dimColor={s.dim}
       >
         {glyph}
       </Text>
       <Box flexDirection="column" flexGrow={1}>
-        {children}
+        {bg ? <Text backgroundColor={bg}>{children}</Text> : children}
       </Box>
     </Box>
   );
@@ -402,13 +408,45 @@ function Gutter({
 
 // ── Rendering ────────────────────────────────────────────────────────────────────
 
+/**
+ * Items that belong to the *same* logical group as the assistant answer that
+ * introduced them — the model's prose plus the actions it took. Within a group
+ * items tuck together (no blank line); a new group (or a different speaker) gets
+ * the usual `blockGap` separation so each answer reads as its own unit.
+ */
+const GROUP_KINDS = new Set<Item["kind"]>(["assistant", "thinking", "tool"]);
+
+/** Top gap for an item, given what precedes it. Items that continue the same AI
+ * answer/action group glue together (groupGap); a fresh group is offset by a
+ * blank line so the `⏺` dot starts a visibly separate block. */
+function topGap(item: Item, prevKind?: Item["kind"]): number {
+  // A continuation chunk of a streamed block is always glued to its head.
+  if (
+    (item.kind === "assistant" || item.kind === "thinking") &&
+    item.continuation
+  )
+    return 0;
+  // A tool/thinking sub-item tucks under the assistant text (or sibling tool)
+  // that began the group — no blank line within the group.
+  if (
+    (item.kind === "tool" || item.kind === "thinking") &&
+    prevKind &&
+    GROUP_KINDS.has(prevKind)
+  )
+    return SPACING.groupGap;
+  return SPACING.blockGap;
+}
+
 export function ItemView({
   item,
+  prevKind,
   expanded = false,
   showExpandHint = false,
   compact = false,
 }: {
   item: Item;
+  /** Kind of the immediately preceding transcript item, for group spacing. */
+  prevKind?: Item["kind"];
   expanded?: boolean;
   /** Render a one-time `ctrl+r to expand` hint (the session's first tool call). */
   showExpandHint?: boolean;
@@ -421,23 +459,23 @@ export function ItemView({
     case "banner":
       return <BannerView {...item} />;
     case "user":
-      // A user line starts a new turn → one blank line above it separates it
-      // from the previous block. Every item kind now carries its own top gap
-      // (SPACING.blockGap), so spacing is uniform: exactly one blank line
-      // between consecutive blocks throughout the transcript.
+      // A user line starts a new turn → one blank line above it. It also carries a
+      // subtle highlight background so it's instantly distinguishable from tool
+      // calls and AI output (Claude-Code style).
       return (
-        <Gutter speaker="user" marginTop={SPACING.turnGap}>
+        <Gutter speaker="user" marginTop={SPACING.turnGap} highlight>
           <Text>{item.text}</Text>
         </Gutter>
       );
     case "assistant":
-      // A blank line separates this block from the previous item, except for a
-      // continuation chunk of the same streamed message (which stays glued).
+      // A `⏺` dot + blank line marks the start of each distinct AI answer; a
+      // continuation chunk of the same streamed message stays glued (no gap, no
+      // repeated dot).
       return (
         <Gutter
           speaker="assistant"
           glyphless={item.continuation}
-          marginTop={item.continuation ? 0 : SPACING.blockGap}
+          marginTop={topGap(item, prevKind)}
         >
           <Markdown text={item.text} />
         </Gutter>
@@ -447,7 +485,7 @@ export function ItemView({
         <Gutter
           speaker="thinking"
           glyphless={item.continuation}
-          marginTop={item.continuation ? 0 : SPACING.blockGap}
+          marginTop={topGap(item, prevKind)}
         >
           <Text dimColor italic>
             {item.text}
@@ -461,7 +499,7 @@ export function ItemView({
         <Gutter
           speaker="tool"
           colorOverride={statusColor}
-          marginTop={SPACING.blockGap}
+          marginTop={topGap(item, prevKind)}
         >
           <ToolView
             item={item}

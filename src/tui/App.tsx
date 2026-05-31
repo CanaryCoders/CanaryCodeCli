@@ -13,11 +13,15 @@
 // request → quit (the last step needs a second press). Ctrl+R toggles verbose tool
 // output; Shift+Tab cycles the mode (normal → plan → auto → normal).
 
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { Box, render, Static, Text, useApp, useInput, useStdout } from "ink";
 import Spinner from "ink-spinner";
 import { useRef, useState } from "react";
 import { type AgentMode, runAgent, systemForMode } from "../agent.ts";
 import type { AgentDef } from "../agents.ts";
+import type { AskAnswer, AskQuestion } from "../askuser.ts";
+import { askUserTool } from "../askuser.ts";
 import {
   type CompletionContext,
   completions,
@@ -25,7 +29,6 @@ import {
 } from "../commands.ts";
 import type { Config } from "../config.ts";
 import { resolveModel, saveConfig } from "../config.ts";
-import { initProjectContext } from "../context.ts";
 import { runPostToolHooks, runPreToolHooks, runStopHooks } from "../hooks.ts";
 import type { McpConnection } from "../mcp.ts";
 import { checkCommandSafety, inPermissionScope } from "../permission.ts";
@@ -43,6 +46,7 @@ import {
 import type { Tool } from "../tools.ts";
 import { tools as allTools } from "../tools.ts";
 import { webSearchTool } from "../websearch.ts";
+import { AskUserView } from "./AskUser.tsx";
 import { Complete } from "./Complete.tsx";
 import {
   buildConfirmPreview,
@@ -63,6 +67,21 @@ import {
 } from "./Message.tsx";
 import { PlanView, planChoiceForKey } from "./Plan.tsx";
 import { SPACING, modeColor as themeModeColor, tint } from "./theme.ts";
+
+// `/init` instruction: drives a real generation turn so the agent investigates
+// the repo and writes a genuine CC.md instead of a fill-in-the-blanks template.
+const INIT_PROMPT = `Create a CC.md file in the current directory — the project-context file cc reads on startup.
+
+First investigate the project: read package manifests (package.json, pyproject.toml, go.mod, Cargo.toml, etc.), config files, the README, and the directory layout to understand what this project is, its stack, and how to build/test/lint/run it.
+
+Then write CC.md with these sections, filled in from what you actually found (omit a section if it genuinely doesn't apply — do not leave placeholder comments):
+- # <project name>
+- ## Overview — one or two sentences on what the project is and does.
+- ## Stack — languages, frameworks, runtimes, key libraries.
+- ## Commands — the real build/test/run/lint commands for this repo.
+- ## Conventions — code style, patterns, and rules to follow.
+
+Keep it short and high-signal. Use write_file to create ./CC.md.`;
 
 // ── The component ────────────────────────────────────────────────────────────────
 // The transcript is rendered as a flat list of typed `Item`s (see Message.tsx).
@@ -245,6 +264,17 @@ function App(props: AppProps): React.ReactElement {
   const pendingCheckpointRef = useRef<number | null>(null);
   const checkpointResolverRef = useRef<((ok: boolean) => void) | null>(null);
 
+  // ask_user: the agent's question box. While questions are up the loop is paused
+  // on `askResolverRef`'s promise; AskUserView resolves it with the answers (or
+  // null if dismissed). `askKey` remounts the box per ask so its wizard state
+  // resets cleanly. The ref mirrors state for the once-captured `useInput` closure.
+  const [pendingAsk, setPendingAsk] = useState<AskQuestion[] | null>(null);
+  const [askKey, setAskKey] = useState(0);
+  const pendingAskRef = useRef<AskQuestion[] | null>(null);
+  const askResolverRef = useRef<((answers: AskAnswer[] | null) => void) | null>(
+    null,
+  );
+
   // `/` autocomplete popover. `selected` is the highlighted row; `dismissed`
   // hides it (after Esc, or accepting a no-arg command) until the input changes.
   // `cursorNonce` is bumped when we set the input out-of-band so the MultilineInput
@@ -270,6 +300,7 @@ function App(props: AppProps): React.ReactElement {
       ...allTools,
       webSearchTool(props.config.webSearch),
       readSkillTool(props.skills),
+      askUserTool(requestAsk),
       ...props.mcp.tools,
     ];
     if (props.config.maxDepth > 0) {
@@ -696,6 +727,29 @@ function App(props: AppProps): React.ReactElement {
     resolve(ok);
   }
 
+  // ── ask_user: the hook the ask_user tool calls to put a question to the user ──
+  // Pauses the loop on a promise (like humanConfirm) and shows AskUserView; the box
+  // resolves it with the collected answers, or `null` if the turn is aborted while
+  // it's open. `askKey` bumps so each ask gets a fresh AskUserView (reset wizard).
+  function requestAsk(questions: AskQuestion[]): Promise<AskAnswer[] | null> {
+    return new Promise<AskAnswer[] | null>((resolve) => {
+      askResolverRef.current = resolve;
+      pendingAskRef.current = questions;
+      setPendingAsk(questions);
+      setAskKey((k) => k + 1);
+    });
+  }
+
+  /** Resolve a pending ask with the user's answers (or null) and tear down the box. */
+  function resolveAsk(answers: AskAnswer[] | null): void {
+    const resolve = askResolverRef.current;
+    if (!resolve) return;
+    askResolverRef.current = null;
+    pendingAskRef.current = null;
+    setPendingAsk(null);
+    resolve(answers);
+  }
+
   // ── cycle the agent mode (Shift+Tab): normal → plan → auto → normal ──
   // This is the canonical mode switch; the status line reflects it immediately.
   // Disabled while a plan awaits review (those keys belong to accept/edit/reject).
@@ -894,7 +948,7 @@ function App(props: AppProps): React.ReactElement {
         );
         break;
       case "init":
-        void doInit();
+        doInit();
         break;
       case "help":
         note(action.text);
@@ -908,24 +962,24 @@ function App(props: AppProps): React.ReactElement {
     }
   }
 
-  // `/init` — generate a starter CC.md in the cwd and fold it into the live
-  // system prompt so it takes effect immediately (no restart). Refuses to
-  // overwrite an existing CC.md.
-  async function doInit(): Promise<void> {
-    try {
-      const res = await initProjectContext();
-      if (!res.created) {
-        note(`CC.md already exists — left intact (${res.path})`, "error");
-        return;
-      }
-      baseSystemRef.current = `${baseSystemRef.current}\n\n── PROJECT CONTEXT (CC.md) ──\n${res.content!.trim()}`;
-      note(`created ${res.path} — loaded as project context`);
-    } catch (err) {
+  // `/init` — drive a real agent turn that investigates the repo and writes a
+  // proper CC.md (not a placeholder template). Refuses to overwrite an existing
+  // CC.md so project memory is never clobbered.
+  function doInit(): void {
+    if (existsSync(join(process.cwd(), "CC.md"))) {
       note(
-        `/init failed: ${err instanceof Error ? err.message : String(err)}`,
+        `CC.md already exists — left intact (${join(process.cwd(), "CC.md")})`,
         "error",
       );
+      return;
     }
+    push({ kind: "user", text: "/init" });
+    messagesRef.current.push({
+      role: "user",
+      content: [{ type: "text", text: INIT_PROMPT }],
+    });
+    note("investigating the project to write CC.md…");
+    void runTurn("normal");
   }
 
   function quit(): void {
@@ -965,6 +1019,7 @@ function App(props: AppProps): React.ReactElement {
       // decline it so the abort can actually propagate instead of deadlocking.
       if (pendingConfirmRef.current) resolveConfirm(false, false);
       if (pendingCheckpointRef.current !== null) resolveCheckpoint(false);
+      if (pendingAskRef.current) resolveAsk(null);
       quitArmedRef.current = false;
       if (quitTimerRef.current) clearTimeout(quitTimerRef.current);
       return;
@@ -999,6 +1054,9 @@ function App(props: AppProps): React.ReactElement {
       else handleCancel("Esc");
       return;
     }
+    // A pending ask owns the keyboard — AskUserView's own useInput drives the
+    // wizard (↑/↓/space/enter); bow out so mode-cycle/verbose don't also fire.
+    if (pendingAskRef.current) return;
     // A pending confirm owns y/n/a (and swallows other keys) until answered.
     if (pendingConfirmRef.current) {
       const choice = confirmChoiceForKey(_input);
@@ -1080,10 +1138,11 @@ function App(props: AppProps): React.ReactElement {
   return (
     <Box flexDirection="column">
       <Static items={history}>
-        {(item) => (
+        {(item, index) => (
           <ItemView
             key={item.id}
             item={item}
+            prevKind={index > 0 ? history[index - 1]!.kind : undefined}
             expanded={verbose}
             showExpandHint={item.id === firstToolId}
           />
@@ -1092,7 +1151,16 @@ function App(props: AppProps): React.ReactElement {
 
       {live.length > 0 ? (
         <Box flexDirection="column">
-          {live.map((item) => {
+          {live.map((item, index) => {
+            // The first live item follows the last committed scrollback item;
+            // later live items follow their live predecessor. Drives group spacing
+            // so a streaming answer/tool tucks under what came before it.
+            const prevKind =
+              index > 0
+                ? live[index - 1]!.kind
+                : history.length > 0
+                  ? history[history.length - 1]!.kind
+                  : undefined;
             // A streaming assistant/thinking block is the one live item that can
             // outgrow the viewport — show only its trailing lines so the dynamic
             // region stays within the terminal (the full text lands in `<Static>`
@@ -1116,6 +1184,7 @@ function App(props: AppProps): React.ReactElement {
                   ) : null}
                   <ItemView
                     item={{ ...item, text }}
+                    prevKind={prevKind}
                     expanded={verbose}
                     showExpandHint={item.id === firstToolId}
                   />
@@ -1128,6 +1197,7 @@ function App(props: AppProps): React.ReactElement {
               <ItemView
                 key={item.id}
                 item={item}
+                prevKind={prevKind}
                 expanded={verbose}
                 showExpandHint={item.id === firstToolId}
                 compact
@@ -1139,6 +1209,12 @@ function App(props: AppProps): React.ReactElement {
 
       {pendingConfirm ? (
         <ConfirmView preview={pendingConfirm} reason={pendingConfirmReason} />
+      ) : pendingAsk ? (
+        <AskUserView
+          key={askKey}
+          questions={pendingAsk}
+          onSubmit={(answers) => resolveAsk(answers)}
+        />
       ) : pendingCheckpoint !== null ? (
         <Box flexDirection="column" marginTop={SPACING.inputGap}>
           <Text color={tint("yellow")}>
@@ -1159,26 +1235,24 @@ function App(props: AppProps): React.ReactElement {
           {completeOpen ? (
             <Complete items={suggestions} selected={sel} />
           ) : null}
-          {/* Framed input: rounded border tinted by mode, dimmed while busy. The
-              prompt glyph lives inside the frame; MultilineInput's editing logic is
-              untouched — only the surrounding chrome changed. */}
+          {/* Live status: spinner + verb sit on their own row just above the
+              input frame while busy (so they never share the prompt line). */}
+          {busy ? (
+            <Text color={tint("yellow")}>
+              <Spinner type="dots" />
+              <Text dimColor>{` ${verb}`}</Text>
+            </Text>
+          ) : null}
+          {/* Framed input: rounded border tinted by mode, dimmed while busy.
+              MultilineInput's editing logic is untouched — only the surrounding
+              chrome changed. */}
           <Box
             borderStyle="round"
             borderColor={tint(modeColor)}
             borderDimColor={busy}
             paddingX={SPACING.boxPadX}
           >
-            {busy ? (
-              // Spinner + live status verb in the input frame's prompt position.
-              // Inline (not a separate row) so toggling busy never shifts the
-              // input box vertically.
-              <Text color={tint("yellow")}>
-                <Spinner type="dots" />
-                <Text dimColor>{` ${verb} `}</Text>
-              </Text>
-            ) : (
-              <Text color={tint(modeColor)}>{"› "}</Text>
-            )}
+            <Text color={tint(modeColor)}>{"› "}</Text>
             <MultilineInput
               value={input}
               onChange={handleInputChange}

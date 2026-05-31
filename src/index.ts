@@ -14,6 +14,7 @@ import {
   describeAgents,
   discoverAgents,
 } from "./agents.ts";
+import { askUserTool, autoAnswer } from "./askuser.ts";
 import { describeCanary, populateCanaryModels } from "./canary.ts";
 import { type Config, loadConfig, resolveModel } from "./config.ts";
 import {
@@ -362,6 +363,9 @@ async function runHeadless(args: Args): Promise<number> {
         ...allTools,
         webSearchTool(config.webSearch),
         readSkillTool(skills),
+        // Headless has no interactive prompt — auto-answer each ask_user question
+        // with its recommended option so a call resolves instead of hanging.
+        askUserTool(async (questions) => autoAnswer(questions)),
         ...mcp.tools,
       ];
   // spawn_agent lets the model delegate focused sub-tasks to child agents with a
