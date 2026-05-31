@@ -8,6 +8,7 @@
 // interactive TUI lands in Phase 4.
 
 import { loadConfig, resolveModel } from "./config.ts";
+import { populateCanaryModels, describeCanary } from "./canary.ts";
 import { createProvider } from "./provider.ts";
 import { runAgent, systemForMode, type AgentMode } from "./agent.ts";
 import { resolveThinking, supportsThinking, describeLevel } from "./thinking.ts";
@@ -234,6 +235,11 @@ async function runHeadless(args: Args): Promise<number> {
     console.error((err as Error).message);
     return 1;
   }
+
+  // Discover CanaryLLM models when the preset is active (CANARYLLM_API_KEY set),
+  // so `--model <id>` resolves. Best-effort: failures leave it inert.
+  const canaryNote = describeCanary(await populateCanaryModels(config));
+  if (canaryNote) process.stderr.write(`${canaryNote}\n`);
 
   const resolved = resolveModel(config, args.model);
   if (!resolved) {
@@ -584,6 +590,8 @@ async function runTui(args: Args): Promise<number> {
     return 1;
   }
 
+  const canaryNote = describeCanary(await populateCanaryModels(config));
+
   const resolved = resolveModel(config, args.model);
   if (!resolved) {
     console.error("cc: no model available; check ~/.cc/config.json providers");
@@ -601,6 +609,7 @@ async function runTui(args: Args): Promise<number> {
   const modelLabel = resolved.model.id;
 
   const startupNotes: string[] = [];
+  if (canaryNote) startupNotes.push(canaryNote);
 
   // Project memory (CC.md > AGENTS.md > CLAUDE.md) + skills fold into the base
   // system prompt; App re-appends the per-mode rules at send time.

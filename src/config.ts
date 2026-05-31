@@ -6,6 +6,8 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { CANARY_PROVIDER, canaryProviderConfig } from "./canary.ts";
+
 export type ProviderApi = "anthropic" | "openai-compat";
 
 /**
@@ -80,6 +82,9 @@ export function defaultConfig(): Config {
           { id: "haiku", name: "claude-haiku-4-5-20251001" },
         ],
       },
+      // CanaryLLM gateway, first-class. Inert until CANARYLLM_API_KEY is set;
+      // models discovered from /api/public/models on startup (see canary.ts).
+      [CANARY_PROVIDER]: canaryProviderConfig(),
     },
     webSearch: {},
     mcpServers: {},
