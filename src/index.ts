@@ -17,6 +17,7 @@ import { SessionStore, type SessionRow } from "./session.ts";
 import { loadProjectContext, composeSystemPrompt, describeContext } from "./context.ts";
 import { discoverSkills, composeSkillsPrompt, describeSkills, readSkillTool } from "./skills.ts";
 import { spawnAgentTool, Semaphore } from "./subagents.ts";
+import { connectMcpServers, describeMcp, closeMcp, type McpConnection } from "./mcp.ts";
 import type { Message } from "./provider.ts";
 
 interface Args {
@@ -244,11 +245,22 @@ async function runHeadless(args: Args): Promise<number> {
   const skillsNote = describeSkills(skills);
   if (skillsNote) process.stderr.write(`${skillsNote}\n`);
 
+  // Connect MCP servers (stdio + SSE) and merge their namespaced tools. A server
+  // that fails to connect is noted and skipped — the agent runs without it.
+  const mcp: McpConnection = args.noTools
+    ? { tools: [], clients: [], notes: [] }
+    : await connectMcpServers(config.mcpServers);
+  const mcpNote = describeMcp(mcp, Object.keys(config.mcpServers).length);
+  if (mcpNote) process.stderr.write(`${mcpNote}\n`);
+
   // web_search is built from config (backend + key) and joins the static tool set.
   // read_skill (read-only) lets the model pull a skill's full instructions on
-  // demand. In plan mode the loop gates non-read-only tools, but we also withhold
-  // them from the model entirely so it only sees what it can actually use.
-  let tools = args.noTools ? [] : [...allTools, webSearchTool(config.webSearch), readSkillTool(skills)];
+  // demand. MCP tools (namespaced `mcp__<server>__<tool>`) merge in too. In plan
+  // mode the loop gates non-read-only tools, but we also withhold them from the
+  // model entirely so it only sees what it can actually use.
+  let tools = args.noTools
+    ? []
+    : [...allTools, webSearchTool(config.webSearch), readSkillTool(skills), ...mcp.tools];
   // spawn_agent lets the model delegate focused sub-tasks to child agents with a
   // fresh context. Added only when sub-agents are enabled (maxDepth > 0); it is
   // mutating, so the plan-mode filter below drops it. The inherited tool set is the
@@ -408,6 +420,7 @@ async function runHeadless(args: Args): Promise<number> {
     console.error(`cc: ${(err as Error).message}`);
     flushTranscript(store, sessionId, messages, persistedCount, compacted);
     store.close();
+    await closeMcp(mcp);
     return 1;
   } finally {
     process.off("SIGINT", onSigint);
@@ -421,6 +434,7 @@ async function runHeadless(args: Args): Promise<number> {
     );
   }
   store.close();
+  await closeMcp(mcp);
 
   return sawError ? 1 : 0;
 }
