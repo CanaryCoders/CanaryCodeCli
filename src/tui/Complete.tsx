@@ -9,9 +9,16 @@
 
 import { Box, Text } from "ink";
 import type { Completion } from "../commands.ts";
+import { SPACING, tint } from "./theme.ts";
 
 /** Most rows to show at once; the window scrolls to keep `selected` visible. */
 const MAX_ROWS = 8;
+
+// The popover renders directly above the framed input box, which insets its
+// content by a 1-col border plus `boxPadX` of padding. Matching that inset here
+// anchors the popover's marker column under the input's prompt glyph so the two
+// read as one attached unit rather than the list floating flush-left.
+const FRAME_INSET = 1 + SPACING.boxPadX;
 
 /** Compute the [start, end) slice of items to render around `selected`. */
 export function windowRange(count: number, selected: number, max = MAX_ROWS): [number, number] {
@@ -32,15 +39,16 @@ export function Complete({ items, selected }: CompleteProps): React.ReactElement
   const [start, end] = windowRange(items.length, selected);
   const visible = items.slice(start, end);
 
+  const accent = tint("cyan");
   return (
-    <Box flexDirection="column" marginBottom={0}>
+    <Box flexDirection="column" marginBottom={0} paddingLeft={FRAME_INSET}>
       {visible.map((c, i) => {
         const idx = start + i;
         const isSel = idx === selected;
         return (
           <Box key={idx}>
-            <Text color={isSel ? "cyan" : undefined}>{isSel ? "› " : "  "}</Text>
-            <Text color={isSel ? "cyan" : undefined} bold={isSel}>
+            <Text color={isSel ? accent : undefined}>{isSel ? "› " : "  "}</Text>
+            <Text color={isSel ? accent : undefined} bold={isSel}>
               {c.label}
             </Text>
             {c.description ? <Text dimColor>{`  ${c.description}`}</Text> : null}

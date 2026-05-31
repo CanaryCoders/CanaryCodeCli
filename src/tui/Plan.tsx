@@ -7,6 +7,8 @@
 // `TextInput` is unmounted, so the keystrokes can't leak into the input line.
 
 import { Box, Text } from "ink";
+import type { AgentMode } from "../agent.ts";
+import { modeColor, SPACING, tint } from "./theme.ts";
 
 /** The accept/edit/reject choices, surfaced so App.tsx and tests share one source. */
 export type PlanChoice = "accept" | "edit" | "reject";
@@ -25,21 +27,36 @@ export function planChoiceForKey(input: string): PlanChoice | null {
   }
 }
 
-export function PlanView({ plan }: { plan: string }): React.ReactElement {
+export function PlanView({
+  plan,
+  mode = "plan",
+}: {
+  plan: string;
+  /** Active mode — tints the box border + accents (defaults to plan's cyan). */
+  mode?: AgentMode;
+}): React.ReactElement {
+  // Mode-aware accent (plan=cyan), routed through `tint` so NO_COLOR keeps the
+  // frame + glyphs but drops colour.
+  const accent = tint(modeColor(mode));
   return (
-    <Box flexDirection="column" marginTop={1}>
-      <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={1}>
-        <Text color="cyan" bold>
+    <Box flexDirection="column" marginTop={SPACING.inputGap}>
+      <Box
+        flexDirection="column"
+        borderStyle="round"
+        borderColor={accent}
+        paddingX={SPACING.boxPadX}
+      >
+        <Text color={accent} bold>
           {"📋 Proposed plan"}
         </Text>
         <Text>{plan.trim()}</Text>
       </Box>
-      <Box marginTop={1}>
-        <Text color="cyan">{"[a]"}</Text>
+      <Box marginTop={SPACING.inputGap}>
+        <Text color={accent}>{"[a]"}</Text>
         <Text dimColor>{"ccept · "}</Text>
-        <Text color="cyan">{"[e]"}</Text>
+        <Text color={accent}>{"[e]"}</Text>
         <Text dimColor>{"dit · "}</Text>
-        <Text color="cyan">{"[r]"}</Text>
+        <Text color={accent}>{"[r]"}</Text>
         <Text dimColor>{"eject"}</Text>
       </Box>
     </Box>

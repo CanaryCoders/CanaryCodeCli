@@ -832,7 +832,7 @@ export function App(props: AppProps): React.ReactElement {
       {pendingConfirm ? (
         <ConfirmView preview={pendingConfirm} />
       ) : pendingPlan ? (
-        <PlanView plan={pendingPlan} />
+        <PlanView plan={pendingPlan} mode={mode} />
       ) : (
         <Box flexDirection="column" marginTop={SPACING.inputGap}>
           {queued !== null ? (
