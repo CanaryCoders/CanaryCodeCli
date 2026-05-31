@@ -167,7 +167,7 @@ function effortForBudget(budget: number): "low" | "medium" | "high" {
   return "high";
 }
 
-export function anthropicProvider(opts: AnthropicOptions): Provider {
+function anthropicProvider(opts: AnthropicOptions): Provider {
   const baseUrl = (opts.baseUrl ?? "https://api.anthropic.com").replace(
     /\/$/,
     "",
@@ -376,7 +376,7 @@ export interface OpenAICompatOptions {
   baseUrl: string;
 }
 
-export function openaiCompatProvider(opts: OpenAICompatOptions): Provider {
+function openaiCompatProvider(opts: OpenAICompatOptions): Provider {
   const baseUrl = opts.baseUrl.replace(/\/$/, "");
 
   return {

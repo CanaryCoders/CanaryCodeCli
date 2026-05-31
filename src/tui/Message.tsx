@@ -60,7 +60,7 @@ export type Item =
 
 /** Distributive `Omit` so each union member keeps its own shape (a plain
  * `Omit<Item, "id">` collapses to the members' common keys). */
-export type DistributiveOmit<T, K extends PropertyKey> = T extends unknown
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown
   ? Omit<T, K>
   : never;
 export type ItemInput = DistributiveOmit<Item, "id">;
@@ -96,7 +96,7 @@ export function summarizeToolInput(name: string, input: unknown): string {
 }
 
 /** Compact one-line rendering of a tool's full input arguments (JSON). */
-export function fmtInput(input: unknown): string {
+function fmtInput(input: unknown): string {
   let s: string;
   try {
     s = JSON.stringify(input);
@@ -167,11 +167,20 @@ export function tailLines(
   const kept: string[] = [];
   let used = 0;
   for (let i = segs.length - 1; i >= 0; i--) {
-    const rows = Math.max(1, Math.ceil(segs[i]!.length / w));
-    if (used + rows > maxRows && kept.length > 0) {
-      return { text: kept.join("\n"), trimmed: true };
+    const seg = segs[i]!;
+    const rows = Math.max(1, Math.ceil(seg.length / w));
+    if (used + rows > maxRows) {
+      // This segment doesn't fit whole. If we've already kept something, drop it
+      // entirely. Otherwise (a single trailing segment taller than the whole cap —
+      // e.g. one long unbroken paragraph streamed with no newline yet) keep only
+      // its last `remaining` visual rows: a single oversized segment that wrapped
+      // past the viewport is exactly what overflows the dynamic region and ghosts.
+      if (kept.length > 0) return { text: kept.join("\n"), trimmed: true };
+      const remaining = maxRows - used;
+      if (remaining <= 0) return { text: "", trimmed: true };
+      return { text: seg.slice(-(remaining * w)), trimmed: true };
     }
-    kept.unshift(segs[i]!);
+    kept.unshift(seg);
     used += rows;
   }
   return { text, trimmed: false };
@@ -233,7 +242,7 @@ function spanProps(span: Span): {
  * re-parses the accumulated text on every render and never throws on a partial
  * marker, so the live region can grow delta-by-delta.
  */
-export function Markdown({ text }: { text: string }): React.ReactElement {
+function Markdown({ text }: { text: string }): React.ReactElement {
   const lines = parseMarkdown(text);
   // Code-fence/indented lines get a faint left gutter rule so the block reads as a
   // distinct unit (`codeLineFlags` aligns 1:1 with `lines`).
@@ -261,7 +270,7 @@ export function Markdown({ text }: { text: string }): React.ReactElement {
 // ── Launch banner ──────────────────────────────────────────────────────────────
 
 /** Abbreviate a home-relative path with `~` (e.g. `/Users/me/src` → `~/src`). */
-export function abbreviateCwd(cwd: string): string {
+function abbreviateCwd(cwd: string): string {
   const home = process.env.HOME;
   if (home && (cwd === home || cwd.startsWith(`${home}/`))) {
     return `~${cwd.slice(home.length)}`;
@@ -274,7 +283,7 @@ export function abbreviateCwd(cwd: string): string {
  * active model/provider — a slim, dim rounded box. Rendered as the first `<Static>`
  * scrollback item so it scrolls away naturally as the session grows.
  */
-export function BannerView({
+function BannerView({
   appName,
   version,
   cwd,

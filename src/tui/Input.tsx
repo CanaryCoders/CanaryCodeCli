@@ -45,7 +45,7 @@ export interface InputKey {
 }
 
 /** Map an absolute cursor offset to its {line, col} within the value. */
-export function cursorLineCol(
+function cursorLineCol(
   value: string,
   cursor: number,
 ): { line: number; col: number } {
@@ -81,7 +81,7 @@ export interface ReduceOptions {
 }
 
 /** Decide what a keypress does to the input. Pure — no Ink, no React. */
-export function reduceInput(
+function reduceInput(
   state: InputState,
   input: string,
   key: InputKey,

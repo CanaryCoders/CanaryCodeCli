@@ -47,7 +47,7 @@ const isWordChar = (c: string | undefined): boolean =>
  * emphasis is word-boundary-guarded so `snake_case` is left alone. Any marker
  * without a closer on this line is emitted literally (streaming-safe).
  */
-export function parseInline(text: string, base: Style = {}): Span[] {
+function parseInline(text: string, base: Style = {}): Span[] {
   const spans: Span[] = [];
   let buf = "";
   const flush = () => {

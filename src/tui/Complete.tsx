@@ -21,7 +21,7 @@ const MAX_ROWS = 8;
 const FRAME_INSET = 1 + SPACING.boxPadX;
 
 /** Compute the [start, end) slice of items to render around `selected`. */
-export function windowRange(
+function windowRange(
   count: number,
   selected: number,
   max = MAX_ROWS,

@@ -16,7 +16,7 @@ import { dirname, join } from "node:path";
 import type { Message } from "./provider.ts";
 
 /** Path to the sessions database (~/.cc/sessions.db). */
-export function dbPath(): string {
+function dbPath(): string {
   return join(homedir(), ".cc", "sessions.db");
 }
 
@@ -80,7 +80,7 @@ const PRICES: { match: string; price: Price }[] = [
 ];
 
 /** Estimate USD cost for a token count given a model name. Unknown model → 0. */
-export function estimateCost(
+function estimateCost(
   model: string,
   inputTokens: number,
   outputTokens: number,

@@ -71,7 +71,7 @@ export function parseLevel(raw: string | undefined): ThinkingLevel | undefined {
  * present (ultrathink > think hard > think). Returns "off" when none is found.
  * Matching is word-boundaried so ordinary words like "thinking" don't trigger it.
  */
-export function levelFromKeywords(prompt: string): ThinkingLevel {
+function levelFromKeywords(prompt: string): ThinkingLevel {
   const t = prompt.toLowerCase();
   if (/\bultrathink\b/.test(t) || /\bultra[-\s]?think\b/.test(t))
     return "ultrathink";

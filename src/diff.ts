@@ -225,15 +225,6 @@ export function renderDiff(diff: Diff, opts: RenderOptions = {}): string {
   return out.join("\n");
 }
 
-/** Convenience: compute and render in one call. */
-export function unifiedDiff(
-  oldText: string,
-  newText: string,
-  opts: RenderOptions & { context?: number } = {},
-): string {
-  return renderDiff(computeDiff(oldText, newText, opts.context), opts);
-}
-
 /** A compact `+N -M` summary for collapsed tool lines. */
 export function diffStat(diff: Diff): string {
   return `+${diff.added} -${diff.removed}`;

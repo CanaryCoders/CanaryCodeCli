@@ -32,7 +32,7 @@ export interface ParsedSkill {
 }
 
 /** Default skill directories: global (`~/.cc/skills`) then project (`./.cc/skills`). */
-export function skillDirs(
+function skillDirs(
   cwd: string = process.cwd(),
 ): { dir: string; source: "global" | "project" }[] {
   return [
@@ -46,7 +46,7 @@ export function skillDirs(
  * simple `key: value` scalars are read) followed by the markdown body. Files
  * with no frontmatter yield `{ body: <whole file> }`.
  */
-export function parseSkill(text: string): ParsedSkill {
+function parseSkill(text: string): ParsedSkill {
   const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(text);
   if (!match) return { body: text.trim() };
   const [, front, body] = match;

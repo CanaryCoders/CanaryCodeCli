@@ -31,7 +31,7 @@ export interface FooterProps {
 }
 
 /** Compact a token count: 1234 → "1.2k", 980 → "980". */
-export function formatTokens(n: number): string {
+function formatTokens(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
 }
 
@@ -59,7 +59,7 @@ function rowWidth(segs: Seg[]): number {
  * (never `prio` 0 — the mode pill). Returns the survivors in their original
  * render order.
  */
-export function fitSegments(segs: Seg[], cols: number): Seg[] {
+function fitSegments(segs: Seg[], cols: number): Seg[] {
   const dropped = new Set<string>();
   const droppable = segs
     .filter((s) => s.prio > 0)

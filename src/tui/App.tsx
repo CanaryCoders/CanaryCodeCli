@@ -101,7 +101,7 @@ function buildCompletionContext(
   return { models, sessions };
 }
 
-export function App(props: AppProps): React.ReactElement {
+function App(props: AppProps): React.ReactElement {
   const app = useApp();
   // Terminal size, used to cap the live (in-flight) region so it never grows past
   // the viewport — overflowing the dynamic region desyncs Ink's redraw and

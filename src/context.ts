@@ -12,7 +12,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 /** Recognized context filenames, highest priority first. */
-export const CONTEXT_FILENAMES = ["CC.md", "AGENTS.md", "CLAUDE.md"] as const;
+const CONTEXT_FILENAMES = ["CC.md", "AGENTS.md", "CLAUDE.md"] as const;
 
 export interface ContextFile {
   /** Absolute path to the file. */
@@ -57,7 +57,7 @@ function dirChain(startDir: string): string[] {
  * priority: nearest directory first, and within a directory CC.md > AGENTS.md >
  * CLAUDE.md. The first element (if any) is the one that should be loaded.
  */
-export async function findContextFiles(
+async function findContextFiles(
   startDir: string = process.cwd(),
 ): Promise<ContextFile[]> {
   const found: ContextFile[] = [];
@@ -109,7 +109,7 @@ export function composeSystemPrompt(base: string, ctx: ProjectContext): string {
  * package.json or the directory name). Kept deliberately small — a scaffold the
  * user fills in, not a generated essay.
  */
-export function starterContext(name: string): string {
+function starterContext(name: string): string {
   return `# ${name}
 
 Project context for \`cc\`. This file is prepended to the system prompt so the

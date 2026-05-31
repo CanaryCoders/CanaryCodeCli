@@ -15,11 +15,11 @@ import type { Config, ModelConfig, ProviderConfig } from "./config.ts";
 /** The provider key used for the baked-in CanaryLLM preset. */
 export const CANARY_PROVIDER = "canaryllm";
 /** API host (the spec's `servers` URL is wrong — localhost only — so we set it). */
-export const CANARY_API_HOST = "https://canaryllm.canarycoders.es";
+const CANARY_API_HOST = "https://canaryllm.canarycoders.es";
 /** OpenAI-compatible base (the provider appends `/chat/completions`). */
-export const CANARY_BASE_URL = `${CANARY_API_HOST}/v1`;
+const CANARY_BASE_URL = `${CANARY_API_HOST}/v1`;
 /** Unauthenticated model-discovery endpoint. */
-export const CANARY_MODELS_URL = `${CANARY_API_HOST}/api/public/models`;
+const CANARY_MODELS_URL = `${CANARY_API_HOST}/api/public/models`;
 
 /**
  * The baked-in CanaryLLM provider preset (OpenAI-compatible). The API key reads
@@ -36,7 +36,7 @@ export function canaryProviderConfig(): ProviderConfig {
 }
 
 /** Whether a provider config points at the CanaryLLM gateway. */
-export function isCanaryProvider(pc: ProviderConfig): boolean {
+function isCanaryProvider(pc: ProviderConfig): boolean {
   return (
     pc.api === "openai-compat" && (pc.baseUrl ?? "").startsWith(CANARY_API_HOST)
   );
@@ -45,28 +45,40 @@ export function isCanaryProvider(pc: ProviderConfig): boolean {
 /**
  * Extract chat-usable models from a `GET /api/public/models` payload.
  *
- * Shape (defensively parsed): `{ success, data: { <group>: { models: [{ id,
+ * Shape (defensively parsed): `{ success, data: { <provider>: { models: [{ id,
  * name, capabilities: [...] }] } } }`. We keep only models whose capabilities
- * include `chat` or `reasoning` (skipping image/video/audio/tts/realtime). The
- * gateway's `id` IS the API model name, so we set `ModelConfig.id` and leave
- * `name` unset — the gateway's display `name` ("Gemini 2.5 Flash") is NOT a
- * valid API model id and must not become `ModelConfig.name`.
+ * include `chat` or `reasoning` (skipping image/video/audio/tts/realtime).
+ *
+ * The gateway's chat-completions endpoint requires a `provider/model` model
+ * string (it 400s on a bare `gemini-3.5-flash`), but each entry's `id` is the
+ * BARE model name — the provider segment is the *group key* the model is listed
+ * under (`gemini`, `vertex`, `openai`, …). So we set `ModelConfig.id` to
+ * `${group}/${id}`: that is both the user-facing handle (shown in `/model`) and,
+ * with `name` left unset, the wire model string. Prefixing also disambiguates
+ * the same bare id appearing under multiple providers (e.g. `gemini-2.5-flash`
+ * is listed under both `gemini` and `vertex`), which a bare-id dedup would drop.
  */
-export function parseCanaryModels(payload: unknown): ModelConfig[] {
+function parseCanaryModels(payload: unknown): ModelConfig[] {
   const out: ModelConfig[] = [];
   const seen = new Set<string>();
   const data = (payload as { data?: unknown })?.data;
   if (!data || typeof data !== "object") return out;
-  for (const group of Object.values(data as Record<string, unknown>)) {
+  for (const [provider, group] of Object.entries(
+    data as Record<string, unknown>,
+  )) {
     const models = (group as { models?: unknown })?.models;
     if (!Array.isArray(models)) continue;
     for (const m of models as Array<Record<string, unknown>>) {
-      const id = typeof m?.id === "string" ? m.id : undefined;
-      if (!id || seen.has(id)) continue;
+      const rawId = typeof m?.id === "string" ? m.id : undefined;
+      if (!rawId) continue;
       const caps = Array.isArray(m?.capabilities)
         ? (m.capabilities as unknown[])
         : [];
       if (!caps.includes("chat") && !caps.includes("reasoning")) continue;
+      // The model is already `provider/model` only if the gateway ever changes
+      // its shape; otherwise prefix the group key it was listed under.
+      const id = rawId.includes("/") ? rawId : `${provider}/${rawId}`;
+      if (seen.has(id)) continue;
       seen.add(id);
       out.push({ id });
     }
@@ -75,7 +87,7 @@ export function parseCanaryModels(payload: unknown): ModelConfig[] {
 }
 
 /** Fetch + parse the discoverable CanaryLLM chat models. Throws on HTTP/parse error. */
-export async function fetchCanaryModels(
+async function fetchCanaryModels(
   opts: { url?: string; fetchImpl?: typeof fetch; timeoutMs?: number } = {},
 ): Promise<ModelConfig[]> {
   const url = opts.url ?? CANARY_MODELS_URL;

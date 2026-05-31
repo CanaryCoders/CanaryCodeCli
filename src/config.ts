@@ -64,12 +64,12 @@ export interface Config {
 }
 
 /** Path to the config file (~/.cc/config.json). */
-export function configPath(): string {
+function configPath(): string {
   return join(homedir(), ".cc", "config.json");
 }
 
 /** Built-in defaults — a usable config with zero user setup (needs ANTHROPIC_API_KEY in env). */
-export function defaultConfig(): Config {
+function defaultConfig(): Config {
   return {
     model: "opus",
     providers: {
@@ -97,7 +97,7 @@ export function defaultConfig(): Config {
 }
 
 /** Recursively replace "${VAR}" string values with the matching env var. */
-export function interpolateEnv<T>(
+function interpolateEnv<T>(
   value: T,
   env: Record<string, string | undefined> = process.env,
 ): T {

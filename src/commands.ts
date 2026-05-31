@@ -90,7 +90,7 @@ for (const spec of COMMANDS) {
 }
 
 /** Whether a raw input line is a slash command (vs. an ordinary prompt). */
-export function isCommand(input: string): boolean {
+function isCommand(input: string): boolean {
   const t = input.trim();
   // "/word" or "/word <args>" — the name is letters/word-chars with no slash, so a
   // path like "/usr/bin" (slash before whitespace) is treated as text, not a command.
@@ -98,7 +98,7 @@ export function isCommand(input: string): boolean {
 }
 
 /** Split a command line into `{ name, arg }`. Returns null when not a command. */
-export function parseCommand(input: string): ParsedCommand | null {
+function parseCommand(input: string): ParsedCommand | null {
   if (!isCommand(input)) return null;
   const t = input.trim().slice(1); // drop the leading "/"
   const space = t.search(/\s/);
@@ -110,7 +110,7 @@ export function parseCommand(input: string): ParsedCommand | null {
 }
 
 /** Render the `/help` command list as aligned lines. */
-export function helpText(): string {
+function helpText(): string {
   const left = COMMANDS.map((c) => `/${c.name}${c.usage ? ` ${c.usage}` : ""}`);
   const width = Math.max(...left.map((l) => l.length));
   const lines = COMMANDS.map(

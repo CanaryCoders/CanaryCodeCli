@@ -50,7 +50,7 @@ export const ROLE: Record<Role, RoleStyle> = {
 // ── Modes (border + accent colour) ─────────────────────────────────────────────
 // The active mode tints the input frame border, the plan box, and the footer pill.
 
-export const MODE_COLOR: Record<AgentMode, string> = {
+const MODE_COLOR: Record<AgentMode, string> = {
   normal: "green",
   plan: "cyan",
   auto: "yellow",
@@ -111,7 +111,7 @@ export const SPACING = {
 // The detection lives here so every component asks the palette one question; the
 // actual stripping is applied by a later 4.8 task at each render site.
 
-export const NO_COLOR = Boolean(process.env.NO_COLOR);
+const NO_COLOR = Boolean(process.env.NO_COLOR);
 
 /** Return `color` unless `NO_COLOR` is set, in which case undefined (default). */
 export function tint(color: string | undefined): string | undefined {

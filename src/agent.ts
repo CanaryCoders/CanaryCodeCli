@@ -20,7 +20,7 @@ export type AgentMode = "normal" | "plan" | "auto";
  * (Phase 4); in headless it simply prints and exits. The fixed section headings
  * make the output easy to parse and present.
  */
-export const PLAN_SYSTEM_PROMPT = [
+const PLAN_SYSTEM_PROMPT = [
   "",
   "── PLAN MODE ──",
   "You are in read-only planning mode. Inspect the project with your read-only tools",
@@ -48,7 +48,7 @@ export const PLAN_SYSTEM_PROMPT = [
  * before editing files or running commands. The loop enforces a hard turn cap
  * (`autoMaxTurns`) so this autonomy can't run away.
  */
-export const AUTO_SYSTEM_PROMPT = [
+const AUTO_SYSTEM_PROMPT = [
   "",
   "── AUTO MODE ──",
   "You are running autonomously with no human in the loop between turns. Work the task",
@@ -366,7 +366,7 @@ async function runToolCall(
 const CHARS_PER_TOKEN = 4;
 
 /** Rough token estimate for a transcript (system + messages), chars/4. */
-export function estimateTokens(messages: Message[], system = ""): number {
+function estimateTokens(messages: Message[], system = ""): number {
   let chars = system.length;
   for (const m of messages) chars += JSON.stringify(m.content).length;
   return Math.ceil(chars / CHARS_PER_TOKEN);
@@ -431,7 +431,7 @@ interface CompactOptions {
  * synthetic user message. Returns the number of messages that were summarized
  * away (0 if compaction was skipped or produced no summary). Exported for testing.
  */
-export async function compactConversation(
+async function compactConversation(
   opts: CompactOptions,
 ): Promise<{ summarized: number }> {
   const { provider, model, messages, keepRecent, signal } = opts;

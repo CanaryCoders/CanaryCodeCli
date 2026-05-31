@@ -369,16 +369,3 @@ export const tools: Tool[] = [
   bash,
   grep,
 ];
-
-/** Look up a tool by name. */
-export function getTool(name: string): Tool | undefined {
-  return tools.find((t) => t.name === name);
-}
-
-/**
- * Tools visible in the current mode. Plan mode (readOnly) exposes only read-only
- * tools; normal mode exposes everything.
- */
-export function toolsForMode(readOnlyOnly: boolean): Tool[] {
-  return readOnlyOnly ? tools.filter((t) => t.readOnly) : tools;
-}

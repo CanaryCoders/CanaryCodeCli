@@ -61,7 +61,7 @@ export interface Transport {
  * responses to requests by id and rejects all pending calls if the transport
  * dies. One client per server.
  */
-export class McpClient {
+class McpClient {
   private nextId = 1;
   private readonly pending = new Map<
     number,
@@ -169,7 +169,7 @@ export class McpClient {
  * Text content blocks are joined; a result flagged `isError` is thrown so the
  * agent loop marks the tool_result as an error.
  */
-export function renderToolResult(res: unknown): string {
+function renderToolResult(res: unknown): string {
   const r = (res ?? {}) as {
     content?: Array<{ type?: string; text?: string }>;
     isError?: boolean;
@@ -187,11 +187,7 @@ export function renderToolResult(res: unknown): string {
  * so it can't collide with built-ins or other servers; `readOnly` is taken from
  * the `readOnlyHint` annotation (default false), which is what plan mode filters on.
  */
-export function wrapMcpTool(
-  server: string,
-  mt: McpTool,
-  client: McpClient,
-): Tool {
+function wrapMcpTool(server: string, mt: McpTool, client: McpClient): Tool {
   return {
     name: `mcp__${server}__${mt.name}`,
     description:
@@ -236,7 +232,7 @@ async function readJsonLines(
 }
 
 /** A stdio transport that spawns `command args...` and speaks JSON-RPC over its stdio. */
-export function stdioTransport(cfg: McpServerConfig): Transport {
+function stdioTransport(cfg: McpServerConfig): Transport {
   let proc: ReturnType<typeof Bun.spawn> | undefined;
   let onMessage: (msg: RpcMessage) => void = () => {};
   let onClose: (err?: Error) => void = () => {};
@@ -287,7 +283,7 @@ export function stdioTransport(cfg: McpServerConfig): Transport {
  * `endpoint` event carries the URL to POST client messages to; server messages
  * arrive as `message` events on the stream.
  */
-export function sseTransport(
+function sseTransport(
   cfg: McpServerConfig,
   fetchImpl: typeof fetch = fetch,
 ): Transport {

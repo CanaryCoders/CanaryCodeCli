@@ -35,7 +35,7 @@ function clampCount(n: number | undefined): number {
  * Run a web search via the configured backend. Throws a clear, model-readable
  * error when web search is unconfigured or the backend is unknown/fails.
  */
-export async function searchWeb(
+async function searchWeb(
   query: string,
   cfg: WebSearchConfig,
   opts: SearchOptions = {},
@@ -147,7 +147,7 @@ function stripTags(s: string): string {
 }
 
 /** Render results as a compact, model-friendly numbered list. */
-export function formatResults(query: string, results: SearchResult[]): string {
+function formatResults(query: string, results: SearchResult[]): string {
   if (results.length === 0) return `No results for "${query}".`;
   const lines = results.map((r, i) => {
     const head = `${i + 1}. ${r.title || "(untitled)"}`;
