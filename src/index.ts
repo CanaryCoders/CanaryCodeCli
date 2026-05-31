@@ -394,6 +394,10 @@ async function runHeadless(args: Args): Promise<number> {
     }
   };
   try {
+    // No `confirm` hook here: the confirm-before-running gate (config `confirm`)
+    // is a TUI-only concern — headless is non-interactive, so it runs every tool.
+    // Use `--auto`/`--yolo` to grant write/bash unattended (it's already the default
+    // here); the gate lives in the TUI where a human can answer y/n/a.
     for await (const ev of runAgent({
       provider,
       model: modelName,

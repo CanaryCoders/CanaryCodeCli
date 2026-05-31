@@ -39,6 +39,12 @@ import {
 import { ItemView, type Item, type ItemInput } from "./Message.tsx";
 import { PlanView, planChoiceForKey } from "./Plan.tsx";
 import { Complete } from "./Complete.tsx";
+import {
+  ConfirmView,
+  confirmChoiceForKey,
+  buildConfirmPreview,
+  type ConfirmPreview,
+} from "./Confirm.tsx";
 
 // ── The component ────────────────────────────────────────────────────────────────
 // The transcript is rendered as a flat list of typed `Item`s (see Message.tsx).
@@ -118,6 +124,15 @@ export function App(props: AppProps): React.ReactElement {
     pendingPlanRef.current = text;
     setPendingPlan(text);
   };
+
+  // Confirm-before-running gate. While a mutating call awaits approval the loop is
+  // paused on `confirmResolverRef`'s promise; y/n/a resolve it. `alwaysRef` is the
+  // session-wide "[a]lways" override that disables the gate for the rest of the run.
+  // Refs mirror state for the once-captured `useInput` closure.
+  const [pendingConfirm, setPendingConfirm] = useState<ConfirmPreview | null>(null);
+  const pendingConfirmRef = useRef<ConfirmPreview | null>(null);
+  const confirmResolverRef = useRef<((ok: boolean) => void) | null>(null);
+  const confirmAlwaysRef = useRef(false);
 
   // `/` autocomplete popover. `selected` is the highlighted row; `dismissed`
   // hides it (after Esc, or accepting a no-arg command) until the input changes.
@@ -222,6 +237,7 @@ export function App(props: AppProps): React.ReactElement {
         thinkingBudget: budget,
         compactAtTokens: props.config.compactAtTokens,
         signal: controller.signal,
+        confirm: (call) => requestConfirm(runMode, call),
       })) {
         switch (ev.type) {
           case "text":
@@ -329,6 +345,44 @@ export function App(props: AppProps): React.ReactElement {
   function rejectPlan(): void {
     showPlan(null);
     note("plan rejected — still in plan mode");
+  }
+
+  // ── confirm gate: the hook runAgent calls before a mutating tool runs ──
+  // Decides whether to pause for [y]/[n]/[a]. Auto mode, the session "always"
+  // override, and `confirm:"off"` all run silently; otherwise gated tools (bash,
+  // or bash+writes) render the box and await the user's choice via a Promise.
+  function requestConfirm(
+    runMode: AgentMode,
+    call: { id: string; name: string; input: unknown },
+  ): Promise<boolean> {
+    if (runMode === "auto" || confirmAlwaysRef.current) return Promise.resolve(true);
+    const setting = props.config.confirm;
+    if (setting === "off") return Promise.resolve(true);
+    const gated =
+      setting === "bash"
+        ? call.name === "bash"
+        : call.name === "bash" || call.name === "write_file" || call.name === "edit_file";
+    if (!gated) return Promise.resolve(true);
+    // Pause the loop: render the call and resolve once the user picks y/n/a.
+    return buildConfirmPreview(call).then(
+      (preview) =>
+        new Promise<boolean>((resolve) => {
+          confirmResolverRef.current = resolve;
+          pendingConfirmRef.current = preview;
+          setPendingConfirm(preview);
+        }),
+    );
+  }
+
+  /** Resolve a pending confirm with the user's choice and tear down the box. */
+  function resolveConfirm(ok: boolean, always: boolean): void {
+    const resolve = confirmResolverRef.current;
+    if (!resolve) return;
+    if (always) confirmAlwaysRef.current = true;
+    confirmResolverRef.current = null;
+    pendingConfirmRef.current = null;
+    setPendingConfirm(null);
+    resolve(ok);
   }
 
   // ── cycle the agent mode (Shift+Tab): normal → plan → auto → normal ──
@@ -518,6 +572,9 @@ export function App(props: AppProps): React.ReactElement {
   function handleCtrlC(): void {
     if (controllerRef.current) {
       controllerRef.current.abort();
+      // A pending confirm holds the loop on an unresolved promise — decline it so
+      // the abort can actually propagate instead of deadlocking.
+      if (pendingConfirmRef.current) resolveConfirm(false, false);
       quitArmedRef.current = false;
       if (quitTimerRef.current) clearTimeout(quitTimerRef.current);
       return;
@@ -545,9 +602,21 @@ export function App(props: AppProps): React.ReactElement {
       return;
     }
     if (key.escape) {
-      // Esc dismisses the autocomplete popover first, otherwise aborts a request.
+      // Esc dismisses the autocomplete popover first; while a confirm is pending it
+      // declines the call and aborts the turn; otherwise it aborts a request.
       if (completeOpenRef.current) dismissComplete();
-      else if (controllerRef.current) controllerRef.current.abort();
+      else if (pendingConfirmRef.current) {
+        resolveConfirm(false, false);
+        controllerRef.current?.abort();
+      } else if (controllerRef.current) controllerRef.current.abort();
+      return;
+    }
+    // A pending confirm owns y/n/a (and swallows other keys) until answered.
+    if (pendingConfirmRef.current) {
+      const choice = confirmChoiceForKey(_input);
+      if (choice === "yes") resolveConfirm(true, false);
+      else if (choice === "no") resolveConfirm(false, false);
+      else if (choice === "always") resolveConfirm(true, true);
       return;
     }
     // Autocomplete popover navigation: ↑/↓ or Ctrl-P/Ctrl-N move, Tab/Enter accept.
@@ -603,7 +672,9 @@ export function App(props: AppProps): React.ReactElement {
         </Box>
       ) : null}
 
-      {pendingPlan ? (
+      {pendingConfirm ? (
+        <ConfirmView preview={pendingConfirm} />
+      ) : pendingPlan ? (
         <PlanView plan={pendingPlan} />
       ) : (
         <Box flexDirection="column" marginTop={1}>
