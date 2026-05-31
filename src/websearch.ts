@@ -1,8 +1,9 @@
 // websearch.ts — the `web_search` tool and its pluggable HTTP backends.
 //
-// A single `searchWeb(query, cfg)` fans out to one of a few search APIs selected
-// by `config.webSearch.provider` ("brave" | "tavily"), returning a normalized
-// `{ title, url, snippet }[]`. `webSearchTool(cfg)` wraps it as a read-only Tool
+// A single `searchWeb(query, cfg)` fans out to one of a few search backends
+// selected by `config.webSearch.provider` ("duckduckgo" | "brave" | "tavily"),
+// returning a normalized `{ title, url, snippet }[]`. DuckDuckGo is free and
+// keyless and used by default. `webSearchTool(cfg)` wraps it as a read-only Tool
 // (safe in plan mode). The tool is built from config at startup and appended to
 // the registry by the caller, so tools.ts stays config-free.
 
@@ -40,24 +41,140 @@ async function searchWeb(
   cfg: WebSearchConfig,
   opts: SearchOptions = {},
 ): Promise<SearchResult[]> {
-  const provider = (cfg.provider ?? "").toLowerCase();
-  if (!provider) {
-    throw new Error(
-      'web search is not configured; set webSearch.provider ("brave" | "tavily") and webSearch.apiKey in ~/.cc/config.json',
-    );
-  }
+  // Default to the free, keyless DuckDuckGo backend when nothing is configured.
+  const provider = (cfg.provider ?? "duckduckgo").toLowerCase();
   const count = clampCount(opts.count);
   const fetchImpl = opts.fetchImpl ?? fetch;
   switch (provider) {
+    case "duckduckgo":
+    case "ddg":
+      return duckDuckGoSearch(query, count, fetchImpl, opts.signal);
     case "brave":
       return braveSearch(query, cfg, count, fetchImpl, opts.signal);
     case "tavily":
       return tavilySearch(query, cfg, count, fetchImpl, opts.signal);
     default:
       throw new Error(
-        `unknown webSearch.provider "${cfg.provider}" (supported: brave, tavily)`,
+        `unknown webSearch.provider "${cfg.provider}" (supported: duckduckgo, brave, tavily)`,
       );
   }
+}
+
+// ── DuckDuckGo (free, no API key) ─────────────────────────────────────────────
+// The default backend: no key, no signup. We POST the query to DuckDuckGo's
+// no-JS SERP endpoints and scrape the result anchors/snippets. Two endpoints are
+// tried in order for resilience: the rich `html.duckduckgo.com/html/` page first,
+// then the minimal `lite.duckduckgo.com/lite/` page. DDG routes outbound links
+// through a `/l/?uddg=<encoded>` redirector, which we unwrap to the real URL.
+//
+// Note: DDG rate-limits scraping by IP. When it serves an "anomaly"/challenge
+// page instead of results, we surface a clear, actionable error.
+
+const DDG_UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+async function duckDuckGoSearch(
+  query: string,
+  count: number,
+  fetchImpl: typeof fetch,
+  signal?: AbortSignal,
+): Promise<SearchResult[]> {
+  const endpoints = [
+    "https://html.duckduckgo.com/html/",
+    "https://lite.duckduckgo.com/lite/",
+  ];
+  let blocked = false;
+  for (const endpoint of endpoints) {
+    let html: string;
+    try {
+      const res = await fetchImpl(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "User-Agent": DDG_UA,
+          Accept: "text/html",
+        },
+        body: new URLSearchParams({ q: query }).toString(),
+        signal,
+      });
+      if (!res.ok) continue;
+      html = await res.text();
+    } catch {
+      continue;
+    }
+    // DDG's block page is short and contains an anomaly/challenge token.
+    if (/anomaly-modal|If this error persists|challenge/i.test(html)) {
+      blocked = true;
+      continue;
+    }
+    const results = parseDdgHtml(html, count);
+    if (results.length > 0) return results;
+  }
+  if (blocked) {
+    throw new Error(
+      "duckduckgo blocked this request (rate limit / anomaly page). " +
+        "Retry shortly, or configure a keyed provider: set " +
+        'webSearch.provider to "brave" or "tavily" with an apiKey in ~/.cc/config.json.',
+    );
+  }
+  return [];
+}
+
+/** Scrape result anchors + snippets from either DDG no-JS layout. */
+function parseDdgHtml(html: string, count: number): SearchResult[] {
+  const results: SearchResult[] = [];
+  // html/: <a class="result__a" href="…">title</a>; lite/: <a class="result-link" …>.
+  const anchorRe =
+    /<a[^>]+class="[^"]*result(?:__a|-link)[^"]*"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
+  // Snippets: html/ uses result__snippet (an <a>); lite/ uses td.result-snippet.
+  const snippetRe =
+    /class="[^"]*result(?:__snippet|-snippet)[^"]*"[^>]*>([\s\S]*?)<\/(?:a|td)>/g;
+  const snippets: string[] = [];
+  let sm: RegExpExecArray | null;
+  while ((sm = snippetRe.exec(html)))
+    snippets.push(decodeEntities(stripTags(sm[1] ?? "")));
+  let am: RegExpExecArray | null;
+  let i = 0;
+  while ((am = anchorRe.exec(html)) && results.length < count) {
+    const url = unwrapDdgUrl(decodeEntities(am[1] ?? ""));
+    const title = decodeEntities(stripTags(am[2] ?? ""));
+    if (!url || !title) continue;
+    results.push({ title, url, snippet: snippets[i] ?? "" });
+    i++;
+  }
+  return results;
+}
+
+/** DDG wraps outbound links as `…/l/?…&uddg=<urlencoded>`. Recover the target. */
+function unwrapDdgUrl(href: string): string {
+  let h = href;
+  if (h.startsWith("//")) h = `https:${h}`;
+  try {
+    const u = new URL(h, "https://duckduckgo.com");
+    const uddg = u.searchParams.get("uddg");
+    if (uddg) return uddg;
+    return u.toString();
+  } catch {
+    return h;
+  }
+}
+
+/** Decode the HTML entities DDG emits in href/title/snippet text. */
+function decodeEntities(s: string): string {
+  return s
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) =>
+      String.fromCodePoint(parseInt(h, 16)),
+    )
+    .replace(/&mdash;/g, "—")
+    .replace(/&ndash;/g, "–")
+    .replace(/&hellip;/g, "…")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&quot;/g, '"')
+    .replace(/&#?39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&"); // last: avoid double-decoding
 }
 
 // ── Brave Search API ────────────────────────────────────────────────────────
@@ -162,8 +279,8 @@ function formatResults(query: string, results: SearchResult[]): string {
 
 /**
  * Build the `web_search` Tool from the active config. Read-only (allowed in plan
- * mode). When web search is unconfigured the tool still registers, but a call
- * returns the clear "not configured" error so the model learns it can't search.
+ * mode). With no config it uses the free, keyless DuckDuckGo backend; set
+ * webSearch.provider/apiKey to switch to Brave or Tavily.
  */
 export function webSearchTool(cfg: WebSearchConfig): Tool {
   return {

@@ -33,7 +33,10 @@ export interface ProviderConfig {
 }
 
 export interface WebSearchConfig {
-  /** Backend identifier, e.g. "brave" | "tavily". */
+  /**
+   * Backend identifier: "duckduckgo" (free, no API key — the default),
+   * "brave", or "tavily".
+   */
   provider?: string;
   apiKey?: string;
 }

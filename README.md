@@ -71,7 +71,7 @@ Each line is a JSON `AgentEvent`: `text`, `thinking`, `tool_start {id,name,input
 - **Plan mode** — runs read-only (`read_file`, `list_dir`, `grep`, `web_search` allowed; write/edit/bash blocked) and emits a structured plan: steps, files to touch, risks.
 - **Auto mode** — autonomous multi-turn execution with no per-step input, bounded by `autoMaxTurns`. `Esc` aborts.
 - **Thinking modes** — map to Anthropic extended-thinking budgets (`off`/`think` 4k/`think-hard` 10k/`ultrathink` 32k). Non-Anthropic providers degrade gracefully. Setting a level with `/think` persists it to `~/.cc/config.json` (the `thinking` key) so it's the default on the next launch; `--think` overrides it for one run without changing the saved default.
-- **Web search** — a read-only `web_search` tool with a pluggable HTTP backend (Brave / Tavily) configured in `webSearch`.
+- **Web search** — a read-only `web_search` tool that works keyless by default (free DuckDuckGo backend), with pluggable Brave / Tavily backends configured in `webSearch`.
 - **Sub-agents** — a `spawn_agent` tool delegates focused work to a child agent with its own fresh context; bounded by `maxConcurrent` / `maxDepth`.
 - **Custom agents** — file-defined personas in `~/.cc/agents/` and `./.cc/agents/` (frontmatter `name`/`description`/optional `model`/optional `tools` allowlist + a system-prompt body). Their name+description load into the prompt; `spawn_agent` dispatches to one by `agent` name, applying its persona, model, and tool restrictions.
 - **AI permission engine** — opt-in (`permission.mode: "ai"`): a separate, cheap model classifies each gated mutating tool call as safe/unsafe before it runs. Safe runs silently; unsafe escalates to the human y/n/a box (TUI, showing the reason) or blocks the call (headless). Auto/`--yolo` bypass it.
@@ -131,11 +131,19 @@ The preset is an `openai-compat` provider pinned to `https://canaryllm.canarycod
 
 ### Web search
 
+Web search works out of the box with **no API key** — it defaults to a free
+DuckDuckGo backend (scrapes DDG's no-JS SERP; subject to DDG rate limits). For
+higher reliability/volume, point it at a keyed provider:
+
 ```json
 {
   "webSearch": { "provider": "brave", "apiKey": "${BRAVE_API_KEY}" }
 }
 ```
+
+`provider` accepts `"duckduckgo"` (default, keyless), `"brave"`, or `"tavily"`.
+If DuckDuckGo returns an "anomaly"/challenge page (rate limit), retry shortly or
+switch to a keyed provider.
 
 ### MCP servers
 
