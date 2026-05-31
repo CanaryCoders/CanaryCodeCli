@@ -100,6 +100,11 @@ export const GUTTER_RULE = "│";
 export const SPACING = {
   /** Blank lines between finished turns in the scrollback. */
   turnGap: 1,
+  /** Blank line between distinct items within a turn (assistant text, a tool
+   * call, a diff, a note) so they read as separate blocks rather than one
+   * run-on wall of text. Continuation chunks of a single streamed block stay
+   * glued (no gap) — see Message.tsx. */
+  blockGap: 1,
   /** Top margin above the input frame. */
   inputGap: 1,
   /** Horizontal padding inside bordered boxes (input frame, plan, confirm). */

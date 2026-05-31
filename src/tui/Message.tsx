@@ -190,6 +190,27 @@ export function tailLines(
 }
 
 /**
+ * Truncate every logical line of `text` to `width` columns so a live (redrawn)
+ * block never *soft-wraps*. A wrapped line in the dynamic region is exactly what
+ * Ink mis-erases — it under-counts the extra terminal rows the wrap occupies and
+ * re-emits the line onto the stuck cursor row, smearing it horizontally. Keeping
+ * each live line to a single terminal row makes Ink's per-line erase exact. The
+ * complete, correctly-wrapped text is still committed to `<Static>` (printed once,
+ * never redrawn) when the block finalises, so this only affects the live preview.
+ *
+ * Truncation is on the *raw* (pre-markdown) length, which only ever over-estimates
+ * visible width (`**bold**` → 4 visible cols from 8 raw), so a clamped line can
+ * never exceed `width` on screen — erring short, which is the safe direction.
+ */
+export function clampLineWidth(text: string, width: number): string {
+  const w = Math.max(1, width);
+  return text
+    .split("\n")
+    .map((line) => (line.length > w ? `${line.slice(0, w - 1)}…` : line))
+    .join("\n");
+}
+
+/**
  * Length of the leading run of a streamed text block that is *stable* — i.e. safe
  * to commit to the permanent `<Static>` scrollback because it will never re-render
  * differently as more text arrives. This is the key to ghost-free streaming: only
@@ -385,11 +406,16 @@ export function ItemView({
   item,
   expanded = false,
   showExpandHint = false,
+  compact = false,
 }: {
   item: Item;
   expanded?: boolean;
   /** Render a one-time `ctrl+r to expand` hint (the session's first tool call). */
   showExpandHint?: boolean;
+  /** Live (in-flight, redrawn) rendering: bound a tool to a single headline row so
+   * it can't overflow the dynamic region and desync Ink. The full command/output
+   * still renders once the item lands in `<Static>`. */
+  compact?: boolean;
 }): React.ReactElement {
   switch (item.kind) {
     case "banner":
@@ -403,14 +429,24 @@ export function ItemView({
         </Gutter>
       );
     case "assistant":
+      // A blank line separates this block from the previous item, except for a
+      // continuation chunk of the same streamed message (which stays glued).
       return (
-        <Gutter speaker="assistant" glyphless={item.continuation}>
+        <Gutter
+          speaker="assistant"
+          glyphless={item.continuation}
+          marginTop={item.continuation ? 0 : SPACING.blockGap}
+        >
           <Markdown text={item.text} />
         </Gutter>
       );
     case "thinking":
       return (
-        <Gutter speaker="thinking" glyphless={item.continuation}>
+        <Gutter
+          speaker="thinking"
+          glyphless={item.continuation}
+          marginTop={item.continuation ? 0 : SPACING.blockGap}
+        >
           <Text dimColor italic>
             {item.text}
           </Text>
@@ -420,14 +456,26 @@ export function ItemView({
       const statusColor =
         TOOL_STATUS[toolStatus(item.pending, item.isError)].color;
       return (
-        <Gutter speaker="tool" colorOverride={statusColor}>
-          <ToolView item={item} expanded={expanded} showHint={showExpandHint} />
+        <Gutter
+          speaker="tool"
+          colorOverride={statusColor}
+          marginTop={SPACING.blockGap}
+        >
+          <ToolView
+            item={item}
+            expanded={expanded}
+            showHint={showExpandHint}
+            compact={compact}
+          />
         </Gutter>
       );
     }
     case "note":
       return (
-        <Gutter speaker={item.tone === "error" ? "error" : "note"}>
+        <Gutter
+          speaker={item.tone === "error" ? "error" : "note"}
+          marginTop={SPACING.blockGap}
+        >
           <Text color={tint(item.tone === "error" ? "red" : "gray")}>
             {item.text}
           </Text>
@@ -440,11 +488,16 @@ function ToolView({
   item,
   expanded,
   showHint = false,
+  compact = false,
 }: {
   item: Extract<Item, { kind: "tool" }>;
   expanded: boolean;
   /** Show the one-time `ctrl+r to expand` affordance hint (collapsed only). */
   showHint?: boolean;
+  /** Live rendering: bound to a single headline row (no full bash command, no
+   * body, no diff) so the redrawn dynamic region can't overflow and desync Ink.
+   * The full version renders once the item lands in `<Static>`. */
+  compact?: boolean;
 }): React.ReactElement {
   const mark = item.pending ? "…" : item.isError ? "✗" : "✓";
   const color = item.pending ? "yellow" : item.isError ? "red" : "green";
@@ -453,20 +506,30 @@ function ToolView({
   // ran" is the thing the user most wants to verify. Every other tool keeps the
   // 72-char one-line summary. Ink `<Text>` wraps by default, so leaving bash's
   // command un-truncated lets it flow onto the next line instead of `…`-eliding.
+  // EXCEPT while the call is *live* (compact): a long, wrapping headline in the
+  // redrawn dynamic region overflows it and smears into duplicate lines, so we
+  // truncate to one row there — the full command appears once it's in `<Static>`.
   const shown = summary
-    ? item.name === "bash"
+    ? item.name === "bash" && !compact
       ? summary
       : truncate(summary, 72)
     : "";
   const headline = shown ? `${item.name}: ${shown}` : item.name;
 
   // Errors always reveal their first line; expansion reveals input + output head.
-  const showBody = !item.pending && item.result && (expanded || item.isError);
+  // Suppressed while live (compact) — the body lands in `<Static>` on finalise.
+  const showBody =
+    !compact && !item.pending && item.result && (expanded || item.isError);
   const body = showBody ? head(item.result!, expanded ? 20 : 1) : null;
 
   // write_file/edit_file carry a diff: always preview it (collapsed = first hunk).
+  // Held back while live (compact) so a tall diff can't overflow the live region.
   const showDiff =
-    !item.pending && !item.isError && item.diff && item.diff.hunks.length > 0;
+    !compact &&
+    !item.pending &&
+    !item.isError &&
+    item.diff &&
+    item.diff.hunks.length > 0;
 
   return (
     <Box flexDirection="column">
