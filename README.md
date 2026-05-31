@@ -70,7 +70,7 @@ Each line is a JSON `AgentEvent`: `text`, `thinking`, `tool_start {id,name,input
 
 - **Plan mode** — runs read-only (`read_file`, `list_dir`, `grep`, `web_search` allowed; write/edit/bash blocked) and emits a structured plan: steps, files to touch, risks.
 - **Auto mode** — autonomous multi-turn execution with no per-step input, bounded by `autoMaxTurns`. `Esc` aborts.
-- **Thinking modes** — map to Anthropic extended-thinking budgets (`off`/`think` 4k/`think-hard` 10k/`ultrathink` 32k). Non-Anthropic providers degrade gracefully.
+- **Thinking modes** — map to Anthropic extended-thinking budgets (`off`/`think` 4k/`think-hard` 10k/`ultrathink` 32k). Non-Anthropic providers degrade gracefully. Setting a level with `/think` persists it to `~/.cc/config.json` (the `thinking` key) so it's the default on the next launch; `--think` overrides it for one run without changing the saved default.
 - **Web search** — a read-only `web_search` tool with a pluggable HTTP backend (Brave / Tavily) configured in `webSearch`.
 - **Sub-agents** — a `spawn_agent` tool delegates focused work to a child agent with its own fresh context; bounded by `maxConcurrent` / `maxDepth`.
 - **Custom agents** — file-defined personas in `~/.cc/agents/` and `./.cc/agents/` (frontmatter `name`/`description`/optional `model`/optional `tools` allowlist + a system-prompt body). Their name+description load into the prompt; `spawn_agent` dispatches to one by `agent` name, applying its persona, model, and tool restrictions.

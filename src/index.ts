@@ -48,8 +48,10 @@ import {
 import { Semaphore, spawnAgentTool } from "./subagents.ts";
 import {
   describeLevel,
+  parseLevel,
   resolveThinking,
   supportsThinking,
+  type ThinkingLevel,
 } from "./thinking.ts";
 import { tools as allTools } from "./tools.ts";
 import { startTui } from "./tui/App.tsx";
@@ -807,10 +809,16 @@ async function runTui(args: Args): Promise<number> {
     agents,
   );
 
+  // Thinking level persists in config (the user's default); an explicit `--think`
+  // flag overrides it for this launch without changing the saved default.
+  const initialThinking: ThinkingLevel =
+    parseLevel(args.think) ?? config.thinking;
+
   const store = SessionStore.open();
   const sessionId = store.createSession({
     model: modelName,
     cwd: process.cwd(),
+    thinking: initialThinking,
   });
 
   // The launch banner (in the TUI) shows app/version/cwd/model — keep the startup
@@ -830,6 +838,7 @@ async function runTui(args: Args): Promise<number> {
     store,
     sessionId,
     noTools: args.noTools,
+    initialThinking,
     startupNotes,
   });
   return 0;

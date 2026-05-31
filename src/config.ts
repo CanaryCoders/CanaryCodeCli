@@ -8,6 +8,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { CANARY_PROVIDER, canaryProviderConfig } from "./canary.ts";
+import type { ThinkingLevel } from "./thinking.ts";
 
 export type ProviderApi = "anthropic" | "openai-compat";
 
@@ -110,6 +111,8 @@ export interface Config {
   permission: PermissionConfig;
   /** Lifecycle hooks (PreToolUse / PostToolUse / Stop). */
   hooks: HooksConfig;
+  /** Default extended-thinking level; persisted across runs (off | think | think-hard | ultrathink). */
+  thinking: ThinkingLevel;
 }
 
 /** Path to the config file (~/.cc/config.json). */
@@ -145,6 +148,7 @@ function defaultConfig(): Config {
     confirm: "off",
     permission: { mode: "off", model: "haiku", scope: "writes" },
     hooks: {},
+    thinking: "off",
   };
 }
 
@@ -185,6 +189,7 @@ function mergeConfig(base: Config, user: Partial<Config>): Config {
     confirm: user.confirm ?? base.confirm,
     permission: { ...base.permission, ...(user.permission ?? {}) },
     hooks: { ...base.hooks, ...(user.hooks ?? {}) },
+    thinking: user.thinking ?? base.thinking,
   };
 }
 
@@ -218,7 +223,9 @@ export async function loadConfig(path: string = configPath()): Promise<Config> {
  * sibling settings, etc.) and that we persist back to `~/.cc/config.json` so it
  * becomes the default next launch.
  */
-export type PersistableSettings = Partial<Pick<Config, "model" | "confirm">>;
+export type PersistableSettings = Partial<
+  Pick<Config, "model" | "confirm" | "thinking">
+>;
 
 /**
  * Persist runtime preference changes back to `~/.cc/config.json`, merging onto

@@ -53,6 +53,7 @@ import {
 import { Footer } from "./Footer.tsx";
 import { MultilineInput } from "./Input.tsx";
 import {
+  clampLineWidth,
   type Item,
   type ItemInput,
   ItemView,
@@ -197,6 +198,13 @@ function App(props: AppProps): React.ReactElement {
   const setThinking = (next: ThinkingLevel) => {
     setThinkingState(next);
     props.store.setThinking(sessionIdRef.current, next);
+    // Persist as the default thinking level so it survives restarts.
+    void saveConfig({ thinking: next }).catch((err) =>
+      note(
+        `could not save thinking preference: ${(err as Error).message}`,
+        "error",
+      ),
+    );
   };
   const [modelLabel, setModelLabel] = useState(props.modelLabel);
   const [cost, setCost] = useState(0);
@@ -1090,7 +1098,13 @@ function App(props: AppProps): React.ReactElement {
             // region stays within the terminal (the full text lands in `<Static>`
             // when the block finalises). Other kinds are short by construction.
             if (item.kind === "assistant" || item.kind === "thinking") {
+              // Two bounds keep this block from overflowing the redrawn dynamic
+              // region (which desyncs Ink into duplicate lines): `tailLines` caps
+              // its *height* to the viewport, then `clampLineWidth` caps each
+              // line's *width* so none soft-wraps (a wrapped live line is what Ink
+              // mis-erases and smears horizontally). Full text lands in `<Static>`.
               const clamped = tailLines(item.text, liveCap, liveContentWidth);
+              const text = clampLineWidth(clamped.text, liveContentWidth);
               return (
                 <Box key={item.id} flexDirection="column">
                   {clamped.trimmed ? (
@@ -1101,19 +1115,22 @@ function App(props: AppProps): React.ReactElement {
                     </Text>
                   ) : null}
                   <ItemView
-                    item={{ ...item, text: clamped.text }}
+                    item={{ ...item, text }}
                     expanded={verbose}
                     showExpandHint={item.id === firstToolId}
                   />
                 </Box>
               );
             }
+            // Tools/notes render compact while live — a tool's full command/output
+            // could otherwise wrap past the viewport and desync the dynamic region.
             return (
               <ItemView
                 key={item.id}
                 item={item}
                 expanded={verbose}
                 showExpandHint={item.id === firstToolId}
+                compact
               />
             );
           })}
