@@ -520,7 +520,7 @@ export function ItemView({
       return (
         <Gutter
           speaker={item.tone === "error" ? "error" : "note"}
-          marginTop={SPACING.blockGap}
+          marginTop={prevKind === "note" ? SPACING.groupGap : SPACING.blockGap}
         >
           <Text color={tint(item.tone === "error" ? "red" : "gray")}>
             {item.text}

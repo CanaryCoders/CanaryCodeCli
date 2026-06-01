@@ -180,7 +180,7 @@ export async function initProjectContext(
 /** A one-line note for stderr describing what context was loaded (undefined if none). */
 export function describeContext(ctx: ProjectContext): string | undefined {
   if (!ctx.primary) return undefined;
-  let note = `📄 context: ${ctx.primary.name}`;
+  let note = `▣ context: ${ctx.primary.name}`;
   if (ctx.others.length > 0) {
     const names = [...new Set(ctx.others.map((o) => o.name))].join(", ");
     note += ` (also present, not loaded: ${names})`;
