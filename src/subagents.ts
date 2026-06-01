@@ -106,6 +106,16 @@ interface SpawnRequest {
   agent?: string;
 }
 
+/** Sub-agent model precedence: explicit request model → custom agent's declared
+ * model → the configured `subagent` role default → (undefined ⇒ inherit parent). */
+export function pickSubagentModel(
+  reqModel: string | undefined,
+  defModel: string | undefined,
+  config: Config,
+): string | undefined {
+  return reqModel ?? defModel ?? config.models?.subagent;
+}
+
 /** Run one sub-agent to completion and return its summary text. Never throws —
  * failures come back as a model-readable string so the parent loop continues. */
 async function runSubagent(
@@ -131,8 +141,8 @@ async function runSubagent(
   }
 
   // Model precedence: an explicit `model` arg wins, else the custom agent's
-  // declared model, else the parent's model.
-  const wantModel = req.model ?? def?.model;
+  // declared model, else the configured subagent role, else the parent's model.
+  const wantModel = pickSubagentModel(req.model, def?.model, env.config);
   let provider = env.parentProvider;
   let model = env.parentModel;
   if (wantModel && wantModel !== env.parentModel) {
