@@ -20,6 +20,13 @@ import {
   discoverAgents,
 } from "./agents.ts";
 import { askUserTool, autoAnswer } from "./askuser.ts";
+import {
+  clearCredentials,
+  hasCredentials,
+  loginManual,
+  loginWithBrowser,
+  openBrowser,
+} from "./auth.ts";
 import { describeCanary, populateCanaryModels } from "./canary.ts";
 import {
   type Config,
@@ -46,6 +53,11 @@ import {
   describeMcp,
   type McpConnection,
 } from "./mcp.ts";
+import {
+  describeCodex,
+  gateCodexModels,
+  populateCodexModels,
+} from "./openai-codex.ts";
 import { checkCommandSafety, inPermissionScope } from "./permission.ts";
 import type { Message, Provider } from "./provider.ts";
 import { createProvider } from "./provider.ts";
@@ -179,6 +191,11 @@ function printUsage(): void {
       "Usage:",
       '  cc -p "<prompt>"   headless print mode (streams to stdout, exits)',
       "  cc                 interactive TUI (Ink)",
+      "",
+      "Subcommands:",
+      "  cc login-codex [--manual]  sign in with your ChatGPT (OpenAI Codex)",
+      "                             subscription (--manual for SSH/headless paste)",
+      "  cc logout-codex            sign out and remove ~/.cc/auth.json",
       "",
       "Flags:",
       "  -p, --print <s>    run a single prompt headless",
@@ -322,6 +339,17 @@ async function runHeadless(args: Args): Promise<number> {
   // so `--model <id>` resolves. Best-effort: failures leave it inert.
   const canaryNote = describeCanary(await populateCanaryModels(config));
   if (canaryNote) process.stderr.write(`${canaryNote}\n`);
+
+  // When signed in (`cc login-codex`), discover the Codex models the ChatGPT
+  // account may use (fetched live — the set is curated server-side and changes);
+  // otherwise hide the preset so an unauthenticated launch never offers — or falls
+  // back onto — a model that would just error with "not signed in".
+  if (await hasCredentials()) {
+    const codexNote = describeCodex(await populateCodexModels(config));
+    if (codexNote) process.stderr.write(`${codexNote}\n`);
+  } else {
+    gateCodexModels(config, false);
+  }
 
   // Plan mode runs read-only (investigate, emit a plan, stop); auto mode runs
   // autonomously to completion. They are mutually exclusive — plan wins if both given.
@@ -807,6 +835,15 @@ async function runTui(args: Args): Promise<number> {
 
   const canaryNote = describeCanary(await populateCanaryModels(config));
 
+  // Discover Codex models when signed in; otherwise hide the preset (see
+  // runHeadless). A successful in-session `/login-codex` re-discovers them.
+  let codexNote: string | undefined;
+  if (await hasCredentials()) {
+    codexNote = describeCodex(await populateCodexModels(config));
+  } else {
+    gateCodexModels(config, false);
+  }
+
   const resolved = resolveModel(config, args.model);
   if (!resolved) {
     console.error("cc: no model available; check ~/.cc/config.json providers");
@@ -825,6 +862,7 @@ async function runTui(args: Args): Promise<number> {
 
   const startupNotes: string[] = [];
   if (canaryNote) startupNotes.push(canaryNote);
+  if (codexNote) startupNotes.push(codexNote);
 
   // Project memory (CC.md > AGENTS.md > CLAUDE.md) + skills fold into the base
   // system prompt; App re-appends the per-mode rules at send time.
@@ -892,8 +930,50 @@ async function runTui(args: Args): Promise<number> {
   return 0;
 }
 
+/** `cc login-codex [--manual]` — sign in with the ChatGPT (Codex) subscription. */
+async function runLoginCodex(rest: string[]): Promise<number> {
+  const manual = rest.includes("--manual");
+  try {
+    const { account_id } = manual
+      ? await loginManual({
+          onUrl: (url) =>
+            console.log(
+              `Open this URL in a browser, sign in, then paste the URL you are redirected to:\n\n${url}\n`,
+            ),
+          readLine: async () => prompt("Paste the redirected URL here: ") ?? "",
+        })
+      : await loginWithBrowser({
+          open: openBrowser,
+          onUrl: (url) =>
+            console.log(`Opening your browser to sign in:\n${url}\n`),
+        });
+    console.log(
+      `✓ Signed in to ChatGPT${account_id ? ` (account ${account_id})` : ""}. Your models are listed on next launch; pick one with --model (e.g. --model gpt-5.5) and set reasoning effort with --think (off→low … ultrathink→xhigh).`,
+    );
+    return 0;
+  } catch (err) {
+    console.error(`cc login-codex failed: ${(err as Error).message}`);
+    return 1;
+  }
+}
+
+/** `cc logout-codex` — remove the stored ChatGPT credentials. */
+async function runLogoutCodex(): Promise<number> {
+  await clearCredentials();
+  console.log("Signed out of ChatGPT (removed ~/.cc/auth.json).");
+  return 0;
+}
+
 async function main(): Promise<void> {
-  const args = parseArgs(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  // Subcommands handled before flag parsing (the only ones today are auth).
+  if (argv[0] === "login-codex") {
+    process.exit(await runLoginCodex(argv.slice(1)));
+  }
+  if (argv[0] === "logout-codex") {
+    process.exit(await runLogoutCodex());
+  }
+  const args = parseArgs(argv);
 
   if (args.help) {
     printUsage();

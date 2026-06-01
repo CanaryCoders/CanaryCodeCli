@@ -6,7 +6,9 @@
 // API, `openai-compat` talks to the OpenAI Chat Completions API — the latter is
 // what custom company gateways (incl. CanaryLLM) speak.
 
+import { makeTokenGetter, type TokenGetter } from "./auth.ts";
 import type { ProviderConfig } from "./config.ts";
+import { type CodexEffort, parseCodexModel } from "./openai-codex.ts";
 
 // ── Shared, provider-agnostic shapes ────────────────────────────────────────
 
@@ -495,10 +497,286 @@ function openaiCompatProvider(opts: OpenAICompatOptions): Provider {
   };
 }
 
+// ── OpenAI Codex (Responses API, ChatGPT subscription) ───────────────────────
+//
+// The subscription path is NOT the Chat Completions API above: it speaks the
+// Responses API served from a special host, authenticated with the OAuth bearer
+// token in ~/.cc/auth.json (see auth.ts). The request body must force a stateless,
+// streaming shape (`store:false`, encrypted reasoning carried server-side) and use
+// the Responses item vocabulary (`input_text`/`output_text`, `function_call`).
+
+/** Where the ChatGPT-subscription Responses endpoint lives. */
+const CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses";
+
+type ResponsesContentPart =
+  | { type: "input_text"; text: string }
+  | { type: "output_text"; text: string };
+
+type ResponsesInputItem =
+  | {
+      type: "message";
+      role: "user" | "assistant";
+      content: ResponsesContentPart[];
+    }
+  | { type: "function_call"; call_id: string; name: string; arguments: string }
+  | { type: "function_call_output"; call_id: string; output: string };
+
+/**
+ * Flatten the provider-agnostic transcript into Responses API `input` items.
+ *
+ * User text → a `message` with `input_text`; assistant text → `output_text`.
+ * `tool_use` → a `function_call` item; `tool_result` → a `function_call_output`.
+ * `thinking` blocks are dropped (their encrypted reasoning lives server-side via
+ * `store:false` + `include:["reasoning.encrypted_content"]`). No item carries an
+ * `id` — under `store:false` the backend rejects references to prior item ids.
+ */
+export function toResponsesInput(messages: Message[]): ResponsesInputItem[] {
+  const out: ResponsesInputItem[] = [];
+  for (const m of messages) {
+    const partType = m.role === "user" ? "input_text" : "output_text";
+    let text = "";
+    const flushText = () => {
+      if (text) {
+        out.push({
+          type: "message",
+          role: m.role,
+          content: [{ type: partType, text } as ResponsesContentPart],
+        });
+        text = "";
+      }
+    };
+    for (const b of m.content) {
+      if (b.type === "text") {
+        text += b.text;
+      } else if (b.type === "tool_use") {
+        flushText();
+        out.push({
+          type: "function_call",
+          call_id: b.id,
+          name: b.name,
+          arguments: JSON.stringify(b.input ?? {}),
+        });
+      } else if (b.type === "tool_result") {
+        flushText();
+        out.push({
+          type: "function_call_output",
+          call_id: b.tool_use_id,
+          output: b.content,
+        });
+      }
+      // thinking blocks: dropped.
+    }
+    flushText();
+  }
+  return out;
+}
+
+/**
+ * Map an extended-thinking token budget onto a Codex reasoning effort. This is how
+ * cc's thinking levels drive Codex: the four `/think` levels (off / think /
+ * think-hard / ultrathink → budgets 0 / 4k / 10k / 32k) map onto the four useful
+ * Codex efforts low / medium / high / xhigh. Codex models always reason, so "off"
+ * floors at "low" rather than disabling it; "ultrathink" reaches the top "xhigh".
+ */
+function effortForCodex(budget: number): CodexEffort {
+  if (budget <= 0) return "low";
+  if (budget <= 4_000) return "medium";
+  if (budget <= 10_000) return "high";
+  return "xhigh";
+}
+
+/** Subscription-quota exhaustion arrives as a 404 with one of these markers. */
+const USAGE_LIMIT_RE =
+  /usage_limit_reached|usage_not_included|rate_limit_exceeded/;
+
+export interface OpenAIResponsesOptions {
+  tokenGetter: TokenGetter;
+}
+
+function openaiResponsesProvider(opts: OpenAIResponsesOptions): Provider {
+  const { tokenGetter } = opts;
+
+  return {
+    id: "openai-responses",
+    async *stream(req: StreamRequest): AsyncIterable<StreamEvent> {
+      // Reasoning effort comes from the thinking level (see effortForCodex). A
+      // handle may still pin an effort explicitly (e.g. "gpt-5.5 xhigh"), which
+      // overrides the thinking level; otherwise the wire model is the bare slug.
+      const { slug, effort } = parseCodexModel(req.model);
+      const reasoningEffort: CodexEffort =
+        effort ?? effortForCodex(req.thinkingBudget ?? 0);
+      const body: Record<string, unknown> = {
+        model: slug,
+        // The system prompt rides in `instructions`, not as an input item.
+        instructions: req.system,
+        input: toResponsesInput(req.messages),
+        // The backend is stateless: no stored conversation, reasoning context is
+        // returned encrypted and replayed via the include below.
+        store: false,
+        stream: true,
+        include: ["reasoning.encrypted_content"],
+        reasoning: { effort: reasoningEffort, summary: "auto" },
+        text: { verbosity: "medium" },
+      };
+      if (req.tools.length) {
+        body.tools = req.tools.map((t) => ({
+          type: "function",
+          name: t.name,
+          description: t.description,
+          parameters: t.schema,
+          strict: false,
+        }));
+      }
+      // Note: no max_tokens / max_completion_tokens — the backend rejects them.
+
+      // Fetch with the bearer token; on a 401 refresh once and retry.
+      const doFetch = async (force: boolean): Promise<Response> => {
+        const { accessToken, accountId } = force
+          ? await tokenGetter.forceRefresh()
+          : await tokenGetter.get();
+        const res = await fetch(CODEX_RESPONSES_URL, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${accessToken}`,
+            "chatgpt-account-id": accountId,
+            "OpenAI-Beta": "responses=experimental",
+            originator: "codex_cli_rs",
+            accept: "text/event-stream",
+          },
+          body: JSON.stringify(body),
+        });
+        if (res.status === 401 && !force) return doFetch(true);
+        return res;
+      };
+
+      const res = await doFetch(false);
+
+      if (!res.ok || !res.body) {
+        const errText = await res.text().catch(() => "");
+        if (res.status === 404 && USAGE_LIMIT_RE.test(errText)) {
+          throw new Error(
+            "codex: 429 usage limit reached for your ChatGPT subscription — try again later",
+          );
+        }
+        throw new Error(
+          `codex: ${res.status} ${res.statusText}${errText ? ` — ${errText}` : ""}`,
+        );
+      }
+
+      // Accumulate streamed function-call items keyed by their output-item id; the
+      // backend may stream `name`/`call_id` on `output_item.added`, the JSON args
+      // across `function_call_arguments.delta`, and a final form on `output_item.done`.
+      const calls: Record<string, { id: string; name: string; args: string }> =
+        {};
+      let sawToolCall = false;
+
+      const emitCall = function* (slot: {
+        id: string;
+        name: string;
+        args: string;
+      }): Iterable<StreamEvent> {
+        let input: unknown = {};
+        try {
+          input = slot.args ? JSON.parse(slot.args) : {};
+        } catch {
+          input = {};
+        }
+        sawToolCall = true;
+        yield { type: "tool_use", id: slot.id, name: slot.name, input };
+      };
+
+      for await (const ev of parseSSE(res.body)) {
+        switch (ev.type) {
+          case "response.output_text.delta":
+            if (typeof ev.delta === "string") {
+              yield { type: "text_delta", text: ev.delta };
+            }
+            break;
+          case "response.reasoning_summary_text.delta":
+          case "response.reasoning_text.delta":
+          case "response.reasoning.delta":
+            if (typeof ev.delta === "string") {
+              yield { type: "thinking_delta", text: ev.delta };
+            }
+            break;
+          case "response.output_item.added": {
+            const item = ev.item;
+            if (item?.type === "function_call") {
+              calls[item.id ?? item.call_id] = {
+                id: item.call_id ?? item.id,
+                name: item.name ?? "",
+                args: typeof item.arguments === "string" ? item.arguments : "",
+              };
+            }
+            break;
+          }
+          case "response.function_call_arguments.delta": {
+            const slot = calls[ev.item_id];
+            if (slot && typeof ev.delta === "string") slot.args += ev.delta;
+            break;
+          }
+          case "response.output_item.done": {
+            const item = ev.item;
+            if (item?.type === "function_call") {
+              const slot = calls[item.id ?? item.call_id] ?? {
+                id: item.call_id ?? item.id,
+                name: item.name ?? "",
+                args: "",
+              };
+              // Prefer the fully-formed args on the done event when present.
+              if (typeof item.arguments === "string" && item.arguments)
+                slot.args = item.arguments;
+              if (item.call_id) slot.id = item.call_id;
+              if (item.name) slot.name = item.name;
+              yield* emitCall(slot);
+              delete calls[item.id ?? item.call_id];
+            }
+            break;
+          }
+          case "response.completed": {
+            const usage = ev.response?.usage;
+            if (usage) {
+              yield {
+                type: "usage",
+                inputTokens: usage.input_tokens ?? 0,
+                outputTokens: usage.output_tokens ?? 0,
+              };
+            }
+            break;
+          }
+          case "response.failed":
+            throw new Error(
+              `codex stream error: ${JSON.stringify(ev.response?.error ?? ev)}`,
+            );
+          case "error":
+            throw new Error(
+              `codex stream error: ${JSON.stringify(ev.error ?? ev)}`,
+            );
+          default:
+            break;
+        }
+      }
+
+      // Flush any function call that never got an explicit `done` event.
+      for (const slot of Object.values(calls)) yield* emitCall(slot);
+      // The agent loop keys on `stopReason === "tool_use"` to run another round.
+      yield { type: "done", stopReason: sawToolCall ? "tool_use" : "stop" };
+    },
+  };
+}
+
 // ── Factory ──────────────────────────────────────────────────────────────────
 
-/** Build a Provider from a resolved ProviderConfig. */
-export function createProvider(cfg: ProviderConfig): Provider {
+/**
+ * Build a Provider from a resolved ProviderConfig. The optional `tokenGetter` is
+ * only consulted by the `openai-responses` (Codex) provider; it defaults to one
+ * backed by ~/.cc/auth.json, so existing call sites need not pass anything.
+ */
+export function createProvider(
+  cfg: ProviderConfig,
+  opts: { tokenGetter?: TokenGetter } = {},
+): Provider {
   switch (cfg.api) {
     case "anthropic":
       if (!cfg.apiKey) {
@@ -512,6 +790,10 @@ export function createProvider(cfg: ProviderConfig): Provider {
         throw new Error("cc: openai-compat provider requires a baseUrl");
       }
       return openaiCompatProvider({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl });
+    case "openai-responses":
+      return openaiResponsesProvider({
+        tokenGetter: opts.tokenGetter ?? makeTokenGetter(),
+      });
     default:
       throw new Error(
         `cc: unknown provider api "${(cfg as ProviderConfig).api}"`,
