@@ -3,7 +3,17 @@
 import { describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type Config, loadConfig, modelForRole } from "./config.ts";
+import {
+  type Config,
+  getRawConfigPath,
+  loadConfig,
+  modelForRole,
+  redactConfig,
+  setRawConfigPath,
+  summarizeConfig,
+  unsetRawConfigPath,
+  validateConfigPathValue,
+} from "./config.ts";
 
 function baseConfig(overrides: Partial<Config> = {}): Config {
   return {
@@ -67,5 +77,90 @@ describe("modelForRole", () => {
     await Bun.write(path, JSON.stringify({ ui: { nerdFont: true } }));
     const loaded = await loadConfig(path);
     expect(loaded.ui.nerdFont).toBe(true);
+  });
+});
+
+describe("raw config path helpers", () => {
+  test("set/get/unset preserve unrelated keys and env placeholders", async () => {
+    const path = join(tmpdir(), `cc-config-raw-${process.pid}.json`);
+    await Bun.write(
+      path,
+      JSON.stringify({
+        providers: {
+          anthropic: { api: "anthropic", apiKey: "${ANTHROPIC_API_KEY}" },
+        },
+        custom: { untouched: true },
+      }),
+    );
+
+    await setRawConfigPath("permission.mode", "ai", path);
+    await setRawConfigPath("ui.nerdFont", true, path);
+    expect(await getRawConfigPath("permission.mode", path)).toBe("ai");
+    expect(await getRawConfigPath("ui.nerdFont", path)).toBe(true);
+
+    const raw = JSON.parse(await Bun.file(path).text());
+    expect(raw.custom.untouched).toBe(true);
+    expect(raw.providers.anthropic.apiKey).toBe("${ANTHROPIC_API_KEY}");
+
+    await unsetRawConfigPath("permission.mode", path);
+    expect(await getRawConfigPath("permission.mode", path)).toBeUndefined();
+  });
+
+  test("set creates parent directories and accepts custom provider/mcp/hook objects", async () => {
+    const path = join(
+      tmpdir(),
+      `cc-config-dir-${process.pid}`,
+      ".cc",
+      "config.json",
+    );
+    await setRawConfigPath(
+      "providers.local",
+      { api: "openai-compat", baseUrl: "http://localhost" },
+      path,
+    );
+    await setRawConfigPath(
+      "mcpServers.fs",
+      { command: "node", args: ["server.js"] },
+      path,
+    );
+    await setRawConfigPath("hooks.PreToolUse", [{ command: "echo hi" }], path);
+    const raw = JSON.parse(await Bun.file(path).text());
+    expect(raw.providers.local.api).toBe("openai-compat");
+    expect(raw.mcpServers.fs.command).toBe("node");
+    expect(raw.hooks.PreToolUse[0].command).toBe("echo hi");
+  });
+
+  test("validates known paths", () => {
+    expect(() => validateConfigPathValue("confirm", "nope")).toThrow();
+    expect(() =>
+      validateConfigPathValue("thinking", "think-hard"),
+    ).not.toThrow();
+    expect(() => validateConfigPathValue("permission.scope", "all")).toThrow();
+    expect(() => validateConfigPathValue("providers.x.api", "bogus")).toThrow();
+    expect(() =>
+      validateConfigPathValue("webSearch.apiKey", "${BRAVE_API_KEY}"),
+    ).not.toThrow();
+    expect(() => validateConfigPathValue("autoMaxTurns", 0)).toThrow();
+    expect(() => validateConfigPathValue("checkpointEvery", 0)).not.toThrow();
+    expect(() => validateConfigPathValue("ui.nerdFont", "true")).toThrow();
+    expect(() =>
+      validateConfigPathValue("autoUpdate.enabled", false),
+    ).not.toThrow();
+  });
+
+  test("redacts sensitive keys in display helpers", () => {
+    const redacted = redactConfig({
+      apiKey: "secret",
+      nested: { token: "tok", baseUrl: "https://example.com" },
+      providers: { x: { apiKey: "secret2" } },
+    }) as Record<string, unknown>;
+    expect(redacted.apiKey).toBe("<redacted>");
+    expect((redacted.nested as Record<string, unknown>).token).toBe(
+      "<redacted>",
+    );
+    expect((redacted.nested as Record<string, unknown>).baseUrl).toBe(
+      "https://example.com",
+    );
+    expect(summarizeConfig(redacted)).not.toContain("secret");
   });
 });

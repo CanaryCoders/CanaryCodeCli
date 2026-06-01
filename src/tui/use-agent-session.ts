@@ -21,9 +21,25 @@ import {
   systemForMode,
 } from "../agent.ts";
 import { askUserTool } from "../askuser.ts";
-import { clearCredentials, loginWithBrowser, openBrowser } from "../auth.ts";
+import {
+  clearCredentials,
+  hasCredentials,
+  loginWithBrowser,
+  openBrowser,
+} from "../auth.ts";
 import { dispatchCommand } from "../commands.ts";
-import { resolveModel, saveConfig } from "../config.ts";
+import {
+  getRawConfigPath,
+  loadConfig,
+  parseConfigValue,
+  redactConfig,
+  resolveModel,
+  saveConfig,
+  setRawConfigPath,
+  summarizeConfig,
+  unsetRawConfigPath,
+  validateConfigPathValue,
+} from "../config.ts";
 import {
   runPostToolHooks,
   runPreToolHooks,
@@ -33,6 +49,7 @@ import {
   runUserPromptSubmitHooks,
 } from "../hooks.ts";
 import { iconFor } from "../icons.ts";
+import { connectMcpServers, describeMcp } from "../mcp.ts";
 import {
   describeCodex,
   gateCodexModels,
@@ -596,6 +613,93 @@ export function useAgentSession(deps: {
     note(`model → ${label}`);
   }
 
+  function replaceConfig(next: typeof props.config): void {
+    const target = props.config as unknown as Record<string, unknown>;
+    for (const key of Object.keys(target)) delete target[key];
+    Object.assign(target, next);
+  }
+
+  function formatConfigValue(value: unknown): string {
+    return value === undefined ? "<unset>" : summarizeConfig(value);
+  }
+
+  async function reloadConfig(): Promise<void> {
+    const next = await loadConfig();
+    if (await hasCredentials()) await populateCodexModels(next);
+    else gateCodexModels(next, false);
+    replaceConfig(next);
+  }
+
+  async function reloadMcp(): Promise<void> {
+    const oldClients = props.mcp.clients;
+    const next = await connectMcpServers(props.config.mcpServers);
+    await Promise.all(oldClients.map((c) => c.close().catch(() => {})));
+    props.mcp.tools = next.tools;
+    props.mcp.clients = next.clients;
+    props.mcp.notes = next.notes;
+    note(
+      describeMcp(next, Object.keys(props.config.mcpServers).length) ??
+        "⌁ mcp: no servers configured",
+    );
+  }
+
+  async function handleConfig(
+    action: Extract<ReturnType<typeof dispatchCommand>, { kind: "config" }>,
+  ): Promise<void> {
+    try {
+      if (action.op === "summary") {
+        await reloadConfig();
+        note(summarizeConfig(props.config));
+        return;
+      }
+      if (action.op === "get") {
+        const path = action.path ?? "";
+        await reloadConfig();
+        const raw = await getRawConfigPath(path);
+        const effective = path
+          .split(".")
+          .filter(Boolean)
+          .reduce<unknown>((cur, part) => {
+            return cur && typeof cur === "object" && part in cur
+              ? (cur as Record<string, unknown>)[part]
+              : undefined;
+          }, props.config);
+        note(
+          `${path}\nraw: ${formatConfigValue(redactConfig(raw))}\neffective: ${formatConfigValue(redactConfig(effective))}`,
+        );
+        return;
+      }
+      if (action.op === "set") {
+        const path = action.path ?? "";
+        const value = parseConfigValue(action.value ?? "");
+        validateConfigPathValue(path, value);
+        await setRawConfigPath(path, value);
+        await reloadConfig();
+        if (path === "model" && typeof value === "string") switchModel(value);
+        else {
+          note(
+            `config set ${path} = ${formatConfigValue(redactConfig(value))}`,
+          );
+        }
+        return;
+      }
+      if (action.op === "unset") {
+        const path = action.path ?? "";
+        await unsetRawConfigPath(path);
+        await reloadConfig();
+        note(`config unset ${path}`);
+        return;
+      }
+      if (action.op === "reload") {
+        await reloadConfig();
+        if (action.path === "mcp") await reloadMcp();
+        else note("config reloaded");
+      }
+    } catch (err) {
+      note((err as Error).message, "error");
+    }
+  }
+
   /** List every configured model id (/model with no argument). */
   function listModels(): void {
     const ids: string[] = [];
@@ -718,6 +822,9 @@ export function useAgentSession(deps: {
         break;
       case "update":
         void doUpdate();
+        break;
+      case "config":
+        void handleConfig(action);
         break;
       case "help":
         note(action.text);

@@ -143,6 +143,47 @@ Config lives at `~/.cc/config.json`. `${VAR}` references interpolate from the en
 
 Model resolution order: `--model <id>`, then config `model`, then the first available model. `/model` lists and switches at runtime in the TUI.
 
+### `/config` command
+
+In the TUI, `/config` inspects and edits `~/.cc/config.json` without leaving the session:
+
+```text
+/config                         # show the effective config
+/config get model               # show raw and effective values for one path
+/config set model sonnet
+/config set thinking think-hard
+/config unset thinking
+```
+
+`set` values are parsed as JSON when possible, so booleans, numbers, arrays, and objects can be written directly. Strings can be bare words or JSON strings. Display output redacts secret-looking fields such as `apiKey`; the raw file still preserves literal `${VAR}` references instead of writing interpolated secret values.
+
+Common examples:
+
+```text
+/config set webSearch.provider brave
+/config set webSearch.apiKey "${BRAVE_API_KEY}"
+/config set mcpServers.fs {"command":"mcp-server-filesystem","args":["/path"]}
+/config set providers.mycorp {"api":"openai-compat","baseUrl":"https://llm.mycorp.internal/v1","apiKey":"${MYCORP_KEY}","models":[{"id":"company-default"}]}
+/config set permission.mode ai
+/config set permission.model haiku
+/config set permission.scope writes
+/config set confirm writes
+/config set ui.nerdFont true
+/config set autoMaxTurns 40
+/config set checkpointEvery 8
+/config set compactAtTokens 120000
+/config set maxConcurrent 4
+/config set maxDepth 2
+/config set models.reasoning opus
+/config set models.coding sonnet
+/config set models.subagent haiku
+/config set models.permission haiku
+/config set hooks.PreToolUse [{"matcher":"bash|write_file|edit_file","hooks":[{"type":"command","command":"./scripts/guard.sh","timeout":10}]}]
+/config set autoUpdate.enabled false
+/config reload                  # reload config from disk
+/config reload mcp              # reload config and reconnect MCP servers
+```
+
 ### UI
 
 The TUI defaults to ASCII-safe icons. If your terminal uses a Nerd Font, enable richer glyphs with:
@@ -286,7 +327,9 @@ Auto mode and `--yolo` bypass the gate. Plan mode never reaches mutating tools. 
 
 ## Slash commands (TUI)
 
-`/model`, `/think`, `/plan`, `/auto`, `/normal`, `/clear`, `/resume`, `/cost`, `/init`, `/help`, `/exit`.
+`/model`, `/think`, `/plan`, `/auto`, `/normal`, `/config`, `/clear`, `/resume`, `/cost`, `/init`, `/help`, `/exit`.
+
+`/config` supports `/config` (show effective config), `/config get <path>`, `/config set <path> <value>`, `/config unset <path>`, `/config reload`, and `/config reload mcp` (reload config and reconnect MCP servers).
 
 ## Development
 

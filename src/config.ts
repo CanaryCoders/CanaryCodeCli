@@ -317,6 +317,262 @@ export async function saveConfig(
   await Bun.write(path, `${JSON.stringify(raw, null, 2)}\n`);
 }
 
+export const CONFIG_PATHS = [
+  "model",
+  "models.reasoning",
+  "models.coding",
+  "models.subagent",
+  "models.permission",
+  "providers.<name>",
+  "providers.<name>.api",
+  "providers.<name>.apiKey",
+  "providers.<name>.baseUrl",
+  "providers.<name>.models",
+  "webSearch.provider",
+  "webSearch.apiKey",
+  "mcpServers.<name>",
+  "ui.nerdFont",
+  "autoMaxTurns",
+  "checkpointEvery",
+  "maxConcurrent",
+  "maxDepth",
+  "compactAtTokens",
+  "confirm",
+  "permission.mode",
+  "permission.model",
+  "permission.scope",
+  "hooks.<event>",
+  "thinking",
+  "autoUpdate.enabled",
+] as const;
+
+const ROOT_CONFIG_KEYS = new Set([
+  "model",
+  "models",
+  "providers",
+  "webSearch",
+  "mcpServers",
+  "ui",
+  "autoMaxTurns",
+  "checkpointEvery",
+  "maxConcurrent",
+  "maxDepth",
+  "compactAtTokens",
+  "confirm",
+  "permission",
+  "hooks",
+  "thinking",
+  "autoUpdate",
+]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function splitConfigPath(path: string): string[] {
+  const parts = path.split(".").filter(Boolean);
+  if (parts.length === 0) throw new Error("cc: config path cannot be empty");
+  if (!ROOT_CONFIG_KEYS.has(parts[0])) {
+    throw new Error(`cc: unknown config path '${path}'`);
+  }
+  return parts;
+}
+
+async function readRawConfig(path: string): Promise<Record<string, unknown>> {
+  const file = Bun.file(path);
+  if (!(await file.exists())) return {};
+  try {
+    const parsed = JSON.parse(await file.text()) as unknown;
+    if (!isRecord(parsed)) throw new Error("root must be a JSON object");
+    return parsed;
+  } catch (err) {
+    throw new Error(
+      `cc: cannot update config at ${path}: invalid JSON (${(err as Error).message})`,
+    );
+  }
+}
+
+async function writeRawConfig(
+  raw: Record<string, unknown>,
+  path: string,
+): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  await Bun.write(path, `${JSON.stringify(raw, null, 2)}\n`);
+}
+
+export function getRawConfigValue(
+  raw: Record<string, unknown>,
+  path: string,
+): unknown {
+  const parts = splitConfigPath(path);
+  let cur: unknown = raw;
+  for (const part of parts) {
+    if (!isRecord(cur) || !(part in cur)) return undefined;
+    cur = cur[part];
+  }
+  return cur;
+}
+
+function setRawConfigValue(
+  raw: Record<string, unknown>,
+  path: string,
+  value: unknown,
+): void {
+  const parts = splitConfigPath(path);
+  let cur = raw;
+  for (const part of parts.slice(0, -1)) {
+    if (!isRecord(cur[part])) cur[part] = {};
+    cur = cur[part] as Record<string, unknown>;
+  }
+  cur[parts[parts.length - 1]] = value;
+}
+
+function unsetRawConfigValue(raw: Record<string, unknown>, path: string): void {
+  const parts = splitConfigPath(path);
+  let cur: unknown = raw;
+  for (const part of parts.slice(0, -1)) {
+    if (!isRecord(cur)) return;
+    cur = cur[part];
+  }
+  if (isRecord(cur)) delete cur[parts[parts.length - 1]];
+}
+
+export function validateConfigPathValue(path: string, value: unknown): void {
+  const parts = splitConfigPath(path);
+  const fail = (msg: string) => {
+    throw new Error(`cc: invalid value for ${path}: ${msg}`);
+  };
+  const stringPaths = new Set([
+    "model",
+    "permission.model",
+    "webSearch.apiKey",
+    "webSearch.provider",
+  ]);
+  if (parts[0] === "webSearch" && !stringPaths.has(path)) return;
+  if (stringPaths.has(path) || parts[0] === "models") {
+    if (typeof value !== "string") fail("expected string");
+    return;
+  }
+  if (path === "confirm") {
+    if (!["off", "bash", "writes"].includes(value as string))
+      fail("expected off, bash, or writes");
+    return;
+  }
+  if (path === "thinking") {
+    if (!["off", "think", "think-hard", "ultrathink"].includes(value as string))
+      fail("expected off, think, think-hard, or ultrathink");
+    return;
+  }
+  if (path === "permission.mode") {
+    if (!["off", "ai"].includes(value as string)) fail("expected off or ai");
+    return;
+  }
+  if (path === "permission.scope") {
+    if (!["bash", "writes"].includes(value as string))
+      fail("expected bash or writes");
+    return;
+  }
+  if (parts[0] === "providers") {
+    if (parts.length === 2) {
+      if (!isRecord(value)) fail("expected object");
+      const providerValue = value as Record<string, unknown>;
+      if ("api" in providerValue)
+        validateConfigPathValue(`${path}.api`, providerValue.api);
+    } else if (parts[2] === "api") {
+      if (
+        !["anthropic", "openai-compat", "openai-responses"].includes(
+          value as string,
+        )
+      ) {
+        fail("expected anthropic, openai-compat, or openai-responses");
+      }
+    }
+    return;
+  }
+  if (parts[0] === "mcpServers" || parts[0] === "hooks") {
+    if (parts.length === 1 || parts.length === 2) {
+      if (!isRecord(value) && !Array.isArray(value))
+        fail("expected object or array");
+    }
+    return;
+  }
+  if (parts[0] === "permission") return;
+  if (path === "ui.nerdFont" || path === "autoUpdate.enabled") {
+    if (typeof value !== "boolean") fail("expected boolean");
+    return;
+  }
+  if (parts[0] === "ui" || parts[0] === "autoUpdate") return;
+  const nonNegative = new Set(["checkpointEvery"]);
+  const positive = new Set([
+    "autoMaxTurns",
+    "maxConcurrent",
+    "maxDepth",
+    "compactAtTokens",
+  ]);
+  if (nonNegative.has(path) || positive.has(path)) {
+    if (typeof value !== "number" || !Number.isFinite(value))
+      fail("expected finite number");
+    const numberValue = value as number;
+    if (nonNegative.has(path) && numberValue < 0)
+      fail("expected nonnegative number");
+    if (positive.has(path) && numberValue <= 0)
+      fail("expected positive number");
+  }
+}
+
+export async function getRawConfigPath(
+  path: string,
+  configFile: string = configPath(),
+): Promise<unknown> {
+  return getRawConfigValue(await readRawConfig(configFile), path);
+}
+
+export function parseConfigValue(raw: string): unknown {
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    return raw;
+  }
+}
+
+export async function setRawConfigPath(
+  path: string,
+  value: unknown,
+  configFile: string = configPath(),
+): Promise<void> {
+  validateConfigPathValue(path, value);
+  const raw = await readRawConfig(configFile);
+  setRawConfigValue(raw, path, value);
+  await writeRawConfig(raw, configFile);
+}
+
+export async function unsetRawConfigPath(
+  path: string,
+  configFile: string = configPath(),
+): Promise<void> {
+  splitConfigPath(path);
+  const raw = await readRawConfig(configFile);
+  unsetRawConfigValue(raw, path);
+  await writeRawConfig(raw, configFile);
+}
+
+export function redactConfig(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((v) => redactConfig(v));
+  if (!isRecord(value)) return value;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value)) {
+    if (/(apiKey|key|token|secret|password)/i.test(k)) out[k] = "<redacted>";
+    else out[k] = redactConfig(v);
+  }
+  return out;
+}
+
+export function summarizeConfig(value: unknown): string {
+  return JSON.stringify(redactConfig(value), null, 2);
+}
+
 /** Resolve a model id to its provider + concrete model. `--model`/config id are accepted. */
 export function resolveModel(
   config: Config,

@@ -11,6 +11,7 @@
 // returned as a `message` action so the host has a single thing to switch on.
 
 import type { AgentMode } from "./agent.ts";
+import { CONFIG_PATHS } from "./config.ts";
 import { fuzzyRank, fuzzyScore } from "./fuzzy.ts";
 import { parseLevel, type ThinkingLevel } from "./thinking.ts";
 
@@ -40,6 +41,12 @@ export type CommandAction =
   | { kind: "login-codex" }
   | { kind: "logout-codex" }
   | { kind: "update" }
+  | {
+      kind: "config";
+      op: "summary" | "get" | "set" | "unset" | "reload";
+      path?: string;
+      value?: string;
+    }
   | { kind: "exit" }
   | { kind: "error"; message: string };
 
@@ -77,6 +84,11 @@ export const COMMANDS: CommandSpec[] = [
     description: "list saved sessions, or resume <id>",
   },
   { name: "cost", description: "show token usage and cost so far" },
+  {
+    name: "config",
+    usage: "[get|set|unset|reload]",
+    description: "show or edit config (get/set/unset <path>, reload [mcp])",
+  },
   {
     name: "init",
     description: "generate a starter CC.md project-context file",
@@ -119,6 +131,42 @@ function parseCommand(input: string): ParsedCommand | null {
     name: t.slice(0, space).toLowerCase(),
     arg: t.slice(space + 1).trim(),
   };
+}
+
+/** Render the `/help` command list as aligned lines. */
+function parseConfigAction(arg: string): CommandAction {
+  if (!arg) return { kind: "config", op: "summary" };
+  const match = arg.match(/^(\S+)(?:\s+(.*))?$/);
+  const op = match?.[1]?.toLowerCase() ?? "";
+  const rest = match?.[2]?.trim() ?? "";
+  switch (op) {
+    case "get":
+      return rest
+        ? { kind: "config", op: "get", path: rest }
+        : { kind: "error", message: "usage: /config get <path>" };
+    case "set": {
+      const setMatch = rest.match(/^(\S+)(?:\s+([\s\S]*))?$/);
+      const path = setMatch?.[1];
+      const value = setMatch?.[2];
+      if (!path || value === undefined) {
+        return { kind: "error", message: "usage: /config set <path> <value>" };
+      }
+      return { kind: "config", op: "set", path, value };
+    }
+    case "unset":
+      return rest
+        ? { kind: "config", op: "unset", path: rest }
+        : { kind: "error", message: "usage: /config unset <path>" };
+    case "reload":
+      if (!rest) return { kind: "config", op: "reload" };
+      if (rest === "mcp") return { kind: "config", op: "reload", path: "mcp" };
+      return { kind: "error", message: "usage: /config reload [mcp]" };
+    default:
+      return {
+        kind: "error",
+        message: `unknown config operation: "${op}" (summary|get|set|unset|reload)`,
+      };
+  }
 }
 
 /** Render the `/help` command list as aligned lines. */
@@ -178,6 +226,8 @@ export function dispatchCommand(input: string): CommandAction {
         : { kind: "resume" };
     case "cost":
       return { kind: "cost" };
+    case "config":
+      return parseConfigAction(parsed.arg);
     case "init":
       return { kind: "init" };
     case "login-codex":
@@ -219,10 +269,12 @@ export interface Completion {
 
 /** Known parameter values the host can supply for parameter completion. */
 export interface CompletionContext {
-  /** Configured model ids (for `/model`). */
-  models: string[];
+  /** Configured model ids (for `/model` and model-valued `/config` paths). */
+  models?: string[];
   /** Recent sessions, newest first (for `/resume`). */
-  sessions: { id: string; title: string | null }[];
+  sessions?: { id: string; title: string | null }[];
+  /** Optional config paths supplied by the host; defaults to built-in common paths. */
+  configPaths?: string[];
 }
 
 /** The thinking levels `/think` accepts, in increasing order. */
@@ -233,19 +285,91 @@ const THINK_LEVELS: ThinkingLevel[] = [
   "ultrathink",
 ];
 
+const CONFIG_SUBCOMMANDS = ["get", "set", "unset", "reload"] as const;
+
+const CONFIG_ENUM_VALUES: Record<string, string[]> = {
+  confirm: ["off", "bash", "writes"],
+  thinking: [...THINK_LEVELS],
+  "permission.mode": ["off", "ai"],
+  "permission.scope": ["bash", "writes"],
+  "ui.nerdFont": ["true", "false"],
+  "autoUpdate.enabled": ["true", "false"],
+  "webSearch.provider": ["duckduckgo", "brave", "tavily"],
+};
+
+function configPathCompletions(
+  prefix: string,
+  ctx: CompletionContext,
+): Completion[] {
+  return (ctx.configPaths ?? [...CONFIG_PATHS]).map((path) => ({
+    value: `${prefix}${path}`,
+    label: path,
+  }));
+}
+
+function configValueCompletions(
+  prefix: string,
+  path: string,
+  ctx: CompletionContext,
+): Completion[] {
+  const values =
+    path === "model" ||
+    path.startsWith("models.") ||
+    path === "permission.model"
+      ? (ctx.models ?? [])
+      : (CONFIG_ENUM_VALUES[path] ?? []);
+  return values.map((value) => ({ value: `${prefix}${value}`, label: value }));
+}
+
+function configParamValues(arg: string, ctx: CompletionContext): Completion[] {
+  const trimmed = arg.trimStart();
+  const tokens = trimmed.split(/\s+/).filter(Boolean);
+  const endsWithSpace = /\s$/.test(arg);
+  if (tokens.length === 0) {
+    return CONFIG_SUBCOMMANDS.map((op) => ({
+      value: `/config ${op} `,
+      label: op,
+    }));
+  }
+  const op = tokens[0]?.toLowerCase();
+  if (!CONFIG_SUBCOMMANDS.includes(op as (typeof CONFIG_SUBCOMMANDS)[number]))
+    return [];
+  if (op === "reload") return [{ value: "/config reload mcp", label: "mcp" }];
+  if (op === "get" || op === "unset")
+    return configPathCompletions(`/config ${op} `, ctx);
+  if (op === "set") {
+    if (tokens.length <= 1 && !endsWithSpace)
+      return configPathCompletions("/config set ", ctx);
+    if (tokens.length === 1 && endsWithSpace)
+      return configPathCompletions("/config set ", ctx);
+    const path = tokens[1] ?? "";
+    return configValueCompletions(`/config set ${path} `, path, ctx);
+  }
+  return [];
+}
+
 /** Parameter-value candidates for a (canonical) command name, pre-fuzzy-filter. */
-function paramValues(name: string, ctx: CompletionContext): Completion[] {
+function paramValues(
+  name: string,
+  ctx: CompletionContext,
+  arg = "",
+): Completion[] {
   switch (name) {
     case "model":
-      return ctx.models.map((id) => ({ value: `/model ${id}`, label: id }));
+      return (ctx.models ?? []).map((id) => ({
+        value: `/model ${id}`,
+        label: id,
+      }));
     case "think":
       return THINK_LEVELS.map((l) => ({ value: `/think ${l}`, label: l }));
     case "resume":
-      return ctx.sessions.map((s) => ({
+      return (ctx.sessions ?? []).map((s) => ({
         value: `/resume ${s.id}`,
         label: s.id.slice(0, 8),
         description: s.title ?? undefined,
       }));
+    case "config":
+      return configParamValues(arg, ctx);
     default:
       return [];
   }
@@ -293,6 +417,11 @@ export function completions(
   const argQuery = rest.slice(space + 1).trimStart();
   const spec = BY_NAME.get(name);
   if (!spec) return [];
-  const values = paramValues(spec.name, ctx);
-  return fuzzyRank(argQuery, values, (v) => v.label).map((r) => r.item);
+  const rawArg = rest.slice(space + 1);
+  const values = paramValues(spec.name, ctx, rawArg);
+  const query =
+    spec.name === "config"
+      ? (rawArg.trimStart().split(/\s+/).at(-1) ?? "")
+      : argQuery;
+  return fuzzyRank(query, values, (v) => v.label).map((r) => r.item);
 }
