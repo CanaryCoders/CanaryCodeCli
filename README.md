@@ -6,6 +6,44 @@ One engine drives two front-ends. A headless `-p` print mode handles scripting. 
 
 ## Install
 
+### Quick install (prebuilt binary)
+
+A single self-contained binary — no Bun or Node required:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/CanaryCoders/CanaryCodeCli/main/install.sh | sh
+```
+
+It downloads the binary for your platform from the latest [GitHub Release](https://github.com/CanaryCoders/CanaryCodeCli/releases), verifies its checksum, and installs it to `~/.local/bin` (override with `CC_INSTALL_DIR`, or pin a version with `CC_VERSION=v0.1.0`). Update later with `cc update`.
+
+### Nix
+
+Run without installing:
+
+```bash
+nix run github:CanaryCoders/CanaryCodeCli
+```
+
+Or add it to a Home Manager config (flake input named `cc`):
+
+```nix
+{
+  inputs.cc.url = "github:CanaryCoders/CanaryCodeCli";
+
+  # in your home-manager configuration:
+  imports = [ cc.homeManagerModules.default ];
+  programs.cc = {
+    enable = true;
+    # optional — renders a read-only ~/.cc/config.json:
+    # settings = { model = "opus"; thinking = "off"; };
+  };
+}
+```
+
+Nix installs are immutable, so self-update is disabled automatically — bump the flake input to upgrade.
+
+### From source
+
 You need [Bun](https://bun.sh).
 
 ```bash
@@ -20,6 +58,16 @@ bun run src/index.ts -p "say hi"
 # or
 bun run dev
 ```
+
+## Updating
+
+Binary installs (via `install.sh`) self-update. On startup `cc` checks GitHub Releases at most once a day in the background; when a newer version is available the TUI banner shows a notice. Apply it with:
+
+```bash
+cc update     # or /update inside the TUI
+```
+
+Auto-update never mutates anything on its own — it only checks and notifies. Disable the check entirely with `autoUpdate.enabled: false` in `~/.cc/config.json` or by setting `CC_DISABLE_UPDATE=1`. Source checkouts (update with `git`) and Nix installs never self-update.
 
 ## Usage
 

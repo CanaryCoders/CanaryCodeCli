@@ -39,6 +39,7 @@ export type CommandAction =
   | { kind: "init" }
   | { kind: "login-codex" }
   | { kind: "logout-codex" }
+  | { kind: "update" }
   | { kind: "exit" }
   | { kind: "error"; message: string };
 
@@ -88,6 +89,7 @@ export const COMMANDS: CommandSpec[] = [
     name: "logout-codex",
     description: "sign out of your ChatGPT (OpenAI Codex) subscription",
   },
+  { name: "update", description: "update cc to the latest release" },
   { name: "help", aliases: ["?"], description: "show this command list" },
   { name: "exit", aliases: ["quit", "q"], description: "exit cc" },
 ];
@@ -182,6 +184,8 @@ export function dispatchCommand(input: string): CommandAction {
       return { kind: "login-codex" };
     case "logout-codex":
       return { kind: "logout-codex" };
+    case "update":
+      return { kind: "update" };
     case "help":
       return { kind: "help", text: helpText() };
     case "exit":

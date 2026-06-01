@@ -79,10 +79,14 @@ import {
 } from "./thinking.ts";
 import { tools as allTools } from "./tools.ts";
 import { startTui } from "./tui/App.tsx";
+import {
+  applyUpdate,
+  cachedUpdateNotice,
+  refreshUpdateCache,
+  updateDisabledReason,
+} from "./update.ts";
+import { VERSION } from "./version.ts";
 import { webSearchTool } from "./websearch.ts";
-
-/** App version, shown by `--version` and in the TUI launch banner. */
-const VERSION = "0.0.1";
 
 interface Args {
   help: boolean;
@@ -196,6 +200,7 @@ function printUsage(): void {
       "  cc login-codex [--manual]  sign in with your ChatGPT (OpenAI Codex)",
       "                             subscription (--manual for SSH/headless paste)",
       "  cc logout-codex            sign out and remove ~/.cc/auth.json",
+      "  cc update                  update cc to the latest release (binary installs)",
       "",
       "Flags:",
       "  -p, --print <s>    run a single prompt headless",
@@ -334,6 +339,10 @@ async function runHeadless(args: Args): Promise<number> {
     console.error((err as Error).message);
     return 1;
   }
+
+  // Warm the update cache in the background (no stdout notice — headless output
+  // must stay clean for scripting / --json; the TUI surfaces the notice).
+  void refreshUpdateCache(config);
 
   // Discover CanaryLLM models when the preset is active (CANARYLLM_API_KEY set),
   // so `--model <id>` resolves. Best-effort: failures leave it inert.
@@ -861,6 +870,11 @@ async function runTui(args: Args): Promise<number> {
   const modelLabel = resolved.model.id;
 
   const startupNotes: string[] = [];
+  // A newer release seen on a prior run shows immediately (synchronous cache
+  // read); the network refresh runs in the background for the next launch.
+  const updateNotice = await cachedUpdateNotice(config);
+  if (updateNotice) startupNotes.push(updateNotice);
+  void refreshUpdateCache(config);
   if (canaryNote) startupNotes.push(canaryNote);
   if (codexNote) startupNotes.push(codexNote);
 
@@ -964,6 +978,29 @@ async function runLogoutCodex(): Promise<number> {
   return 0;
 }
 
+/**
+ * `cc update` — check GitHub releases and, if newer, download + verify + swap the
+ * running binary. No-ops with a clear message when self-update is unavailable
+ * (source run, Nix install, non-writable dir, or disabled in config).
+ */
+async function runUpdate(): Promise<number> {
+  let config: Config;
+  try {
+    config = await loadConfig();
+  } catch (err) {
+    console.error((err as Error).message);
+    return 1;
+  }
+  const reason = updateDisabledReason(config);
+  if (reason) {
+    console.error(`cc update: unavailable — ${reason}`);
+    return 1;
+  }
+  const result = await applyUpdate(config, (msg) => console.log(`  ${msg}`));
+  console.log(result.ok ? `✓ ${result.message}` : `✗ ${result.message}`);
+  return result.ok ? 0 : 1;
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   // Subcommands handled before flag parsing (the only ones today are auth).
@@ -972,6 +1009,9 @@ async function main(): Promise<void> {
   }
   if (argv[0] === "logout-codex") {
     process.exit(await runLogoutCodex());
+  }
+  if (argv[0] === "update") {
+    process.exit(await runUpdate());
   }
   const args = parseArgs(argv);
 

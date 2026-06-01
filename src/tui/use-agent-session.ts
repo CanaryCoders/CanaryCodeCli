@@ -44,6 +44,7 @@ import {
 } from "../thinking.ts";
 import type { Tool } from "../tools.ts";
 import { tools as allTools } from "../tools.ts";
+import { applyUpdate, updateDisabledReason } from "../update.ts";
 import { webSearchTool } from "../websearch.ts";
 import type { AppProps } from "./app-types.ts";
 import { expandPastes } from "./input-helpers.ts";
@@ -658,6 +659,9 @@ export function useAgentSession(deps: {
       case "logout-codex":
         void logoutCodex();
         break;
+      case "update":
+        void doUpdate();
+        break;
       case "help":
         note(action.text);
         break;
@@ -723,6 +727,19 @@ export function useAgentSession(deps: {
     } catch (err) {
       note(`logout failed: ${(err as Error).message}`, "error");
     }
+  }
+
+  // `/update` — download, verify, and swap in the latest release binary. Each
+  // step reports through note(); the swap takes effect on the next launch.
+  async function doUpdate(): Promise<void> {
+    const reason = updateDisabledReason(props.config);
+    if (reason) {
+      note(`update unavailable — ${reason}`, "error");
+      return;
+    }
+    note("checking for updates…");
+    const result = await applyUpdate(props.config, (msg) => note(msg));
+    note(result.message, result.ok ? undefined : "error");
   }
 
   function quit(): void {

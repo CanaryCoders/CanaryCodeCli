@@ -46,6 +46,7 @@ function configWithCodex(): Config {
     permission: { mode: "off", model: "haiku", scope: "writes" },
     hooks: {},
     thinking: "off",
+    autoUpdate: { enabled: true },
   };
 }
 

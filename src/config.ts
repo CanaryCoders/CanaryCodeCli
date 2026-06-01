@@ -123,6 +123,19 @@ export interface Config {
   hooks: HooksConfig;
   /** Default extended-thinking level; persisted across runs (off | think | think-hard | ultrathink). */
   thinking: ThinkingLevel;
+  /** Self-update behavior (only ever active for compiled release binaries). */
+  autoUpdate: AutoUpdateConfig;
+}
+
+/**
+ * Self-update settings. The background check and `cc update` / `/update` apply
+ * step are gated on this being enabled AND the running process being a compiled
+ * release binary in a writable location. Nix installs set `CC_DISABLE_UPDATE=1`,
+ * which overrides this entirely.
+ */
+export interface AutoUpdateConfig {
+  /** Enable the once-a-day background "newer version available" check. */
+  enabled: boolean;
 }
 
 /** Path to the config file (~/.cc/config.json). */
@@ -163,6 +176,7 @@ function defaultConfig(): Config {
     permission: { mode: "off", model: "haiku", scope: "writes" },
     hooks: {},
     thinking: "off",
+    autoUpdate: { enabled: true },
   };
 }
 
@@ -205,6 +219,7 @@ function mergeConfig(base: Config, user: Partial<Config>): Config {
     permission: { ...base.permission, ...(user.permission ?? {}) },
     hooks: { ...base.hooks, ...(user.hooks ?? {}) },
     thinking: user.thinking ?? base.thinking,
+    autoUpdate: { ...base.autoUpdate, ...(user.autoUpdate ?? {}) },
   };
 }
 
