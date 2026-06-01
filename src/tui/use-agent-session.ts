@@ -123,6 +123,8 @@ export interface AgentSession {
   rejectPlan: () => void;
   /** The shared Ctrl+C / Esc cancel escalation. */
   handleCancel: (label: string) => void;
+  /** Connect MCP servers once, on mount (deferred so they don't block first paint). */
+  startMcp: () => Promise<void>;
 }
 
 export function useAgentSession(deps: {
@@ -165,6 +167,8 @@ export function useAgentSession(deps: {
   // before the timer fires quits. The timer disarms it so a lone press never quits.
   const quitArmedRef = useRef(false);
   const quitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Guards the one-time deferred MCP connect (see startMcp) against a re-invocation.
+  const mcpStartedRef = useRef(false);
   // A prompt typed and submitted while a turn is in flight; it sends automatically
   // once the turn finishes. The ref mirrors state for the `useInput` closure.
   const [queued, setQueued] = useState<string | null>(null);
@@ -668,6 +672,23 @@ export function useAgentSession(deps: {
     replaceConfig(next);
   }
 
+  // Deferred initial MCP connect: runTui hands the App an empty `props.mcp` and the
+  // App calls this once on mount, so a slow MCP server never blocks first paint. The
+  // tools fold into the shared `props.mcp` (read at send time) and the `⌁ mcp` note
+  // replaces the startup "connecting…" line. Idempotent — a no-op after the first run
+  // and when there are no servers (or --no-tools).
+  async function startMcp(): Promise<void> {
+    if (mcpStartedRef.current || props.noTools) return;
+    mcpStartedRef.current = true;
+    const configured = Object.keys(props.config.mcpServers).length;
+    if (configured === 0) return;
+    const conn = await connectMcpServers(props.config.mcpServers);
+    props.mcp.tools = conn.tools;
+    props.mcp.clients = conn.clients;
+    props.mcp.notes = conn.notes;
+    note(describeMcp(conn, configured) ?? "⌁ mcp: no servers configured");
+  }
+
   async function reloadMcp(): Promise<void> {
     const oldClients = props.mcp.clients;
     const next = await connectMcpServers(props.config.mcpServers);
@@ -1076,5 +1097,6 @@ export function useAgentSession(deps: {
     editPlan,
     rejectPlan,
     handleCancel,
+    startMcp,
   };
 }

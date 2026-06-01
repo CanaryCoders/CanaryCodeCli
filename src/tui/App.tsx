@@ -144,6 +144,16 @@ function App(props: AppProps): React.ReactElement {
     controllerRef,
   });
 
+  // Connect MCP servers once the UI has painted — runTui defers them here (rather
+  // than awaiting before launch) so a slow server never delays first paint. The
+  // call is idempotent; the ref keeps the mount-once effect off the session's
+  // per-render identity without a stale closure.
+  const startMcpRef = useRef(session.startMcp);
+  startMcpRef.current = session.startMcp;
+  useEffect(() => {
+    void startMcpRef.current();
+  }, []);
+
   // Esc and Ctrl+C share handleCancel (cancel queue → clear prompt → abort →
   // quit); Ctrl+R toggles verbose tool output. While a plan awaits review the a/e/r
   // keys drive accept/edit/reject (TextInput is unmounted then, so they don't reach

@@ -59,9 +59,11 @@ import {
   type McpConnection,
 } from "./mcp.ts";
 import {
+  cachedCodexModels,
   describeCodex,
   gateCodexModels,
   populateCodexModels,
+  refreshCodexModels,
 } from "./openai-codex.ts";
 import { checkCommandSafety, inPermissionScope } from "./permission.ts";
 import type { ContentBlock, Message, Provider } from "./provider.ts";
@@ -904,10 +906,14 @@ async function runTui(args: Args): Promise<number> {
   const canaryNote = describeCanary(await populateCanaryModels(config));
 
   // Discover Codex models when signed in; otherwise hide the preset (see
-  // runHeadless). A successful in-session `/login-codex` re-discovers them.
+  // runHeadless). Use the cached catalog (a fast file read) so the TUI paints
+  // without waiting on the ~1.5s network fetch, then refresh in the background so
+  // the cache (and this session's `/model` list) is current. A successful in-session
+  // `/login-codex` re-discovers them.
   let codexNote: string | undefined;
   if (await hasCredentials()) {
-    codexNote = describeCodex(await populateCodexModels(config));
+    codexNote = describeCodex(await cachedCodexModels(config));
+    void refreshCodexModels(config);
   } else {
     gateCodexModels(config, false);
   }
@@ -954,11 +960,18 @@ async function runTui(args: Args): Promise<number> {
   const hooksNote = describeHooks(config.hooks);
   if (hooksNote) startupNotes.push(hooksNote);
 
-  const mcp: McpConnection = args.noTools
-    ? { tools: [], clients: [], notes: [] }
-    : await connectMcpServers(config.mcpServers);
-  const mcpNote = describeMcp(mcp, Object.keys(config.mcpServers).length);
-  if (mcpNote) startupNotes.push(mcpNote);
+  // MCP servers connect AFTER the UI mounts (see App → session.startMcp) so a slow
+  // server — a browser-automation MCP can take several seconds to spawn — never
+  // blocks first paint. Start with an empty tool set; the tools and the real `⌁ mcp`
+  // note fold in once connected. Show a "connecting…" line meanwhile so the gap is
+  // explained (and a prompt sent in those first seconds simply has no MCP tools yet).
+  const mcp: McpConnection = { tools: [], clients: [], notes: [] };
+  const mcpServerCount = Object.keys(config.mcpServers).length;
+  if (!args.noTools && mcpServerCount > 0) {
+    startupNotes.push(
+      `⌁ mcp: connecting to ${mcpServerCount} server${mcpServerCount === 1 ? "" : "s"}…`,
+    );
+  }
 
   const baseSystem = composeAgentsPrompt(
     composeSkillsPrompt(

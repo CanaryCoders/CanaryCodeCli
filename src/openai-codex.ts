@@ -17,11 +17,49 @@
 // `parseCodexModel` understands. Until the user signs in the preset is inert (empty
 // model list), so `/model` never offers a model that would just fail.
 
+import { readFile, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { makeTokenGetter, type TokenGetter } from "./auth.ts";
 import type { Config, ModelConfig, ProviderConfig } from "./config.ts";
 
 /** The provider key used for the baked-in Codex preset. */
 export const OPENAI_PROVIDER = "openai";
+
+/** How long a cached Codex catalog is trusted before a background re-fetch. */
+const CODEX_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+function codexCachePath(): string {
+  return join(homedir(), ".cc", "codex-models.json");
+}
+
+interface CodexCache {
+  /** Epoch ms of the last successful catalog fetch. */
+  checkedAt: number;
+  /** The models the catalog returned (bare slugs). */
+  models: ModelConfig[];
+}
+
+async function readCodexCache(): Promise<CodexCache | null> {
+  try {
+    const parsed = JSON.parse(
+      await readFile(codexCachePath(), "utf8"),
+    ) as Partial<CodexCache>;
+    if (typeof parsed.checkedAt === "number" && Array.isArray(parsed.models))
+      return { checkedAt: parsed.checkedAt, models: parsed.models };
+  } catch {
+    // Missing or malformed cache is fine — treat as "never fetched".
+  }
+  return null;
+}
+
+async function writeCodexCache(cache: CodexCache): Promise<void> {
+  try {
+    await writeFile(codexCachePath(), JSON.stringify(cache), "utf8");
+  } catch {
+    // A failed cache write is non-fatal; we just re-fetch sooner next time.
+  }
+}
 
 /** Catalog endpoint (same one the Codex CLI fetches). */
 const CODEX_MODELS_URL = "https://chatgpt.com/backend-api/codex/models";
@@ -174,6 +212,59 @@ export async function populateCodexModels(
   } catch (err) {
     target.models = CODEX_FALLBACK_MODELS;
     return { error: (err as Error).message };
+  }
+}
+
+/**
+ * Apply the *cached* Codex catalog to the preset, synchronously-fast (a single
+ * file read, no network). Used at startup so the TUI paints immediately instead of
+ * waiting ~1.5s on the live catalog fetch; `refreshCodexModels` then updates the
+ * cache (and this session) in the background. With no cache yet (first run) we seed
+ * the static fallback so the preset is usable until the refresh lands. A no-op when
+ * there is no Codex preset.
+ */
+export async function cachedCodexModels(
+  config: Config,
+): Promise<CodexPopulateResult | undefined> {
+  const target = Object.values(config.providers).find(isCodexProvider);
+  if (!target) return undefined;
+  const cache = await readCodexCache();
+  if (cache && cache.models.length > 0) {
+    target.models = cache.models;
+    return { count: cache.models.length };
+  }
+  target.models = CODEX_FALLBACK_MODELS;
+  return { count: CODEX_FALLBACK_MODELS.length };
+}
+
+/**
+ * Background refresh of the Codex catalog: re-fetch when the cache is stale (or
+ * absent), update the preset in place and persist the cache for next launch.
+ * Best-effort — a fetch failure leaves the cached/fallback set untouched. Returns
+ * the live count when it actually re-fetched (so the caller can surface a note), or
+ * undefined when it skipped (fresh cache) or failed.
+ */
+export async function refreshCodexModels(
+  config: Config,
+  opts: {
+    tokenGetter?: TokenGetter;
+    fetchImpl?: typeof fetch;
+    timeoutMs?: number;
+  } = {},
+): Promise<number | undefined> {
+  const target = Object.values(config.providers).find(isCodexProvider);
+  if (!target) return undefined;
+  const cache = await readCodexCache();
+  if (cache && Date.now() - cache.checkedAt < CODEX_CACHE_TTL_MS)
+    return undefined;
+  try {
+    const models = await fetchCodexModels(opts);
+    if (models.length === 0) return undefined;
+    target.models = models;
+    await writeCodexCache({ checkedAt: Date.now(), models });
+    return models.length;
+  } catch {
+    return undefined; // keep the cached/fallback set
   }
 }
 
