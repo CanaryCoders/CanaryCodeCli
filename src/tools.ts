@@ -47,10 +47,31 @@ function reqStr(input: Record<string, any>, key: string): string {
 
 // ── read_file ─────────────────────────────────────────────────────────────────
 
+// Default page size when the model reads a file without asking for a window.
+// Mirrors Claude Code: never dump an unbounded file into context — that is what
+// blows the model's context window on large files. The model can page past this
+// with `offset`/`limit`.
+const READ_FILE_DEFAULT_LIMIT = 2000;
+
+/**
+ * Render a window of lines as a numbered "view" — each line prefixed with its
+ * 1-based file line number, right-aligned to a `tab`. This turns read_file into
+ * a navigable viewer: the model always sees the real line numbers, so it can ask
+ * for any window (e.g. `offset=2001`) and page through a file of any size. The
+ * numbering is display-only — edit_file matches on the raw text, not the prefix.
+ */
+function numberLines(lines: string[], startLine: number): string {
+  const lastNum = startLine + lines.length - 1;
+  const width = String(lastNum).length;
+  return lines
+    .map((line, i) => `${String(startLine + i).padStart(width)}\t${line}`)
+    .join("\n");
+}
+
 const readFile: Tool = {
   name: "read_file",
   description:
-    "Read a UTF-8 text file. Optionally start at a 1-based line `offset` and cap the number of lines with `limit`. Returns the file contents.",
+    `Read a UTF-8 text file. Lines are returned numbered (\`<line>\\t<text>\`). Returns up to ${READ_FILE_DEFAULT_LIMIT} lines by default; pass a 1-based \`offset\` to start at any line and \`limit\` to set the window size — so you can page through a file of any size. If the window is truncated you'll see a notice with the total line count and the next \`offset\` to continue from.`,
   readOnly: true,
   schema: {
     type: "object",
@@ -75,14 +96,19 @@ const readFile: Tool = {
     const file = Bun.file(path);
     if (!(await file.exists())) throw new Error(`no such file: ${path}`);
     const text = await file.text();
-    const hasWindow =
-      typeof input.offset === "number" || typeof input.limit === "number";
-    if (!hasWindow) return text;
     const lines = text.split("\n");
     const start = Math.max(0, (input.offset ?? 1) - 1);
-    const end =
-      typeof input.limit === "number" ? start + input.limit : lines.length;
-    return lines.slice(start, end).join("\n");
+    // Cap unbounded reads at a default page size so a huge file can't flood the
+    // model's context window. An explicit `limit` overrides the default.
+    const limit = input.limit ?? READ_FILE_DEFAULT_LIMIT;
+    const end = start + limit;
+    const window = lines.slice(start, end);
+    const body = numberLines(window, start + 1);
+    const shownEnd = start + window.length;
+    const truncated = shownEnd < lines.length;
+    if (!truncated) return body;
+    const nextOffset = shownEnd + 1; // 1-based line to resume from
+    return `${body}\n\n[truncated: showing lines ${start + 1}-${shownEnd} of ${lines.length}. Continue with offset=${nextOffset}.]`;
   },
 };
 
@@ -120,7 +146,7 @@ const writeFile: Tool = {
 const editFile: Tool = {
   name: "edit_file",
   description:
-    "Replace an exact `old` string with `new` in a file. Read the file first (read_file) so your `old` text matches exactly. `old` must appear exactly once unless `replace_all` is true. Fails if `old` is not found.",
+    "Replace an exact `old` string with `new` in a file. Read the file first (read_file) so your `old` text matches exactly — but strip read_file's `<line>\\t` number prefix; `old` must match the raw file text, not the numbered view. `old` must appear exactly once unless `replace_all` is true. Fails if `old` is not found.",
   readOnly: false,
   schema: {
     type: "object",
@@ -204,6 +230,21 @@ const listDir: Tool = {
   },
 };
 
+// Cap on tool output that flows back into the model's context. A command like
+// `curl <html-page>` can emit tens of thousands of tokens in one shot and blow
+// the context window; keep the head and tail (errors usually live at the end)
+// and drop the middle with a notice.
+const BASH_OUTPUT_LIMIT = 30_000;
+
+function capOutput(text: string, limit = BASH_OUTPUT_LIMIT): string {
+  if (text.length <= limit) return text;
+  const half = Math.floor(limit / 2);
+  const head = text.slice(0, half);
+  const tail = text.slice(text.length - half);
+  const dropped = text.length - head.length - tail.length;
+  return `${head}\n\n[... ${dropped} characters truncated ...]\n\n${tail}`;
+}
+
 // ── bash ──────────────────────────────────────────────────────────────────────
 
 const bash: Tool = {
@@ -256,7 +297,7 @@ const bash: Tool = {
         `command timed out after ${timeoutMs}ms${out ? `\n${out}` : ""}`,
       );
     }
-    const trimmed = out.length ? out : "(no output)";
+    const trimmed = capOutput(out.length ? out : "(no output)");
     return code === 0 ? trimmed : `[exit ${code}]\n${trimmed}`;
   },
 };
