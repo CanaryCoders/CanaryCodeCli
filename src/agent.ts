@@ -9,6 +9,7 @@
 
 import type { ModelRole } from "./config.ts";
 import type { Diff } from "./diff.ts";
+import type { ImageData } from "./image.ts";
 import type { ContentBlock, Message, Provider, ToolDef } from "./provider.ts";
 import type { Tool } from "./tools.ts";
 
@@ -97,6 +98,13 @@ export interface AgentOptions {
   mode?: AgentMode;
   thinkingBudget?: number;
   maxTokens?: number;
+  /**
+   * Whether the active model can see images. When a tool (read_file) returns an
+   * image, the loop attaches it as an `image` block only if true; otherwise the
+   * image is dropped and the tool_result text notes the model can't view it.
+   * Defaults to true.
+   */
+  supportsVision?: boolean;
   /**
    * Hard cap on assistant turns, used only when `checkpointEvery` is 0/unset.
    * In `auto` mode and headless this is the autonomy/runaway cap; interactive
@@ -371,6 +379,9 @@ export async function* runAgent(
 
     // ── execute tool calls, gather results into one user message ──
     const results: ContentBlock[] = [];
+    // Image blocks produced by tools this turn, appended after all tool_results so
+    // they never split a tool_result from its tool_use in the OpenAI/Codex wire form.
+    const images: ContentBlock[] = [];
     for (const call of collected.toolUses) {
       if (signal?.aborted) {
         yield { type: "done", reason: "aborted" };
@@ -445,23 +456,37 @@ export async function* runAgent(
       }
 
       // ── 4. run the tool ──
-      const { content, isError, diff } = await runToolCall(
+      const { content, isError, diff, image } = await runToolCall(
         toolByName,
         mode,
         call,
       );
+      // An image result rides along as an `image` block on this user turn — but
+      // only for vision-capable models; otherwise drop it and say so in the text.
+      const visionOk = opts.supportsVision ?? true;
+      const resultText =
+        image && !visionOk
+          ? `${content} (the current model cannot view images)`
+          : content;
+      if (image && visionOk) {
+        images.push({
+          type: "image",
+          mediaType: image.mediaType,
+          data: image.data,
+        });
+      }
       yield {
         type: "tool_end",
         id: call.id,
         name: call.name,
-        result: content,
+        result: resultText,
         isError,
         diff,
       };
       results.push({
         type: "tool_result",
         tool_use_id: call.id,
-        content,
+        content: resultText,
         is_error: isError,
       });
 
@@ -470,6 +495,7 @@ export async function* runAgent(
         await opts.postToolUse(call, { content, isError }).catch(() => {});
       }
     }
+    results.push(...images);
     messages.push({ role: "user", content: results });
   }
 }
@@ -479,7 +505,12 @@ async function runToolCall(
   toolByName: Map<string, Tool>,
   mode: AgentMode,
   call: { id: string; name: string; input: unknown },
-): Promise<{ content: string; isError: boolean; diff?: Diff }> {
+): Promise<{
+  content: string;
+  isError: boolean;
+  diff?: Diff;
+  image?: ImageData;
+}> {
   const tool = toolByName.get(call.name);
   if (!tool) {
     return { content: `unknown tool: ${call.name}`, isError: true };
@@ -495,7 +526,12 @@ async function runToolCall(
     const out = await tool.run(input);
     // Tools may return a bare string or a `{ content, diff }` result.
     if (typeof out === "string") return { content: out, isError: false };
-    return { content: out.content, isError: false, diff: out.diff };
+    return {
+      content: out.content,
+      isError: false,
+      diff: out.diff,
+      image: out.image,
+    };
   } catch (err) {
     return { content: (err as Error).message ?? String(err), isError: true };
   }

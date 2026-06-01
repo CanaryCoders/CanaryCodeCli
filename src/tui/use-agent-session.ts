@@ -27,10 +27,12 @@ import {
   loginWithBrowser,
   openBrowser,
 } from "../auth.ts";
+import { readClipboardImage } from "../clipboard.ts";
 import { dispatchCommand } from "../commands.ts";
 import {
   getRawConfigPath,
   loadConfig,
+  modelSupportsVision,
   parseConfigValue,
   redactConfig,
   resolveModel,
@@ -49,6 +51,7 @@ import {
   runUserPromptSubmitHooks,
 } from "../hooks.ts";
 import { iconFor } from "../icons.ts";
+import { extractImagePaths, type ImageData, readImageFile } from "../image.ts";
 import { connectMcpServers, describeMcp } from "../mcp.ts";
 import {
   describeCodex,
@@ -56,7 +59,7 @@ import {
   OPENAI_PROVIDER,
   populateCodexModels,
 } from "../openai-codex.ts";
-import type { Message } from "../provider.ts";
+import type { ContentBlock, Message } from "../provider.ts";
 import { createProvider, type Provider } from "../provider.ts";
 import { hasPriceData } from "../session.ts";
 import { readSkillTool } from "../skills.ts";
@@ -111,6 +114,8 @@ export interface AgentSession {
   setVerbose: React.Dispatch<React.SetStateAction<boolean>>;
   /** Handle a submitted input line (slash command or prompt). */
   onSubmit: (rawValue: string) => void;
+  /** Ctrl+V: attach a clipboard image to the next prompt. */
+  attachClipboardImage: () => void;
   /** Cycle the agent mode (Shift+Tab): normal → plan → auto → normal. */
   cycleMode: () => void;
   acceptPlan: () => void;
@@ -164,6 +169,8 @@ export function useAgentSession(deps: {
   // once the turn finishes. The ref mirrors state for the `useInput` closure.
   const [queued, setQueued] = useState<string | null>(null);
   const queuedRef = useRef<string | null>(null);
+  // Images pasted from the clipboard (Ctrl+V), attached to the next prompt sent.
+  const pendingImagesRef = useRef<ImageData[]>([]);
 
   const [busy, setBusy] = useState(false);
   const [mode, setModeState] = useState<AgentMode>(
@@ -234,6 +241,7 @@ export function useAgentSession(deps: {
   function modelForTurn(runMode: AgentMode): {
     provider: Provider;
     model: string;
+    supportsVision: boolean;
   } {
     const id = props.config.models?.[roleForMode(runMode)];
     if (id) {
@@ -243,13 +251,21 @@ export function useAgentSession(deps: {
           return {
             provider: createProvider(resolved.providerConfig),
             model: resolved.model.name ?? resolved.model.id,
+            supportsVision: modelSupportsVision(resolved.model),
           };
         } catch {
           // fall through to base refs
         }
       }
     }
-    return { provider: providerRef.current, model: modelNameRef.current };
+    // Base-ref fallback has no ModelConfig in hand; assume vision-capable (the
+    // built-in models all are) — a text-only model is opted out via config.
+    const base = resolveModel(props.config);
+    return {
+      provider: providerRef.current,
+      model: modelNameRef.current,
+      supportsVision: base ? modelSupportsVision(base.model) : true,
+    };
   }
 
   // ── build the tool set for a run (fresh signal so spawn_agent can be aborted) ──
@@ -312,7 +328,11 @@ export function useAgentSession(deps: {
     controllerRef.current = controller;
 
     const runMode = modeOverride ?? mode;
-    const { provider: turnProvider, model: turnModel } = modelForTurn(runMode);
+    const {
+      provider: turnProvider,
+      model: turnModel,
+      supportsVision: turnSupportsVision,
+    } = modelForTurn(runMode);
     const system = systemForMode(baseSystemRef.current, runMode);
     let tools = buildTools(controller.signal, turnProvider, turnModel);
     if (runMode === "plan") tools = tools.filter((t) => t.readOnly);
@@ -405,6 +425,7 @@ export function useAgentSession(deps: {
         messages: messagesRef.current,
         tools,
         mode: runMode,
+        supportsVision: turnSupportsVision,
         maxTurns,
         checkpointEvery,
         onCheckpoint: interactive ? approvals.requestCheckpoint : undefined,
@@ -728,11 +749,64 @@ export function useAgentSession(deps: {
       );
     }
     push({ kind: "user", text: displayText });
-    messagesRef.current.push({
-      role: "user",
-      content: [{ type: "text", text: messageText }],
-    });
+    const content: ContentBlock[] = [{ type: "text", text: messageText }];
+    // Collect images for this prompt: clipboard pastes (Ctrl+V) queued in the ref,
+    // plus any image files referenced in the prompt text (bare or @-mentioned).
+    const clipboardImages = pendingImagesRef.current;
+    pendingImagesRef.current = [];
+    const imagePaths = extractImagePaths(messageText);
+    if (clipboardImages.length || imagePaths.length) {
+      const runMode = modeOverride ?? mode;
+      const resolved = resolveModel(
+        props.config,
+        props.config.models?.[roleForMode(runMode)],
+      );
+      if (resolved && !modelSupportsVision(resolved.model)) {
+        const total = clipboardImages.length + imagePaths.length;
+        note(`current model can't view images — ignoring ${total} image(s)`);
+      } else {
+        for (const img of clipboardImages) {
+          content.push({
+            type: "image",
+            mediaType: img.mediaType,
+            data: img.data,
+          });
+        }
+        // Read failures are reported but never block the turn.
+        for (const p of imagePaths) {
+          try {
+            const img = await readImageFile(p);
+            content.push({
+              type: "image",
+              mediaType: img.mediaType,
+              data: img.data,
+            });
+          } catch (err) {
+            note(`couldn't attach ${p}: ${(err as Error).message}`, "error");
+          }
+        }
+      }
+    }
+    messagesRef.current.push({ role: "user", content });
     void runTurn(modeOverride);
+  }
+
+  /** Ctrl+V: grab an image off the clipboard and queue it for the next prompt. */
+  async function attachClipboardImage(): Promise<void> {
+    try {
+      const img = await readClipboardImage();
+      if (!img) {
+        note("no image in clipboard");
+        return;
+      }
+      pendingImagesRef.current.push(img);
+      const n = pendingImagesRef.current.length;
+      note(
+        `image attached (${img.mediaType}) — ${n} pending; send a message to include`,
+      );
+    } catch (err) {
+      note(`clipboard read failed: ${(err as Error).message}`, "error");
+    }
   }
 
   // ── handle a submitted input line (command or prompt) ──
@@ -983,6 +1057,7 @@ export function useAgentSession(deps: {
     verbose,
     setVerbose,
     onSubmit,
+    attachClipboardImage,
     cycleMode,
     acceptPlan,
     editPlan,

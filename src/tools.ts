@@ -9,6 +9,7 @@
 import { readdir } from "node:fs/promises";
 import { relative, resolve, sep } from "node:path";
 import { computeDiff, type Diff } from "./diff.ts";
+import { type ImageData, isImagePath, readImageFile } from "./image.ts";
 
 /**
  * A tool's result. Tools may simply return the string that becomes the
@@ -20,6 +21,12 @@ import { computeDiff, type Diff } from "./diff.ts";
 export interface ToolRunResult {
   content: string;
   diff?: Diff;
+  /**
+   * A base64 image the tool produced (read_file on an image file). The agent loop
+   * attaches it to the conversation as an `image` content block for vision-capable
+   * models; `content` carries a short text marker that always accompanies it.
+   */
+  image?: ImageData;
 }
 
 export interface Tool {
@@ -70,8 +77,7 @@ function numberLines(lines: string[], startLine: number): string {
 
 const readFile: Tool = {
   name: "read_file",
-  description:
-    `Read a UTF-8 text file. Lines are returned numbered (\`<line>\\t<text>\`). Returns up to ${READ_FILE_DEFAULT_LIMIT} lines by default; pass a 1-based \`offset\` to start at any line and \`limit\` to set the window size — so you can page through a file of any size. If the window is truncated you'll see a notice with the total line count and the next \`offset\` to continue from.`,
+  description: `Read a UTF-8 text file. Lines are returned numbered (\`<line>\\t<text>\`). Returns up to ${READ_FILE_DEFAULT_LIMIT} lines by default; pass a 1-based \`offset\` to start at any line and \`limit\` to set the window size — so you can page through a file of any size. If the window is truncated you'll see a notice with the total line count and the next \`offset\` to continue from. Image files (png/jpg/jpeg/gif/webp) are returned as an image for vision-capable models instead of text.`,
   readOnly: true,
   schema: {
     type: "object",
@@ -93,6 +99,12 @@ const readFile: Tool = {
   },
   async run(input) {
     const path = reqStr(input, "path");
+    // An image file can't be read as text — encode it to base64 and hand the agent
+    // loop an `image` payload to attach for vision models (see ToolRunResult.image).
+    if (isImagePath(path)) {
+      const image = await readImageFile(path);
+      return { content: `[image ${path} (${image.mediaType})]`, image };
+    }
     const file = Bun.file(path);
     if (!(await file.exists())) throw new Error(`no such file: ${path}`);
     const text = await file.text();

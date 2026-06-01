@@ -28,7 +28,11 @@ export type ContentBlock =
       tool_use_id: string;
       content: string;
       is_error?: boolean;
-    };
+    }
+  // A base64-encoded image. `mediaType` is an IANA type (e.g. "image/png"); `data`
+  // is the raw base64 (no `data:` prefix). Each provider's converter reshapes this
+  // into its own wire form (Anthropic `source`, OpenAI `image_url` data URL, …).
+  | { type: "image"; mediaType: string; data: string };
 
 export interface Message {
   role: "user" | "assistant";
@@ -116,6 +120,10 @@ type AnthropicBlock =
       tool_use_id: string;
       content: string;
       is_error?: boolean;
+    }
+  | {
+      type: "image";
+      source: { type: "base64"; media_type: string; data: string };
     };
 
 function toAnthropicBlock(b: ContentBlock): AnthropicBlock | null {
@@ -136,10 +144,15 @@ function toAnthropicBlock(b: ContentBlock): AnthropicBlock | null {
         content: b.content,
         is_error: b.is_error,
       };
+    case "image":
+      return {
+        type: "image",
+        source: { type: "base64", media_type: b.mediaType, data: b.data },
+      };
   }
 }
 
-function toAnthropicMessage(m: Message): {
+export function toAnthropicMessage(m: Message): {
   role: string;
   content: AnthropicBlock[];
 } {
@@ -318,9 +331,20 @@ function anthropicProvider(opts: AnthropicOptions): Provider {
 
 // ── OpenAI-compatible (Chat Completions) ─────────────────────────────────────
 
+/** A base64 image content block rendered as a `data:` URL — the form every
+ *  OpenAI-style API (Chat Completions `image_url`, Responses `input_image`)
+ *  accepts for inline base64 images. */
+function imageDataUrl(b: { mediaType: string; data: string }): string {
+  return `data:${b.mediaType};base64,${b.data}`;
+}
+
+type OpenAIContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
 interface OpenAIMessage {
   role: "system" | "user" | "assistant" | "tool";
-  content?: string | null;
+  content?: string | OpenAIContentPart[] | null;
   tool_calls?: {
     id: string;
     type: "function";
@@ -338,7 +362,7 @@ interface OpenAIMessage {
  * requires to immediately follow the assistant turn that called the tools).
  * `thinking` blocks have no OpenAI equivalent and are dropped.
  */
-function toOpenAIMessages(
+export function toOpenAIMessages(
   system: string,
   messages: Message[],
 ): OpenAIMessage[] {
@@ -367,9 +391,12 @@ function toOpenAIMessages(
       if (toolCalls.length) msg.tool_calls = toolCalls;
       out.push(msg);
     } else {
-      // user turn: tool_result blocks become their own `tool` messages; plain
-      // text blocks coalesce into a single user message.
+      // user turn: tool_result blocks become their own `tool` messages; text and
+      // image blocks coalesce into a single user message. With images present the
+      // content becomes a parts array (text part + `image_url` parts); otherwise it
+      // stays a plain string so text-only turns are unchanged.
       let text = "";
+      const images: OpenAIContentPart[] = [];
       for (const b of m.content) {
         if (b.type === "tool_result") {
           out.push({
@@ -379,9 +406,21 @@ function toOpenAIMessages(
           });
         } else if (b.type === "text") {
           text += b.text;
+        } else if (b.type === "image") {
+          images.push({
+            type: "image_url",
+            image_url: { url: imageDataUrl(b) },
+          });
         }
       }
-      if (text) out.push({ role: "user", content: text });
+      if (images.length) {
+        const parts: OpenAIContentPart[] = [];
+        if (text) parts.push({ type: "text", text });
+        parts.push(...images);
+        out.push({ role: "user", content: parts });
+      } else if (text) {
+        out.push({ role: "user", content: text });
+      }
     }
   }
   return out;
@@ -510,7 +549,8 @@ const CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses";
 
 type ResponsesContentPart =
   | { type: "input_text"; text: string }
-  | { type: "output_text"; text: string };
+  | { type: "output_text"; text: string }
+  | { type: "input_image"; image_url: string };
 
 type ResponsesInputItem =
   | {
@@ -533,23 +573,29 @@ type ResponsesInputItem =
 export function toResponsesInput(messages: Message[]): ResponsesInputItem[] {
   const out: ResponsesInputItem[] = [];
   for (const m of messages) {
-    const partType = m.role === "user" ? "input_text" : "output_text";
-    let text = "";
-    const flushText = () => {
-      if (text) {
-        out.push({
-          type: "message",
-          role: m.role,
-          content: [{ type: partType, text } as ResponsesContentPart],
-        });
-        text = "";
+    const textType = m.role === "user" ? "input_text" : "output_text";
+    // Accumulate ordered content parts (text + images) for the current message,
+    // flushing them when a tool_use/tool_result interrupts the run or at message end.
+    let parts: ResponsesContentPart[] = [];
+    const flushParts = () => {
+      if (parts.length) {
+        out.push({ type: "message", role: m.role, content: parts });
+        parts = [];
       }
     };
     for (const b of m.content) {
       if (b.type === "text") {
-        text += b.text;
+        // Merge consecutive text into the trailing text part (preserves the old
+        // single-part shape for plain text turns).
+        const last = parts[parts.length - 1];
+        if (last && last.type === textType) last.text += b.text;
+        else
+          parts.push({ type: textType, text: b.text } as ResponsesContentPart);
+      } else if (b.type === "image") {
+        // input_image is only valid on user turns, which is where images arrive.
+        parts.push({ type: "input_image", image_url: imageDataUrl(b) });
       } else if (b.type === "tool_use") {
-        flushText();
+        flushParts();
         out.push({
           type: "function_call",
           call_id: b.id,
@@ -557,7 +603,7 @@ export function toResponsesInput(messages: Message[]): ResponsesInputItem[] {
           arguments: JSON.stringify(b.input ?? {}),
         });
       } else if (b.type === "tool_result") {
-        flushText();
+        flushParts();
         out.push({
           type: "function_call_output",
           call_id: b.tool_use_id,
@@ -566,7 +612,7 @@ export function toResponsesInput(messages: Message[]): ResponsesInputItem[] {
       }
       // thinking blocks: dropped.
     }
-    flushText();
+    flushParts();
   }
   return out;
 }

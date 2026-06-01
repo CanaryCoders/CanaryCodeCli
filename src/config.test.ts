@@ -8,12 +8,24 @@ import {
   getRawConfigPath,
   loadConfig,
   modelForRole,
+  modelSupportsVision,
   redactConfig,
   setRawConfigPath,
   summarizeConfig,
   unsetRawConfigPath,
   validateConfigPathValue,
 } from "./config.ts";
+
+describe("modelSupportsVision", () => {
+  test("respects an explicit supportsVision flag", () => {
+    expect(modelSupportsVision({ id: "m", supportsVision: false })).toBe(false);
+    expect(modelSupportsVision({ id: "m", supportsVision: true })).toBe(true);
+  });
+
+  test("defaults to true when the flag is absent (modern models are multimodal)", () => {
+    expect(modelSupportsVision({ id: "opus" })).toBe(true);
+  });
+});
 
 function baseConfig(overrides: Partial<Config> = {}): Config {
   return {

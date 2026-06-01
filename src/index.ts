@@ -32,6 +32,7 @@ import {
   type Config,
   loadConfig,
   modelForRole,
+  modelSupportsVision,
   resolveModel,
 } from "./config.ts";
 import {
@@ -49,6 +50,7 @@ import {
   runStopHooks,
   runUserPromptSubmitHooks,
 } from "./hooks.ts";
+import { extractImagePaths, readImageFile } from "./image.ts";
 import { renderAnsi } from "./markdown.ts";
 import {
   closeMcp,
@@ -62,7 +64,7 @@ import {
   populateCodexModels,
 } from "./openai-codex.ts";
 import { checkCommandSafety, inPermissionScope } from "./permission.ts";
-import type { Message, Provider } from "./provider.ts";
+import type { ContentBlock, Message, Provider } from "./provider.ts";
 import { createProvider } from "./provider.ts";
 import { hasPriceData, type SessionRow, SessionStore } from "./session.ts";
 import {
@@ -550,7 +552,33 @@ async function runHeadless(args: Args): Promise<number> {
   // Everything already in `messages` is persisted; new entries (the prompt plus
   // each assistant/tool turn the loop appends) get written after the run.
   const persistedCount = messages.length;
-  messages.push({ role: "user", content: [{ type: "text", text: prompt }] });
+  // Attach any image files referenced in the prompt, for vision-capable models.
+  const supportsVision = modelSupportsVision(resolved.model);
+  const promptContent: ContentBlock[] = [{ type: "text", text: prompt }];
+  const promptImagePaths = extractImagePaths(prompt);
+  if (promptImagePaths.length) {
+    if (!supportsVision) {
+      process.stderr.write(
+        `note: ${modelName} can't view images; ignoring ${promptImagePaths.length} image(s)\n`,
+      );
+    } else {
+      for (const p of promptImagePaths) {
+        try {
+          const img = await readImageFile(p);
+          promptContent.push({
+            type: "image",
+            mediaType: img.mediaType,
+            data: img.data,
+          });
+        } catch (err) {
+          process.stderr.write(
+            `note: couldn't attach ${p}: ${(err as Error).message}\n`,
+          );
+        }
+      }
+    }
+  }
+  messages.push({ role: "user", content: promptContent });
   // Compaction rewrites `messages` in place, invalidating the index-based baseline;
   // when it fires we re-sync the whole transcript instead of appending a tail.
   let compacted = false;
@@ -664,6 +692,7 @@ async function runHeadless(args: Args): Promise<number> {
       messages,
       tools,
       mode,
+      supportsVision,
       maxTurns: turnCap,
       thinkingBudget,
       compactAtTokens: config.compactAtTokens,

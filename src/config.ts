@@ -24,6 +24,18 @@ export interface ModelConfig {
   id: string;
   /** Optional display name / alias. */
   name?: string;
+  /**
+   * Whether this model can see images. Omitted → assumed true, since the
+   * built-in models (Claude 4.x, GPT-5) are all multimodal. Set `false` on a
+   * text-only gateway model so attached images are dropped with a warning
+   * instead of triggering an opaque API error.
+   */
+  supportsVision?: boolean;
+}
+
+/** Whether image content may be sent to this model (see ModelConfig.supportsVision). */
+export function modelSupportsVision(model: ModelConfig): boolean {
+  return model.supportsVision ?? true;
 }
 
 export interface ProviderConfig {

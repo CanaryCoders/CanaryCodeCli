@@ -6,8 +6,73 @@ import {
   createProvider,
   type Message,
   type StreamEvent,
+  toAnthropicMessage,
+  toOpenAIMessages,
   toResponsesInput,
 } from "./provider.ts";
+
+// ── image content blocks across all three providers ─────────────────────────
+
+describe("image content blocks", () => {
+  const imageMsg: Message = {
+    role: "user",
+    content: [
+      { type: "text", text: "what is this?" },
+      { type: "image", mediaType: "image/png", data: "AAAB" },
+    ],
+  };
+
+  test("anthropic: image → source.base64 block alongside text", () => {
+    expect(toAnthropicMessage(imageMsg)).toEqual({
+      role: "user",
+      content: [
+        { type: "text", text: "what is this?" },
+        {
+          type: "image",
+          source: { type: "base64", media_type: "image/png", data: "AAAB" },
+        },
+      ],
+    });
+  });
+
+  test("openai-compat: image → image_url data URL in a content-parts array", () => {
+    expect(toOpenAIMessages("", [imageMsg])).toEqual([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "what is this?" },
+          {
+            type: "image_url",
+            image_url: { url: "data:image/png;base64,AAAB" },
+          },
+        ],
+      },
+    ]);
+  });
+
+  test("openai-compat: text-only user message stays a plain string", () => {
+    const textOnly: Message = {
+      role: "user",
+      content: [{ type: "text", text: "hello" }],
+    };
+    expect(toOpenAIMessages("", [textOnly])).toEqual([
+      { role: "user", content: "hello" },
+    ]);
+  });
+
+  test("responses (codex): image → input_image data URL part", () => {
+    expect(toResponsesInput([imageMsg])).toEqual([
+      {
+        type: "message",
+        role: "user",
+        content: [
+          { type: "input_text", text: "what is this?" },
+          { type: "input_image", image_url: "data:image/png;base64,AAAB" },
+        ],
+      },
+    ]);
+  });
+});
 
 // ── toResponsesInput ─────────────────────────────────────────────────────────
 

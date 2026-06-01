@@ -202,6 +202,10 @@ function App(props: AppProps): React.ReactElement {
       return;
     }
     if (key.ctrl && _input === "r") session.setVerbose((v) => !v);
+    // Ctrl+V: paste an image from the clipboard (\x16 is the raw SYN some
+    // terminals send for Ctrl+V). Text pastes arrive via the input itself.
+    if (key.ctrl && (_input === "v" || _input === "\x16"))
+      session.attachClipboardImage();
   });
 
   const modeColor = themeModeColor(session.mode);
