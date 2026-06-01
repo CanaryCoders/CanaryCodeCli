@@ -9,6 +9,7 @@
 
 import { Box, Text } from "ink";
 import type { Completion } from "../commands.ts";
+import { useIcon } from "./Icon.tsx";
 import { SPACING, tint } from "./theme.ts";
 
 /** Most rows to show at once; the window scrolls to keep `selected` visible. */
@@ -42,6 +43,7 @@ export function Complete({
   items,
   selected,
 }: CompleteProps): React.ReactElement | null {
+  const promptIcon = useIcon("prompt");
   if (items.length === 0) return null;
   const [start, end] = windowRange(items.length, selected);
   const visible = items.slice(start, end);
@@ -55,7 +57,7 @@ export function Complete({
         return (
           <Box key={`${idx}:${c.label}`}>
             <Text color={isSel ? accent : undefined}>
-              {isSel ? "› " : "  "}
+              {isSel ? `${promptIcon} ` : "  "}
             </Text>
             <Text color={isSel ? accent : undefined} bold={isSel}>
               {c.label}

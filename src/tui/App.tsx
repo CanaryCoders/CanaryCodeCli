@@ -24,6 +24,7 @@ import { LiveRegion, PromptArea } from "./AppViews.tsx";
 import type { AppProps } from "./app-types.ts";
 import { confirmChoiceForKey } from "./confirm-helpers.ts";
 import { Footer } from "./Footer.tsx";
+import { IconProvider } from "./Icon.tsx";
 import { ItemView } from "./Message.tsx";
 import { statusVerb } from "./message-helpers.ts";
 import { planChoiceForKey } from "./plan-helpers.ts";
@@ -256,49 +257,51 @@ function App(props: AppProps): React.ReactElement {
   const liveContentWidth = Math.max(1, columns - 4);
 
   return (
-    <Box flexDirection="column">
-      {staticScrollback ? (
-        <Static items={transcript.history}>{renderHistoryItem}</Static>
-      ) : (
-        <Box flexDirection="column">
-          {transcript.history.map(renderHistoryItem)}
-        </Box>
-      )}
+    <IconProvider config={props.config}>
+      <Box flexDirection="column">
+        {staticScrollback ? (
+          <Static items={transcript.history}>{renderHistoryItem}</Static>
+        ) : (
+          <Box flexDirection="column">
+            {transcript.history.map(renderHistoryItem)}
+          </Box>
+        )}
 
-      <LiveRegion
-        live={transcript.live}
-        history={transcript.history}
-        verbose={session.verbose}
-        firstToolId={firstToolId}
-        liveCap={liveCap}
-        liveContentWidth={liveContentWidth}
-      />
+        <LiveRegion
+          live={transcript.live}
+          history={transcript.history}
+          verbose={session.verbose}
+          firstToolId={firstToolId}
+          liveCap={liveCap}
+          liveContentWidth={liveContentWidth}
+        />
 
-      <Tasks tasks={session.tasks} />
+        <Tasks tasks={session.tasks} />
 
-      <PromptArea
-        approvals={approvals}
-        session={session}
-        autocomplete={autocomplete}
-        promptInput={promptInput}
-        promptHistory={promptHistory}
-        registerPaste={registerPaste}
-        pasteMap={pasteMap}
-        modeColor={modeColor}
-        verb={verb}
-        columns={columns}
-      />
+        <PromptArea
+          approvals={approvals}
+          session={session}
+          autocomplete={autocomplete}
+          promptInput={promptInput}
+          promptHistory={promptHistory}
+          registerPaste={registerPaste}
+          pasteMap={pasteMap}
+          modeColor={modeColor}
+          verb={verb}
+          columns={columns}
+        />
 
-      <Footer
-        modelLabel={session.modelLabel}
-        mode={session.mode}
-        modeColor={modeColor}
-        thinkLabel={thinkLabel}
-        cost={session.cost}
-        tokens={session.tokens}
-        verbose={session.verbose}
-      />
-    </Box>
+        <Footer
+          modelLabel={session.modelLabel}
+          mode={session.mode}
+          modeColor={modeColor}
+          thinkLabel={thinkLabel}
+          cost={session.cost}
+          tokens={session.tokens}
+          verbose={session.verbose}
+        />
+      </Box>
+    </IconProvider>
   );
 }
 

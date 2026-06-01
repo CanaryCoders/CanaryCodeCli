@@ -37,6 +37,7 @@ function configWithCodex(): Config {
     providers: { [OPENAI_PROVIDER]: openaiCodexProviderConfig() },
     webSearch: {},
     mcpServers: {},
+    ui: { nerdFont: false },
     autoMaxTurns: 25,
     checkpointEvery: 50,
     maxConcurrent: 3,

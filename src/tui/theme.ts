@@ -13,6 +13,7 @@
 // be read in tests and mapped to Ink `<Text>`/`<Box>` props at the call site.
 
 import type { AgentMode } from "../agent.ts";
+import type { IconName } from "../icons.ts";
 
 // ── Roles (transcript speakers) ────────────────────────────────────────────────
 // Every transcript item gets a left-gutter glyph + colour so the eye instantly
@@ -28,8 +29,8 @@ export type Role =
   | "error";
 
 export interface RoleStyle {
-  /** Left-gutter glyph; "" means no glyph. */
-  glyph: string;
+  /** Semantic left-gutter icon. */
+  icon: IconName;
   /** Ink colour for the gutter glyph (undefined = terminal default). */
   color?: string;
   /** Whether the gutter glyph is rendered bold. */
@@ -43,12 +44,12 @@ export interface RoleStyle {
 export const ROLE: Record<Role, RoleStyle> = {
   // A filled dot marks the start of each distinct AI answer (Claude-Code style),
   // so consecutive answers/tool groups read as separate units at a glance.
-  user: { glyph: "›", color: "cyan", bold: true, bg: "gray" },
-  assistant: { glyph: "⏺", color: undefined, bold: true },
-  thinking: { glyph: "✻", color: undefined, dim: true },
-  tool: { glyph: "⚙", color: undefined }, // coloured by status — see TOOL_STATUS
-  note: { glyph: "ℹ", color: "gray", dim: true },
-  error: { glyph: "✗", color: "red" },
+  user: { icon: "prompt", color: "cyan", bold: true, bg: "gray" },
+  assistant: { icon: "assistant", color: undefined, bold: true },
+  thinking: { icon: "thinking", color: undefined, dim: true },
+  tool: { icon: "tool", color: undefined }, // coloured by status — see TOOL_STATUS
+  note: { icon: "note", color: "gray", dim: true },
+  error: { icon: "error", color: "red" },
 };
 
 // ── Modes (border + accent colour) ─────────────────────────────────────────────
@@ -71,12 +72,14 @@ export function modeColor(mode: AgentMode): string {
 
 export type ToolStatus = "pending" | "ok" | "error";
 
-export const TOOL_STATUS: Record<ToolStatus, { color: string; mark: string }> =
-  {
-    pending: { color: "yellow", mark: "…" },
-    ok: { color: "green", mark: "✓" },
-    error: { color: "red", mark: "✗" },
-  };
+export const TOOL_STATUS: Record<
+  ToolStatus,
+  { color: string; icon: IconName }
+> = {
+  pending: { color: "yellow", icon: "toolPending" },
+  ok: { color: "green", icon: "toolOk" },
+  error: { color: "red", icon: "toolError" },
+};
 
 /** Resolve a tool call's status from its pending/error flags. */
 export function toolStatus(pending: boolean, isError?: boolean): ToolStatus {
@@ -95,7 +98,7 @@ export const DIFF = {
 } as const;
 
 /** The faint vertical rule drawn down the left of a diff/code block. */
-export const GUTTER_RULE = "│";
+export const GUTTER_RULE_ICON: IconName = "rule";
 
 // ── Spacing tokens ─────────────────────────────────────────────────────────────
 // Centralised so spacing between turns / around the input frame stays uniform and

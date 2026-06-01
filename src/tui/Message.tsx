@@ -13,6 +13,7 @@
 import { Box, Text } from "ink";
 import { type Diff, type DiffLine, diffStat } from "../diff.ts";
 import { codeLineFlags, parseMarkdown, type Span } from "../markdown.ts";
+import { useIcon } from "./Icon.tsx";
 import {
   fmtInput,
   head,
@@ -22,7 +23,7 @@ import {
 } from "./message-helpers.ts";
 import {
   DIFF,
-  GUTTER_RULE,
+  GUTTER_RULE_ICON,
   ROLE,
   type Role,
   SPACING,
@@ -91,9 +92,10 @@ function RuleRow({
 }: {
   children: React.ReactNode;
 }): React.ReactElement {
+  const rule = useIcon(GUTTER_RULE_ICON);
   return (
     <Box flexDirection="row">
-      <Text color={tint(DIFF.gutter)} dimColor>{`${GUTTER_RULE} `}</Text>
+      <Text color={tint(DIFF.gutter)} dimColor>{`${rule} `}</Text>
       <Box flexGrow={1}>{children}</Box>
     </Box>
   );
@@ -232,7 +234,8 @@ function Gutter({
   children: React.ReactNode;
 }): React.ReactElement {
   const s = ROLE[speaker];
-  const glyph = !glyphless && s.glyph ? `${s.glyph} ` : "  ";
+  const icon = useIcon(s.icon);
+  const glyph = !glyphless && icon ? `${icon} ` : "  ";
   const bg = highlight ? tint(s.bg) : undefined;
   return (
     <Box flexDirection="row" marginTop={marginTop}>
@@ -396,8 +399,9 @@ function ToolView({
    * so the whole row fits the terminal and never wraps. */
   width?: number;
 }): React.ReactElement {
-  const mark = item.pending ? "…" : item.isError ? "✗" : "✓";
-  const color = item.pending ? "yellow" : item.isError ? "red" : "green";
+  const status = toolStatus(item.pending, item.isError);
+  const mark = useIcon(TOOL_STATUS[status].icon);
+  const color = TOOL_STATUS[status].color;
   const summary = summarizeToolInput(item.name, item.input);
   // `bash` shows the FULL command, wrapped, never truncated — "what shell command
   // ran" is the thing the user most wants to verify. Every other tool keeps the

@@ -10,6 +10,7 @@ import Spinner from "ink-spinner";
 import { AskUserView } from "./AskUser.tsx";
 import { Complete } from "./Complete.tsx";
 import { ConfirmView } from "./Confirm.tsx";
+import { useIcon } from "./Icon.tsx";
 import { MultilineInput } from "./Input.tsx";
 import { type Item, ItemView } from "./Message.tsx";
 import { clampLineWidth, tailLines } from "./message-helpers.ts";
@@ -124,6 +125,10 @@ export function PromptArea({
   verb: string;
   columns: number;
 }): React.ReactElement {
+  const checkpointIcon = useIcon("checkpoint");
+  const promptIcon = useIcon("prompt");
+  const queuedIcon = useIcon("queued");
+
   if (approvals.pendingConfirm) {
     return (
       <ConfirmView
@@ -145,7 +150,7 @@ export function PromptArea({
     return (
       <Box flexDirection="column" marginTop={SPACING.inputGap}>
         <Text color={tint("yellow")}>
-          {`‖ ${approvals.pendingCheckpoint} turns in — keep going? `}
+          {`${checkpointIcon} ${approvals.pendingCheckpoint} turns in — keep going? `}
           <Text bold>{"[y]"}</Text>
           <Text dimColor>{"es / "}</Text>
           <Text bold>{"[n]"}</Text>
@@ -160,7 +165,9 @@ export function PromptArea({
   return (
     <Box flexDirection="column" marginTop={SPACING.inputGap}>
       {session.queued !== null ? (
-        <Text dimColor>{`⏎ queued: ${session.queued} (Esc to cancel)`}</Text>
+        <Text
+          dimColor
+        >{`${queuedIcon} queued: ${session.queued} (Esc to cancel)`}</Text>
       ) : null}
       {autocomplete.completeOpen ? (
         <Complete
@@ -184,7 +191,7 @@ export function PromptArea({
         paddingX={SPACING.boxPadX}
         flexDirection="row"
       >
-        <Text color={tint(modeColor)}>{"› "}</Text>
+        <Text color={tint(modeColor)}>{`${promptIcon} `}</Text>
         <Box flexGrow={1} flexShrink={1} minWidth={0}>
           <MultilineInput
             value={promptInput.input}
@@ -197,9 +204,12 @@ export function PromptArea({
             registerPaste={registerPaste}
             pastes={pasteMap}
             // Inner content width = terminal − border (2) − paddingX (2) − the
-            // "› " prefix (2) − 1 spare so the EOL cursor block never pushes a row
+            // Prompt prefix + 1 spare so the EOL cursor block never pushes a row
             // past the border (which smears on redraw).
-            width={Math.max(1, columns - 2 - 2 * SPACING.boxPadX - 2 - 1)}
+            width={Math.max(
+              1,
+              columns - 2 - 2 * SPACING.boxPadX - `${promptIcon} `.length - 1,
+            )}
             placeholder={
               session.busy
                 ? "Enter to queue · Esc to cancel"

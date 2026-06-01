@@ -8,6 +8,7 @@
 
 import { Box, Text } from "ink";
 import type { AgentMode } from "../agent.ts";
+import { useIcon } from "./Icon.tsx";
 import { modeColor, SPACING, tint } from "./theme.ts";
 
 export function PlanView({
@@ -21,6 +22,7 @@ export function PlanView({
   // Mode-aware accent (plan=cyan), routed through `tint` so NO_COLOR keeps the
   // frame + glyphs but drops colour.
   const accent = tint(modeColor(mode));
+  const planIcon = useIcon("plan");
   return (
     <Box flexDirection="column" marginTop={SPACING.inputGap}>
       <Box
@@ -30,7 +32,7 @@ export function PlanView({
         paddingX={SPACING.boxPadX}
       >
         <Text color={accent} bold>
-          {"≡ Proposed plan"}
+          {`${planIcon} Proposed plan`}
         </Text>
         <Text>{plan.trim()}</Text>
       </Box>

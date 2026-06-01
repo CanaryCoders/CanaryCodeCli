@@ -143,6 +143,14 @@ Config lives at `~/.cc/config.json`. `${VAR}` references interpolate from the en
 
 Model resolution order: `--model <id>`, then config `model`, then the first available model. `/model` lists and switches at runtime in the TUI.
 
+### UI
+
+The TUI defaults to ASCII-safe icons. If your terminal uses a Nerd Font, enable richer glyphs with:
+
+```json
+{ "ui": { "nerdFont": true } }
+```
+
 ### Custom providers
 
 `cc` supports custom OpenAI-compatible and Anthropic-compatible gateways:

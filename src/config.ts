@@ -90,6 +90,11 @@ export interface HooksConfig {
   Stop?: HookConfig[];
 }
 
+export interface UiConfig {
+  /** Use nerd-font glyphs in the TUI. Defaults false for ASCII-safe output. */
+  nerdFont: boolean;
+}
+
 export interface Config {
   /** Active model id. Resolved against providers' model lists. */
   model: string;
@@ -99,6 +104,8 @@ export interface Config {
   providers: Record<string, ProviderConfig>;
   webSearch: WebSearchConfig;
   mcpServers: Record<string, McpServerConfig>;
+  /** TUI display preferences. */
+  ui: UiConfig;
 
   /** Auto mode max loop turns before bailing. */
   autoMaxTurns: number;
@@ -167,6 +174,7 @@ function defaultConfig(): Config {
     },
     webSearch: {},
     mcpServers: {},
+    ui: { nerdFont: false },
     autoMaxTurns: 25,
     checkpointEvery: 50,
     maxConcurrent: 3,
@@ -210,6 +218,7 @@ function mergeConfig(base: Config, user: Partial<Config>): Config {
     providers: { ...base.providers, ...(user.providers ?? {}) },
     webSearch: { ...base.webSearch, ...(user.webSearch ?? {}) },
     mcpServers: { ...base.mcpServers, ...(user.mcpServers ?? {}) },
+    ui: { ...base.ui, ...(user.ui ?? {}) },
     autoMaxTurns: user.autoMaxTurns ?? base.autoMaxTurns,
     checkpointEvery: user.checkpointEvery ?? base.checkpointEvery,
     maxConcurrent: user.maxConcurrent ?? base.maxConcurrent,

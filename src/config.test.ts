@@ -11,6 +11,7 @@ function baseConfig(overrides: Partial<Config> = {}): Config {
     providers: {},
     webSearch: {},
     mcpServers: {},
+    ui: { nerdFont: false },
     autoMaxTurns: 25,
     checkpointEvery: 50,
     maxConcurrent: 3,
@@ -59,5 +60,12 @@ describe("modelForRole", () => {
     expect(loaded.models?.coding).toBe("sonnet");
     expect(modelForRole(loaded, "coding")).toBe("sonnet");
     expect(modelForRole(loaded, "reasoning")).toBe(loaded.model);
+  });
+
+  test("loadConfig merges ui settings", async () => {
+    const path = join(tmpdir(), `cc-config-ui-test-${process.pid}.json`);
+    await Bun.write(path, JSON.stringify({ ui: { nerdFont: true } }));
+    const loaded = await loadConfig(path);
+    expect(loaded.ui.nerdFont).toBe(true);
   });
 });

@@ -460,10 +460,10 @@ async function runHeadless(args: Args): Promise<number> {
       ...tools,
       updateTasksTool((list) => {
         const lines = list
-          .map((t) => `  ${statusMark(t.status)} ${t.content}`)
+          .map((t) => `  ${statusMark(t.status, config)} ${t.content}`)
           .join("\n");
         process.stderr.write(`\n≡ tasks:\n${lines}\n`);
-      }),
+      }, config),
     ];
   }
   if (mode === "plan") tools = tools.filter((t) => t.readOnly);

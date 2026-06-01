@@ -15,6 +15,8 @@
 // `in_progress` before working it and to `completed` when done, typically while
 // dispatching one sub-agent per task via spawn_agent.
 
+import type { Config } from "./config.ts";
+import { iconFor } from "./icons.ts";
 import type { Tool } from "./tools.ts";
 
 /** A task's lifecycle state. Exactly one task should be `in_progress` at a time. */
@@ -89,19 +91,22 @@ export function parseTasks(input: Record<string, unknown>): Task[] {
 }
 
 /** Status → a single-glyph marker for compact rendering. */
-export function statusMark(status: TaskStatus): string {
-  if (status === "completed") return "☑";
-  if (status === "in_progress") return "◐";
-  return "☐";
+export function statusMark(status: TaskStatus, config?: Config): string {
+  const nerdFont = config?.ui.nerdFont === true;
+  if (status === "completed") return iconFor("taskDone", nerdFont);
+  if (status === "in_progress") return iconFor("taskProgress", nerdFont);
+  return iconFor("taskPending", nerdFont);
 }
 
 /**
  * Format the list into the string the tool returns to the model, so it sees the
  * recorded state (and a one-line progress tally) on its next turn.
  */
-export function formatTasks(tasks: Task[]): string {
+export function formatTasks(tasks: Task[], config?: Config): string {
   const done = tasks.filter((t) => t.status === "completed").length;
-  const lines = tasks.map((t) => `${statusMark(t.status)} ${t.content}`);
+  const lines = tasks.map(
+    (t) => `${statusMark(t.status, config)} ${t.content}`,
+  );
   return [`Task list updated (${done}/${tasks.length} done):`, ...lines].join(
     "\n",
   );
@@ -124,7 +129,7 @@ const DESCRIPTION = [
  * the list mutates nothing, so it is allowed in plan mode and never trips the
  * approval gate.
  */
-export function updateTasksTool(onUpdate: TaskUpdateFn): Tool {
+export function updateTasksTool(onUpdate: TaskUpdateFn, config?: Config): Tool {
   return {
     name: "update_tasks",
     description: DESCRIPTION,
@@ -163,7 +168,7 @@ export function updateTasksTool(onUpdate: TaskUpdateFn): Tool {
     async run(input) {
       const tasks = parseTasks(input);
       onUpdate(tasks);
-      return formatTasks(tasks);
+      return formatTasks(tasks, config);
     },
   };
 }

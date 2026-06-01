@@ -25,6 +25,7 @@ import { clearCredentials, loginWithBrowser, openBrowser } from "../auth.ts";
 import { dispatchCommand } from "../commands.ts";
 import { resolveModel, saveConfig } from "../config.ts";
 import { runPostToolHooks, runPreToolHooks, runStopHooks } from "../hooks.ts";
+import { iconFor } from "../icons.ts";
 import {
   describeCodex,
   gateCodexModels,
@@ -108,6 +109,7 @@ export function useAgentSession(deps: {
   const { setHistory, setLive, updateBanner, push, note, nextId } = transcript;
   const { setInput, inputRef, bumpCursor } = promptInput;
   const controllerRef = deps.controllerRef;
+  const nerdFont = props.config.ui.nerdFont === true;
   const app = useApp();
 
   // Mutable engine state lives in refs (read inside async loops); React state
@@ -223,7 +225,7 @@ export function useAgentSession(deps: {
     // is deliberately NOT in spawn_agent's inheritedTools above), so the panel
     // reflects the main agent's plan while children just do their one task and
     // return a summary.
-    tools = [...tools, updateTasksTool(setTasks)];
+    tools = [...tools, updateTasksTool(setTasks, props.config)];
     return tools;
   }
 
@@ -431,14 +433,14 @@ export function useAgentSession(deps: {
               local.push({
                 id: nextId(),
                 kind: "note",
-                text: `▲ stopped after ${maxTurns} turns (the turn limit)`,
+                text: `${iconFor("warning", nerdFont)} stopped after ${maxTurns} turns (the turn limit)`,
                 tone: "error",
               });
             } else if (ev.reason === "stopped") {
               local.push({
                 id: nextId(),
                 kind: "note",
-                text: `‖ stopped at the ${lastCheckpoint}-turn checkpoint — send a message to continue`,
+                text: `${iconFor("checkpoint", nerdFont)} stopped at the ${lastCheckpoint}-turn checkpoint — send a message to continue`,
               });
             }
             break;

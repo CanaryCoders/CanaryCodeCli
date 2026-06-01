@@ -6,7 +6,8 @@
 // tasks are plain. Presentation only — state lives in App.
 
 import { Box, Text } from "ink";
-import { statusMark, type Task } from "../tasks.ts";
+import type { Task, TaskStatus } from "../tasks.ts";
+import { useIcon } from "./Icon.tsx";
 import { SPACING, tint } from "./theme.ts";
 
 interface TasksProps {
@@ -14,13 +15,18 @@ interface TasksProps {
 }
 
 export function Tasks({ tasks }: TasksProps) {
+  const statusIcons: Record<TaskStatus, string> = {
+    completed: useIcon("taskDone"),
+    in_progress: useIcon("taskProgress"),
+    pending: useIcon("taskPending"),
+  };
   if (tasks.length === 0) return null;
   const done = tasks.filter((t) => t.status === "completed").length;
   return (
     <Box marginTop={SPACING.inputGap} flexDirection="column">
       <Text dimColor>{`Tasks (${done}/${tasks.length})`}</Text>
       {tasks.map((t, i) => {
-        const mark = statusMark(t.status);
+        const mark = statusIcons[t.status];
         // The in-progress task shows its present-continuous label when given.
         const label =
           t.status === "in_progress" && t.activeForm ? t.activeForm : t.content;

@@ -53,10 +53,10 @@ describe("parseTasks", () => {
 });
 
 describe("statusMark", () => {
-  test("maps each status to a distinct glyph", () => {
-    expect(statusMark("pending")).toBe("☐");
-    expect(statusMark("in_progress")).toBe("◐");
-    expect(statusMark("completed")).toBe("☑");
+  test("maps each status to an ASCII-safe mark by default", () => {
+    expect(statusMark("pending")).toBe("[ ]");
+    expect(statusMark("in_progress")).toBe("[*]");
+    expect(statusMark("completed")).toBe("[x]");
   });
 });
 

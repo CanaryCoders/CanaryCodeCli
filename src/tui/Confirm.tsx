@@ -10,6 +10,7 @@
 
 import { Box, Text } from "ink";
 import type { ConfirmPreview } from "./confirm-helpers.ts";
+import { useIcon } from "./Icon.tsx";
 import { DiffView } from "./Message.tsx";
 import { SPACING, tint } from "./theme.ts";
 
@@ -27,6 +28,7 @@ export function ConfirmView({
   /** When set, the AI safety check flagged this call — shown above the prompt. */
   reason?: string | null;
 }): React.ReactElement {
+  const warningIcon = useIcon("warning");
   return (
     <Box
       flexDirection="column"
@@ -41,7 +43,7 @@ export function ConfirmView({
       {reason ? (
         <Text
           color={tint("yellow")}
-        >{`▲ flagged by safety check: ${reason}`}</Text>
+        >{`${warningIcon} flagged by safety check: ${reason}`}</Text>
       ) : null}
       {preview.kind === "bash" ? (
         <Text>{`$ ${preview.command}`}</Text>

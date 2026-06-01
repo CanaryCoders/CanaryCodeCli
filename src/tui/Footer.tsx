@@ -13,6 +13,7 @@
 
 import { Box, Text, useStdout } from "ink";
 import type { AgentMode } from "../agent.ts";
+import { useIcon } from "./Icon.tsx";
 import { tint } from "./theme.ts";
 
 export interface FooterProps {
@@ -77,7 +78,7 @@ export function Footer(props: FooterProps): React.ReactElement {
 
   const tokText = `${formatTokens(props.tokens)} tok`;
   const costText = `$${props.cost.toFixed(4)}`;
-  const verboseText = "⏵ verbose";
+  const verboseText = `${useIcon("verbose")} verbose`;
 
   const segs: Seg[] = [
     {

@@ -18,10 +18,11 @@ import { Box, Text, useInput } from "ink";
 import { useReducer, useRef } from "react";
 import type { AskAnswer, AskQuestion } from "../askuser.ts";
 import { recommendedIndex } from "../askuser.ts";
+import { useIcon } from "./Icon.tsx";
 import { MultilineInput } from "./Input.tsx";
 import { SPACING, tint } from "./theme.ts";
 
-const CUSTOM_LABEL = "✎ Write my own answer";
+const CUSTOM_LABEL = "Write my own answer";
 const ACCENT = "magenta";
 
 /** The wizard's full UI state: which question, cursor + picks, and the
@@ -153,6 +154,10 @@ export function AskUserView({
   );
 
   const accent = tint(ACCENT);
+  const promptIcon = useIcon("prompt");
+  const selectedIcon = useIcon("choiceSelected");
+  const emptyIcon = useIcon("choiceEmpty");
+  const writeCustomIcon = useIcon("writeCustom");
 
   return (
     <Box
@@ -173,7 +178,7 @@ export function AskUserView({
       {writing ? (
         <Box flexDirection="column" marginTop={SPACING.blockGap}>
           <Box>
-            <Text color={accent}>{"› "}</Text>
+            <Text color={accent}>{`${promptIcon} `}</Text>
             <MultilineInput
               value={draft}
               onChange={(v) => dispatch({ type: "setDraft", draft: v })}
@@ -201,11 +206,11 @@ export function AskUserView({
             return (
               <Box key={`${i}:${o.label}`}>
                 <Text color={isSel ? accent : undefined}>
-                  {isSel ? "› " : "  "}
+                  {isSel ? `${promptIcon} ` : "  "}
                 </Text>
                 {q.multiSelect ? (
                   <Text color={isSel ? accent : undefined}>
-                    {checked ? "◉ " : "○ "}
+                    {`${checked ? selectedIcon : emptyIcon} `}
                   </Text>
                 ) : null}
                 <Text color={isSel ? accent : undefined} bold={isSel}>
@@ -219,13 +224,13 @@ export function AskUserView({
           })}
           <Box>
             <Text color={cursor === customRow ? accent : undefined}>
-              {cursor === customRow ? "› " : "  "}
+              {cursor === customRow ? `${promptIcon} ` : "  "}
             </Text>
             <Text
               color={cursor === customRow ? accent : undefined}
               bold={cursor === customRow}
             >
-              {CUSTOM_LABEL}
+              {`${writeCustomIcon} ${CUSTOM_LABEL}`}
             </Text>
           </Box>
           <Text dimColor>
