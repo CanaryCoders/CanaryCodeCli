@@ -58,6 +58,7 @@ import {
 } from "../openai-codex.ts";
 import type { Message } from "../provider.ts";
 import { createProvider, type Provider } from "../provider.ts";
+import { hasPriceData } from "../session.ts";
 import { readSkillTool } from "../skills.ts";
 import { Semaphore, spawnAgentTool } from "../subagents.ts";
 import { type Task, updateTasksTool } from "../tasks.ts";
@@ -101,6 +102,7 @@ export interface AgentSession {
   queued: string | null;
   tasks: Task[];
   cost: number;
+  costKnown: boolean;
   tokens: number;
   modelLabel: string;
   mode: AgentMode;
@@ -189,6 +191,7 @@ export function useAgentSession(deps: {
   };
   const [modelLabel, setModelLabel] = useState(props.modelLabel);
   const [cost, setCost] = useState(0);
+  const [costKnown, setCostKnown] = useState(hasPriceData(props.modelName));
   const [tokens, setTokens] = useState(0);
   // Verbose expands tool calls to show full input + output head (Ctrl+R toggles).
   const [verbose, setVerbose] = useState(false);
@@ -598,6 +601,7 @@ export function useAgentSession(deps: {
     modelNameRef.current = resolved.model.name ?? resolved.model.id;
     const label = resolved.model.id;
     setModelLabel(label);
+    setCostKnown(hasPriceData(modelNameRef.current));
     if (!hasConversation()) {
       updateBanner({ model: label, provider: providerRef.current.id });
     }
@@ -801,7 +805,9 @@ export function useAgentSession(deps: {
         const s = props.store.getSession(sessionIdRef.current);
         if (s) {
           note(
-            `tokens: ${s.inputTokens}→${s.outputTokens} · cost: $${s.costUsd.toFixed(4)}`,
+            hasPriceData(s.model)
+              ? `tokens: ${s.inputTokens}→${s.outputTokens} · cost: $${s.costUsd.toFixed(4)}`
+              : `tokens: ${s.inputTokens}→${s.outputTokens}`,
           );
         }
         break;
@@ -955,15 +961,21 @@ export function useAgentSession(deps: {
   // The footer shows the model THIS mode will actually run on (role-resolved), so
   // cycling modes (Shift+Tab) reflects a role's model when it differs from the base.
   const roleId = props.config.models?.[roleForMode(mode)];
-  const effectiveModelLabel = roleId
-    ? (resolveModel(props.config, roleId)?.model.id ?? modelLabel)
-    : modelLabel;
+  const effectiveModel = roleId
+    ? resolveModel(props.config, roleId)
+    : undefined;
+  const effectiveModelLabel = effectiveModel?.model.id ?? modelLabel;
+  const effectiveModelName =
+    effectiveModel?.model.name ??
+    effectiveModel?.model.id ??
+    modelNameRef.current;
 
   return {
     busy,
     queued,
     tasks,
     cost,
+    costKnown: effectiveModel ? hasPriceData(effectiveModelName) : costKnown,
     tokens,
     modelLabel: effectiveModelLabel,
     mode,

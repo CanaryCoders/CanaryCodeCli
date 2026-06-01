@@ -87,19 +87,25 @@ const PRICES: { match: string; price: Price }[] = [
   { match: "haiku", price: { input: 0.8, output: 4 } },
 ];
 
+function priceForModel(model: string): Price | undefined {
+  const m = model.toLowerCase();
+  return PRICES.find((p) => m.includes(p.match))?.price;
+}
+
+/** Whether a model has known pricing data. */
+export function hasPriceData(model: string): boolean {
+  return priceForModel(model) !== undefined;
+}
+
 /** Estimate USD cost for a token count given a model name. Unknown model → 0. */
 function estimateCost(
   model: string,
   inputTokens: number,
   outputTokens: number,
 ): number {
-  const m = model.toLowerCase();
-  const entry = PRICES.find((p) => m.includes(p.match));
-  if (!entry) return 0;
-  return (
-    (inputTokens * entry.price.input + outputTokens * entry.price.output) /
-    1_000_000
-  );
+  const price = priceForModel(model);
+  if (!price) return 0;
+  return (inputTokens * price.input + outputTokens * price.output) / 1_000_000;
 }
 
 // ── Store ─────────────────────────────────────────────────────────────────────

@@ -24,6 +24,8 @@ export interface FooterProps {
   /** Pre-formatted thinking label (e.g. "no-think", "ultrathink"). */
   thinkLabel: string;
   cost: number;
+  /** Whether pricing is known for the active model. */
+  costKnown: boolean;
   /** Total tokens (input + output) for the running session. */
   tokens: number;
   verbose: boolean;
@@ -77,7 +79,7 @@ export function Footer(props: FooterProps): React.ReactElement {
   const cols = props.columns ?? stdout?.columns ?? 80;
 
   const tokText = `${formatTokens(props.tokens)} tok`;
-  const costText = `$${props.cost.toFixed(4)}`;
+  const costText = props.costKnown ? `$${props.cost.toFixed(4)}` : null;
   const verboseIcon = useIcon("verbose");
   const verboseText = "verbose";
 
@@ -114,13 +116,15 @@ export function Footer(props: FooterProps): React.ReactElement {
       prio: 3,
       node: <Text dimColor>{tokText}</Text>,
     },
-    {
+  ];
+  if (costText) {
+    segs.push({
       key: "cost",
       width: costText.length,
       prio: 1,
       node: <Text dimColor>{costText}</Text>,
-    },
-  ];
+    });
+  }
   if (props.verbose) {
     segs.push({
       key: "verbose",

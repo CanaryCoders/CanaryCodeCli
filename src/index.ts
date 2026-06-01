@@ -64,7 +64,7 @@ import {
 import { checkCommandSafety, inPermissionScope } from "./permission.ts";
 import type { Message, Provider } from "./provider.ts";
 import { createProvider } from "./provider.ts";
-import { type SessionRow, SessionStore } from "./session.ts";
+import { hasPriceData, type SessionRow, SessionStore } from "./session.ts";
 import {
   composeSkillsPrompt,
   describeSkills,
@@ -281,9 +281,10 @@ function printSessions(store: SessionStore): void {
       .replace("T", " ")
       .slice(0, 16);
     const title = s.title ?? "(untitled)";
-    const cost = s.costUsd > 0 ? `$${s.costUsd.toFixed(4)}` : "$0";
+    const tokens = `${s.inputTokens + s.outputTokens} tok`;
+    const cost = hasPriceData(s.model) ? `  $${s.costUsd.toFixed(4)}` : "";
     console.log(
-      `  ${s.id.slice(0, 8)}  ${when}  ${s.model}  ${cost}  ${title}`,
+      `  ${s.id.slice(0, 8)}  ${when}  ${s.model}  ${tokens}${cost}  ${title}`,
     );
   }
   console.log('\nResume with:  cc --resume <id> -p "<prompt>"');
@@ -820,8 +821,11 @@ async function runHeadless(args: Args): Promise<number> {
     if (!caughtError) {
       const finalSession = store.getSession(sessionId);
       if (finalSession) {
+        const cost = hasPriceData(finalSession.model)
+          ? ` · $${finalSession.costUsd.toFixed(4)}`
+          : "";
         process.stderr.write(
-          `\nsession ${sessionId.slice(0, 8)} · ${finalSession.inputTokens}→${finalSession.outputTokens} tok · $${finalSession.costUsd.toFixed(4)}\n`,
+          `\nsession ${sessionId.slice(0, 8)} · ${finalSession.inputTokens}→${finalSession.outputTokens} tok${cost}\n`,
         );
       }
     }

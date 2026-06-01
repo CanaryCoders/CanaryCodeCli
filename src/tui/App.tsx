@@ -297,6 +297,7 @@ function App(props: AppProps): React.ReactElement {
           modeColor={modeColor}
           thinkLabel={thinkLabel}
           cost={session.cost}
+          costKnown={session.costKnown}
           tokens={session.tokens}
           verbose={session.verbose}
         />
