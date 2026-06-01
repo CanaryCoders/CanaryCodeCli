@@ -14,13 +14,18 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { useApp } from "ink";
 import { useRef, useState } from "react";
-import { type AgentMode, runAgent, systemForMode } from "../agent.ts";
+import {
+  type AgentMode,
+  roleForMode,
+  runAgent,
+  systemForMode,
+} from "../agent.ts";
 import { askUserTool } from "../askuser.ts";
 import { dispatchCommand } from "../commands.ts";
 import { resolveModel, saveConfig } from "../config.ts";
 import { runPostToolHooks, runPreToolHooks, runStopHooks } from "../hooks.ts";
 import type { Message } from "../provider.ts";
-import { createProvider } from "../provider.ts";
+import { createProvider, type Provider } from "../provider.ts";
 import { readSkillTool } from "../skills.ts";
 import { Semaphore, spawnAgentTool } from "../subagents.ts";
 import { type Task, updateTasksTool } from "../tasks.ts";
@@ -151,8 +156,35 @@ export function useAgentSession(deps: {
   // panel above the input. Ephemeral: it lives only for the session.
   const [tasks, setTasks] = useState<Task[]>([]);
 
+  // Resolve the provider + concrete model for a run, by the mode's role. Falls back
+  // to the base refs (set at launch / by /model) when the role is unset or unresolvable.
+  function modelForTurn(runMode: AgentMode): {
+    provider: Provider;
+    model: string;
+  } {
+    const id = props.config.models?.[roleForMode(runMode)];
+    if (id) {
+      const resolved = resolveModel(props.config, id);
+      if (resolved) {
+        try {
+          return {
+            provider: createProvider(resolved.providerConfig),
+            model: resolved.model.name ?? resolved.model.id,
+          };
+        } catch {
+          // fall through to base refs
+        }
+      }
+    }
+    return { provider: providerRef.current, model: modelNameRef.current };
+  }
+
   // ── build the tool set for a run (fresh signal so spawn_agent can be aborted) ──
-  function buildTools(signal: AbortSignal): Tool[] {
+  function buildTools(
+    signal: AbortSignal,
+    turnProvider: Provider,
+    turnModel: string,
+  ): Tool[] {
     if (props.noTools) return [];
     let tools: Tool[] = [
       ...allTools,
@@ -167,8 +199,8 @@ export function useAgentSession(deps: {
         ...tools,
         spawnAgentTool({
           config: props.config,
-          parentProvider: providerRef.current,
-          parentModel: modelNameRef.current,
+          parentProvider: turnProvider,
+          parentModel: turnModel,
           inheritedTools: tools,
           depth: 0,
           limiter,
@@ -207,13 +239,12 @@ export function useAgentSession(deps: {
     controllerRef.current = controller;
 
     const runMode = modeOverride ?? mode;
+    const { provider: turnProvider, model: turnModel } = modelForTurn(runMode);
     const system = systemForMode(baseSystemRef.current, runMode);
-    let tools = buildTools(controller.signal);
+    let tools = buildTools(controller.signal, turnProvider, turnModel);
     if (runMode === "plan") tools = tools.filter((t) => t.readOnly);
 
-    const budget = supportsThinking(providerRef.current.id)
-      ? budgetFor(thinking)
-      : 0;
+    const budget = supportsThinking(turnProvider.id) ? budgetFor(thinking) : 0;
     // Auto mode runs unattended → a hard cap (no human to ask). Normal/plan run
     // unbounded with a periodic "keep going?" checkpoint instead of a turn limit.
     const interactive = runMode !== "auto";
@@ -293,8 +324,8 @@ export function useAgentSession(deps: {
 
     try {
       for await (const ev of runAgent({
-        provider: providerRef.current,
-        model: modelNameRef.current,
+        provider: turnProvider,
+        model: turnModel,
         system,
         messages: messagesRef.current,
         tools,
@@ -694,13 +725,20 @@ export function useAgentSession(deps: {
     }, 1500);
   }
 
+  // The footer shows the model THIS mode will actually run on (role-resolved), so
+  // cycling modes (Shift+Tab) reflects a role's model when it differs from the base.
+  const roleId = props.config.models?.[roleForMode(mode)];
+  const effectiveModelLabel = roleId
+    ? (resolveModel(props.config, roleId)?.model.id ?? modelLabel)
+    : modelLabel;
+
   return {
     busy,
     queued,
     tasks,
     cost,
     tokens,
-    modelLabel,
+    modelLabel: effectiveModelLabel,
     mode,
     thinking,
     verbose,

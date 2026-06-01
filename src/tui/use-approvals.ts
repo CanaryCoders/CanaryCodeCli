@@ -16,7 +16,7 @@ import { useRef, useState } from "react";
 import type { AgentMode } from "../agent.ts";
 import type { AskAnswer, AskQuestion } from "../askuser.ts";
 import type { Config } from "../config.ts";
-import { resolveModel } from "../config.ts";
+import { modelForRole, resolveModel } from "../config.ts";
 import { checkCommandSafety, inPermissionScope } from "../permission.ts";
 import type { Provider } from "../provider.ts";
 import { createProvider } from "../provider.ts";
@@ -107,10 +107,10 @@ export function useApprovals(opts: {
       checkerRef.current = null;
       return null;
     }
-    const resolved = resolveModel(config, config.permission.model);
+    const resolved = resolveModel(config, modelForRole(config, "permission"));
     if (!resolved) {
       note(
-        `permission model "${config.permission.model}" not found; AI safety check disabled`,
+        `permission model "${modelForRole(config, "permission")}" not found; AI safety check disabled`,
         "error",
       );
       checkerRef.current = null;
