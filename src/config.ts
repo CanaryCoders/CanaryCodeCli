@@ -68,26 +68,46 @@ export interface PermissionConfig {
   scope?: "bash" | "writes";
 }
 
-/** One configured hook: a shell command fired on a lifecycle event. */
-export interface HookConfig {
-  /** Regex matched against the tool name (omitted = all tools). */
-  matcher?: string;
+/** A shell hook command. Claude-compatible entries use timeout seconds. */
+export interface HookCommandConfig {
+  /** Claude Code uses command hooks; other hook types are ignored with diagnostics. */
+  type?: "command" | string;
   /** Shell command run via `bash -c`, receiving a JSON payload on stdin. */
   command: string;
-  /** Timeout in milliseconds (default 10000). */
+  /** Timeout in seconds for Claude-style entries; milliseconds for legacy flat entries. */
   timeout?: number;
 }
 
+/** Legacy flat hook entry retained for backwards compatibility. */
+export interface LegacyHookConfig extends HookCommandConfig {
+  /** Regex matched against the tool name (omitted = all tools). */
+  matcher?: string;
+}
+
+/** Claude Code-compatible matcher group. */
+export interface HookMatcherConfig {
+  /** Regex matched against the tool name for tool events (omitted = all tools). */
+  matcher?: string;
+  hooks: HookCommandConfig[];
+}
+
+/** One configured hook entry: Claude Code matcher group or cc's old flat form. */
+export type HookConfig = LegacyHookConfig | HookMatcherConfig;
+
 /**
- * Lifecycle hooks. `PreToolUse` hooks can BLOCK a call (a non-zero exit denies it
- * and the model is told why); `PostToolUse` and `Stop` are observational
- * (fire-and-forget). Hooks run in every mode, including auto.
+ * Lifecycle hooks. `PreToolUse` hooks can BLOCK a call; `PostToolUse` and the
+ * session/stop events are observational. Hooks run in every mode, including auto.
  */
 export interface HooksConfig {
   PreToolUse?: HookConfig[];
   PostToolUse?: HookConfig[];
-  /** Fired once when a turn finishes (no tool calls left). */
+  UserPromptSubmit?: HookConfig[];
+  SessionStart?: HookConfig[];
   Stop?: HookConfig[];
+  SubagentStop?: HookConfig[];
+  SessionEnd?: HookConfig[];
+  Notification?: HookConfig[];
+  PreCompact?: HookConfig[];
 }
 
 export interface UiConfig {

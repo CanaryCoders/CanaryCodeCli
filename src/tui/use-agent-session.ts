@@ -24,7 +24,14 @@ import { askUserTool } from "../askuser.ts";
 import { clearCredentials, loginWithBrowser, openBrowser } from "../auth.ts";
 import { dispatchCommand } from "../commands.ts";
 import { resolveModel, saveConfig } from "../config.ts";
-import { runPostToolHooks, runPreToolHooks, runStopHooks } from "../hooks.ts";
+import {
+  runPostToolHooks,
+  runPreToolHooks,
+  runSessionEndHooks,
+  runSessionStartHooks,
+  runStopHooks,
+  runUserPromptSubmitHooks,
+} from "../hooks.ts";
 import { iconFor } from "../icons.ts";
 import {
   describeCodex,
@@ -124,6 +131,12 @@ export function useAgentSession(deps: {
   const messagesRef = useRef<Message[]>(props.resumedMessages ?? []);
   const persistedRef = useRef(props.resumedMessages?.length ?? 0);
   const sessionIdRef = useRef(props.sessionId);
+  const closedRef = useRef(false);
+  const sessionStartedRef = useRef(true);
+  const hookContext = () => ({
+    sessionId: sessionIdRef.current,
+    cwd: process.cwd(),
+  });
   // Ctrl+C is "armed" after a first press with nothing to abort; a second press
   // before the timer fires quits. The timer disarms it so a lone press never quits.
   const quitArmedRef = useRef(false);
@@ -167,6 +180,34 @@ export function useAgentSession(deps: {
   const [tasks, setTasks] = useState<Task[]>([]);
 
   const hasConversation = () => messagesRef.current.length > 0;
+
+  async function ensureSessionStarted(): Promise<void> {
+    if (sessionStartedRef.current) return;
+    sessionStartedRef.current = true;
+    if (props.config.hooks.SessionStart?.length) {
+      await runSessionStartHooks(props.config.hooks, "startup", hookContext());
+    }
+  }
+
+  async function shutdown(reason: string): Promise<void> {
+    if (closedRef.current) return;
+    closedRef.current = true;
+    if (quitTimerRef.current) clearTimeout(quitTimerRef.current);
+    try {
+      if (props.config.hooks.Stop?.length) {
+        await runStopHooks(props.config.hooks, { ...hookContext(), reason });
+      }
+      if (props.config.hooks.SessionEnd?.length) {
+        await runSessionEndHooks(props.config.hooks, {
+          ...hookContext(),
+          reason,
+        });
+      }
+    } finally {
+      props.store.close();
+      app.exit();
+    }
+  }
 
   // Resolve the provider + concrete model for a run, by the mode's role. Falls back
   // to the base refs (set at launch / by /model) when the role is unset or unresolvable.
@@ -266,14 +307,16 @@ export function useAgentSession(deps: {
     // Lifecycle hooks run in every mode (deterministic policy). PreToolUse can
     // block a call; PostToolUse observes. Omitted when none are configured.
     const hooks = props.config.hooks;
+    const ctx = hookContext();
     const preToolUse = hooks.PreToolUse?.length
-      ? (call: { name: string; input: unknown }) => runPreToolHooks(hooks, call)
+      ? (call: { name: string; input: unknown }) =>
+          runPreToolHooks(hooks, call, ctx)
       : undefined;
     const postToolUse = hooks.PostToolUse?.length
       ? (
           call: { name: string; input: unknown },
           result: { content: string; isError: boolean },
-        ) => runPostToolHooks(hooks, call, result)
+        ) => runPostToolHooks(hooks, call, result, ctx)
       : undefined;
 
     // The in-flight turn is built up here and mirrored into React state for render.
@@ -418,10 +461,6 @@ export function useAgentSession(deps: {
             break;
           case "done":
             outcome = ev.reason;
-            // Stop hooks fire when the model finishes responding (observational).
-            if (ev.reason === "stop" && props.config.hooks.Stop?.length) {
-              void runStopHooks(props.config.hooks);
-            }
             if (ev.reason === "aborted") {
               local.push({
                 id: nextId(),
@@ -455,6 +494,12 @@ export function useAgentSession(deps: {
         tone: "error",
       });
     } finally {
+      if (props.config.hooks.Stop?.length) {
+        await runStopHooks(props.config.hooks, {
+          ...ctx,
+          reason: outcome,
+        });
+      }
       flush(compacted);
       // Commit whatever `sync` hasn't already moved (the last, now-final item plus
       // anything appended after the loop) into the scrollback and clear the live region.
@@ -480,12 +525,7 @@ export function useAgentSession(deps: {
       ) {
         queuedRef.current = null;
         setQueued(null);
-        push({ kind: "user", text: next });
-        messagesRef.current.push({
-          role: "user",
-          content: [{ type: "text", text: next }],
-        });
-        void runTurn();
+        void submitPrompt(next);
       }
     }
   }
@@ -500,13 +540,8 @@ export function useAgentSession(deps: {
     if (!plan) return;
     setMode("normal");
     const instruction = "Proceed with the plan above. Implement it now.";
-    push({ kind: "user", text: instruction });
-    messagesRef.current.push({
-      role: "user",
-      content: [{ type: "text", text: instruction }],
-    });
     note("plan accepted — executing");
-    void runTurn("normal");
+    void submitPrompt(instruction, instruction, "normal");
   }
   function editPlan(): void {
     const plan = approvals.pendingPlanRef.current;
@@ -571,6 +606,27 @@ export function useAgentSession(deps: {
     note(ids.length ? `models: ${ids.join(", ")}` : "no models configured");
   }
 
+  async function submitPrompt(
+    displayText: string,
+    messageText = displayText,
+    modeOverride?: AgentMode,
+  ): Promise<void> {
+    await ensureSessionStarted();
+    if (props.config.hooks.UserPromptSubmit?.length) {
+      await runUserPromptSubmitHooks(
+        props.config.hooks,
+        displayText,
+        hookContext(),
+      );
+    }
+    push({ kind: "user", text: displayText });
+    messagesRef.current.push({
+      role: "user",
+      content: [{ type: "text", text: messageText }],
+    });
+    void runTurn(modeOverride);
+  }
+
   // ── handle a submitted input line (command or prompt) ──
   function onSubmit(rawValue: string): void {
     // The buffer may carry paste sentinels — expand them to the real pasted text
@@ -593,12 +649,7 @@ export function useAgentSession(deps: {
     const action = dispatchCommand(line);
     switch (action.kind) {
       case "message":
-        push({ kind: "user", text: line });
-        messagesRef.current.push({
-          role: "user",
-          content: [{ type: "text", text: line }],
-        });
-        void runTurn();
+        void submitPrompt(line);
         break;
       case "set-mode":
         setMode(action.mode);
@@ -624,6 +675,10 @@ export function useAgentSession(deps: {
           thinking,
           mode,
         });
+        sessionStartedRef.current = true;
+        if (props.config.hooks.SessionStart?.length) {
+          void runSessionStartHooks(props.config.hooks, "clear", hookContext());
+        }
         // Ink's <Static> prints scrollback permanently — resetting React state
         // alone leaves the old transcript on screen. We must clear via Ink's own
         // instance.clear() so Ink resets its internal cursor/output bookkeeping;
@@ -687,13 +742,8 @@ export function useAgentSession(deps: {
       );
       return;
     }
-    push({ kind: "user", text: "/init" });
-    messagesRef.current.push({
-      role: "user",
-      content: [{ type: "text", text: INIT_PROMPT }],
-    });
     note("investigating the project to write CC.md…");
-    void runTurn("normal");
+    void submitPrompt("/init", INIT_PROMPT, "normal");
   }
 
   // `/login-codex` — sign in with the ChatGPT subscription via the browser OAuth
@@ -745,9 +795,7 @@ export function useAgentSession(deps: {
   }
 
   function quit(): void {
-    if (quitTimerRef.current) clearTimeout(quitTimerRef.current);
-    props.store.close();
-    app.exit();
+    void shutdown("quit");
   }
 
   // Shared cancel escalation for both Ctrl+C and Esc. In priority order it:

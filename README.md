@@ -243,14 +243,28 @@ The checker runs one-shot and tool-free. It fails open, so a network or parse er
 ```json
 {
   "hooks": {
-    "PreToolUse":  [{ "matcher": "bash|write_file|edit_file", "command": "./scripts/guard.sh" }],
-    "PostToolUse": [{ "matcher": ".*", "command": "./scripts/log.sh" }],
-    "Stop":        [{ "command": "echo done" }]
+    "PreToolUse": [
+      {
+        "matcher": "bash|write_file|edit_file",
+        "hooks": [
+          { "type": "command", "command": "./scripts/guard.sh", "timeout": 10 }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [{ "type": "command", "command": "./scripts/log.sh" }]
+      }
+    ],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "echo done" }] }]
   }
 }
 ```
 
-`matcher` is a regex on the tool name. Omitting it matches all tools. The command runs through `bash -c` and receives a JSON payload on stdin (`{ event, tool, input }`, plus `result` and `isError` for `PostToolUse`). A non-zero `PreToolUse` exit blocks the call and its output becomes the reason the model sees. `PostToolUse` and `Stop` are fire-and-forget. Each hook is timeout-bounded with a 10s default. Hooks run in every mode, including auto.
+Hooks follow Claude Code's matcher-group shape: event names map to arrays of groups, each group has an optional `matcher` and a `hooks` array of command hooks. `timeout` is seconds in this Claude-style shape. The older cc shorthand still works for compatibility (`{ "matcher": "bash", "command": "...", "timeout": 10000 }`, timeout in milliseconds).
+
+Supported events are `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `SessionStart`, `Stop`, `SubagentStop`, and `SessionEnd`. `matcher` is a regex on the cc tool name for tool events; omitting it matches all tools. Commands run through `bash -c` and receive Claude-style JSON on stdin with fields such as `session_id`, `cwd`, `hook_event_name`, `tool_name`, `tool_input`, and `tool_response`; legacy aliases (`event`, `tool`, `input`, `result`, `isError`) are also included. `PreToolUse` can block with Claude-style JSON stdout (`permissionDecision: "deny"`) or by exiting non-zero; the reason is sent back to the model. Other events are observational. Hooks run in every mode, including auto, and `Stop`/`SessionEnd` also run on TUI quit so external state trackers can observe shutdown.
 
 ## Safety stance
 

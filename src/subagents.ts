@@ -15,6 +15,11 @@
 import { runAgent } from "./agent.ts";
 import type { AgentDef } from "./agents.ts";
 import { type Config, resolveModel } from "./config.ts";
+import {
+  runPostToolHooks,
+  runPreToolHooks,
+  runSubagentStopHooks,
+} from "./hooks.ts";
 import { createProvider, type Message, type Provider } from "./provider.ts";
 import type { Tool } from "./tools.ts";
 
@@ -185,6 +190,18 @@ async function runSubagent(
 
   await env.limiter.acquire();
   let summary = "";
+  let reason = "stop";
+  const hookContext = { cwd: process.cwd() };
+  const preToolUse = env.config.hooks.PreToolUse?.length
+    ? (call: { name: string; input: unknown }) =>
+        runPreToolHooks(env.config.hooks, call, hookContext)
+    : undefined;
+  const postToolUse = env.config.hooks.PostToolUse?.length
+    ? (
+        call: { name: string; input: unknown },
+        result: { content: string; isError: boolean },
+      ) => runPostToolHooks(env.config.hooks, call, result, hookContext)
+    : undefined;
   try {
     for await (const ev of runAgent({
       provider,
@@ -195,10 +212,16 @@ async function runSubagent(
       mode: "normal",
       maxTurns: env.config.autoMaxTurns,
       signal: env.signal,
+      preToolUse,
+      postToolUse,
     })) {
       if (ev.type === "text") summary += ev.text;
+      if (ev.type === "done") reason = ev.reason;
     }
   } finally {
+    if (env.config.hooks.SubagentStop?.length) {
+      await runSubagentStopHooks(env.config.hooks, { ...hookContext, reason });
+    }
     env.limiter.release();
   }
   return summary.trim() || "(sub-agent finished without a summary)";

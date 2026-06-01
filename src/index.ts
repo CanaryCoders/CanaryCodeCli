@@ -44,7 +44,10 @@ import {
   describeHooks,
   runPostToolHooks,
   runPreToolHooks,
+  runSessionEndHooks,
+  runSessionStartHooks,
   runStopHooks,
+  runUserPromptSubmitHooks,
 } from "./hooks.ts";
 import { renderAnsi } from "./markdown.ts";
 import {
@@ -531,6 +534,18 @@ async function runHeadless(args: Args): Promise<number> {
     });
   }
 
+  const hookContext = { sessionId, cwd: process.cwd() };
+  if (config.hooks.SessionStart?.length) {
+    await runSessionStartHooks(
+      config.hooks,
+      args.resume ? "resume" : "startup",
+      hookContext,
+    );
+  }
+  if (config.hooks.UserPromptSubmit?.length) {
+    await runUserPromptSubmitHooks(config.hooks, prompt, hookContext);
+  }
+
   // Everything already in `messages` is persisted; new entries (the prompt plus
   // each assistant/tool turn the loop appends) get written after the run.
   const persistedCount = messages.length;
@@ -544,6 +559,8 @@ async function runHeadless(args: Args): Promise<number> {
   process.on("SIGINT", onSigint);
 
   let sawError = false;
+  let doneReason = "stop";
+  let caughtError = false;
   // --json: emit one structured event per line on stdout so scripts can consume the
   // run (text, thinking, tool_start/tool_end, usage, compaction, done). Human-facing
   // formatting (markdown, the ⚙/✓ tool lines, diffs) is suppressed on stdout; the
@@ -581,13 +598,13 @@ async function runHeadless(args: Args): Promise<number> {
   if (hooksNote) process.stderr.write(`${hooksNote}\n`);
   const preToolUse = config.hooks.PreToolUse?.length
     ? (call: { name: string; input: unknown }) =>
-        runPreToolHooks(config.hooks, call)
+        runPreToolHooks(config.hooks, call, hookContext)
     : undefined;
   const postToolUse = config.hooks.PostToolUse?.length
     ? (
         call: { name: string; input: unknown },
         result: { content: string; isError: boolean },
-      ) => runPostToolHooks(config.hooks, call, result)
+      ) => runPostToolHooks(config.hooks, call, result, hookContext)
     : undefined;
 
   // ── AI permission gate ──
@@ -752,6 +769,7 @@ async function runHeadless(args: Args): Promise<number> {
           );
           break;
         case "done":
+          doneReason = ev.reason;
           if (jsonMode) {
             emit({ type: "done", reason: ev.reason });
             if (ev.reason === "aborted" || ev.reason === "max_turns")
@@ -774,6 +792,8 @@ async function runHeadless(args: Args): Promise<number> {
       }
     }
   } catch (err) {
+    caughtError = true;
+    doneReason = "error";
     if (jsonMode) {
       emit({ type: "error", message: (err as Error).message });
     } else {
@@ -782,26 +802,32 @@ async function runHeadless(args: Args): Promise<number> {
       process.stdout.write("\n");
     }
     console.error(`cc: ${(err as Error).message}`);
-    flushTranscript(store, sessionId, messages, persistedCount, compacted);
-    store.close();
-    await closeMcp(mcp);
-    return 1;
+    sawError = true;
   } finally {
     process.off("SIGINT", onSigint);
+    // Stop/session-end hooks fire during every headless shutdown path, including
+    // errors and aborts, before resources are closed.
+    if (config.hooks.Stop?.length) {
+      await runStopHooks(config.hooks, { ...hookContext, reason: doneReason });
+    }
+    if (config.hooks.SessionEnd?.length) {
+      await runSessionEndHooks(config.hooks, {
+        ...hookContext,
+        reason: doneReason,
+      });
+    }
+    flushTranscript(store, sessionId, messages, persistedCount, compacted);
+    if (!caughtError) {
+      const finalSession = store.getSession(sessionId);
+      if (finalSession) {
+        process.stderr.write(
+          `\nsession ${sessionId.slice(0, 8)} · ${finalSession.inputTokens}→${finalSession.outputTokens} tok · $${finalSession.costUsd.toFixed(4)}\n`,
+        );
+      }
+    }
+    store.close();
+    await closeMcp(mcp);
   }
-
-  // Stop hooks fire once the run finishes (observational; never block).
-  if (config.hooks.Stop?.length) await runStopHooks(config.hooks);
-
-  flushTranscript(store, sessionId, messages, persistedCount, compacted);
-  const finalSession = store.getSession(sessionId);
-  if (finalSession) {
-    process.stderr.write(
-      `\nsession ${sessionId.slice(0, 8)} · ${finalSession.inputTokens}→${finalSession.outputTokens} tok · $${finalSession.costUsd.toFixed(4)}\n`,
-    );
-  }
-  store.close();
-  await closeMcp(mcp);
 
   return sawError ? 1 : 0;
 }
@@ -920,6 +946,12 @@ async function runTui(args: Args): Promise<number> {
     cwd: process.cwd(),
     thinking: initialThinking,
   });
+  if (config.hooks.SessionStart?.length) {
+    await runSessionStartHooks(config.hooks, "startup", {
+      sessionId,
+      cwd: process.cwd(),
+    });
+  }
 
   // The launch banner (in the TUI) shows app/version/cwd/model — keep the startup
   // notes to the /help hint plus context/skills/mcp lines.
