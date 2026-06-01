@@ -236,12 +236,12 @@ function App(props: AppProps): React.ReactElement {
   // bash…", "searching…"), derived from the live transcript's most recent item.
   const verb = statusVerb(transcript.live);
 
-  // Ink's <Static> output is permanent, so keep the startup banner/notes dynamic
-  // until a real conversation item exists. That lets an early `/model ...` repaint
-  // the banner; once the conversation starts, history returns to static scrollback.
-  const staticScrollback = transcript.history.some(
-    (item) => item.kind !== "banner" && item.kind !== "note",
-  );
+  // History always renders in Ink's <Static>: its output is written once and never
+  // re-erased, so it is immune to the dynamic-region redraw desync (Ink miscounts a
+  // tall/full-width frame's height and leaks its topmost line). Keeping the banner
+  // in the dynamic region — to repaint its model text on an early `/model` — caused
+  // exactly that: one duplicate banner top border per keystroke. The footer already
+  // reflects the live model, so the banner stays a launch-time snapshot.
   const renderHistoryItem = (
     item: (typeof transcript.history)[number],
     index: number,
@@ -276,13 +276,7 @@ function App(props: AppProps): React.ReactElement {
   return (
     <IconProvider config={props.config}>
       <Box flexDirection="column">
-        {staticScrollback ? (
-          <Static items={transcript.history}>{renderHistoryItem}</Static>
-        ) : (
-          <Box flexDirection="column">
-            {transcript.history.map(renderHistoryItem)}
-          </Box>
-        )}
+        <Static items={transcript.history}>{renderHistoryItem}</Static>
 
         <LiveRegion
           live={transcript.live}

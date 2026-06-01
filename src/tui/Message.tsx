@@ -196,7 +196,17 @@ function BannerView({
   provider,
 }: Extract<Item, { kind: "banner" }>): React.ReactElement {
   return (
-    <Box borderStyle="round" borderColor={tint("gray")} paddingX={1}>
+    // alignSelf="flex-start" keeps this a slim box hugging its content. Without it,
+    // a flex column's default `alignItems: stretch` blows the box out to the full
+    // terminal width, whose right border then soft-wraps onto its own physical line
+    // (and, while the banner lived in the dynamic region, that phantom row desynced
+    // Ink's eraser into a pile of duplicate top borders).
+    <Box
+      borderStyle="round"
+      borderColor={tint("gray")}
+      paddingX={1}
+      alignSelf="flex-start"
+    >
       <Text bold dimColor>{`${appName} v${version}`}</Text>
       <Text
         dimColor
