@@ -13,7 +13,8 @@
 // connect is reported once and skipped — the agent runs without it.
 
 import type { McpServerConfig } from "./config.ts";
-import type { Tool } from "./tools.ts";
+import type { ImageData } from "./image.ts";
+import type { Tool, ToolRunResult } from "./tools.ts";
 
 /** MCP protocol revision we advertise in the handshake. */
 const PROTOCOL_VERSION = "2024-11-05";
@@ -107,8 +108,11 @@ class McpClient {
     return res?.tools ?? [];
   }
 
-  /** Invoke a tool by its server-local name; returns the rendered text result. */
-  async callTool(name: string, args: Record<string, unknown>): Promise<string> {
+  /** Invoke a tool by its server-local name; returns rendered text + any image. */
+  async callTool(
+    name: string,
+    args: Record<string, unknown>,
+  ): Promise<McpToolResult> {
     const res = await this.request("tools/call", { name, arguments: args });
     return renderToolResult(res);
   }
@@ -173,24 +177,49 @@ class McpClient {
   }
 }
 
+/** The rendered form of an MCP `tools/call` result: text plus an optional image. */
+export interface McpToolResult {
+  content: string;
+  image?: ImageData;
+}
+
 /**
- * Render an MCP `tools/call` result into the string cc passes back to the model.
- * Text content blocks are joined; a result flagged `isError` is thrown so the
- * agent loop marks the tool_result as an error.
+ * Render an MCP `tools/call` result into what cc passes back to the model. Text
+ * content blocks are joined; the first image content block (`{ data, mimeType }`,
+ * e.g. a puppeteer screenshot) is surfaced as base64 image data the agent loop
+ * attaches for vision models. A result flagged `isError` is thrown so the agent
+ * loop marks the tool_result as an error.
  */
-function renderToolResult(res: unknown): string {
+export function renderToolResult(res: unknown): McpToolResult {
   const r = (res ?? {}) as {
-    content?: Array<{ type?: string; text?: string }>;
+    content?: Array<{
+      type?: string;
+      text?: string;
+      data?: string;
+      mimeType?: string;
+    }>;
     isError?: boolean;
   };
-  // Single pass: collect the text blocks instead of filter()+map() over content.
+  // Single pass: collect text blocks and the first image block from content.
   const parts: string[] = [];
+  let image: ImageData | undefined;
   for (const c of r.content ?? []) {
     if (c.type === "text" && typeof c.text === "string") parts.push(c.text);
+    else if (
+      !image &&
+      c.type === "image" &&
+      typeof c.data === "string" &&
+      typeof c.mimeType === "string"
+    ) {
+      image = { mediaType: c.mimeType, data: c.data };
+    }
   }
   const text = parts.join("\n");
   if (r.isError) throw new Error(text || "MCP tool returned an error");
-  return text || "(no output)";
+  // The tool_result text must never be empty; fall back to an image marker.
+  const content =
+    text || (image ? `[image ${image.mediaType}]` : "(no output)");
+  return { content, image };
 }
 
 /**
@@ -205,8 +234,9 @@ function wrapMcpTool(server: string, mt: McpTool, client: McpClient): Tool {
       mt.description || `MCP tool "${mt.name}" from server "${server}".`,
     schema: mt.inputSchema ?? { type: "object", properties: {} },
     readOnly: mt.annotations?.readOnlyHint === true,
-    run(input) {
-      return client.callTool(mt.name, input);
+    async run(input): Promise<ToolRunResult> {
+      const { content, image } = await client.callTool(mt.name, input);
+      return image ? { content, image } : { content };
     },
   };
 }
