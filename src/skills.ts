@@ -69,9 +69,11 @@ function parseSkill(text: string): ParsedSkill {
 
 /**
  * Discover every skill at or below the given directories. Each immediate
- * subdirectory holding a `SKILL.md` is a skill. Project skills override global
- * skills that share a name. Missing/unreadable directories are skipped silently
- * (skills are optional). Skills with an empty name/description are dropped.
+ * subdirectory holding a `SKILL.md` is a skill; symlinks pointing at such a
+ * directory count too (so skills can be linked in from elsewhere). Project
+ * skills override global skills that share a name. Missing/unreadable
+ * directories are skipped silently (skills are optional). Skills with an empty
+ * name/description are dropped.
  */
 export async function discoverSkills(
   dirs: { dir: string; source: "global" | "project" }[] = skillDirs(),
@@ -83,7 +85,10 @@ export async function discoverSkills(
     );
     if (!entries) continue; // directory absent — no skills from here
     for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
+      // Accept real directories and symlinks (which may resolve to a skill
+      // directory). A symlink to a non-directory simply fails the SKILL.md read
+      // below and is skipped.
+      if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
       const path = join(dir, entry.name, "SKILL.md");
       let text: string;
       try {
