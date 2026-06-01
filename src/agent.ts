@@ -7,6 +7,7 @@
 // headless mode, Ink components in the TUI. The conversation `messages` array is
 // mutated in place so the caller keeps the full transcript for persistence.
 
+import type { ModelRole } from "./config.ts";
 import type { Diff } from "./diff.ts";
 import type { ContentBlock, Message, Provider, ToolDef } from "./provider.ts";
 import type { Tool } from "./tools.ts";
@@ -63,6 +64,12 @@ export function systemForMode(base: string, mode: AgentMode): string {
   if (mode === "plan") return `${base}\n${PLAN_SYSTEM_PROMPT}`;
   if (mode === "auto") return `${base}\n${AUTO_SYSTEM_PROMPT}`;
   return base;
+}
+
+/** Map an agent mode to the model role it should run on: plan investigates on the
+ * reasoning model; normal/auto execute (and talk) on the coding model. */
+export function roleForMode(mode: AgentMode): ModelRole {
+  return mode === "plan" ? "reasoning" : "coding";
 }
 
 export interface AgentOptions {
