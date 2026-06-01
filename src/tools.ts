@@ -91,7 +91,7 @@ const readFile: Tool = {
 const writeFile: Tool = {
   name: "write_file",
   description:
-    "Write `content` to `path`, overwriting any existing file and creating parent directories as needed.",
+    "Write `content` to `path`, overwriting any existing file and creating parent directories as needed. Read the file first (read_file) if it already exists — never overwrite a file blind.",
   readOnly: false,
   schema: {
     type: "object",
@@ -120,7 +120,7 @@ const writeFile: Tool = {
 const editFile: Tool = {
   name: "edit_file",
   description:
-    "Replace an exact `old` string with `new` in a file. `old` must appear exactly once unless `replace_all` is true. Fails if `old` is not found.",
+    "Replace an exact `old` string with `new` in a file. Read the file first (read_file) so your `old` text matches exactly. `old` must appear exactly once unless `replace_all` is true. Fails if `old` is not found.",
   readOnly: false,
   schema: {
     type: "object",

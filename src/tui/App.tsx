@@ -148,12 +148,26 @@ function App(props: AppProps): React.ReactElement {
   const [, bumpResize] = useReducer((n: number) => n + 1, 0);
   useEffect(() => {
     if (!stdout) return;
-    const onResize = () => bumpResize();
+    const onResize = () => {
+      // On resize the terminal reflows the previously-written dynamic frame to the
+      // new width, but Ink's eraser only erases `previousLineCount` lines measured
+      // at the OLD width — so when the terminal narrows the frame now occupies more
+      // physical rows than Ink erases, and the un-erased top rows survive as the
+      // broken/duplicated input boxes. Ink's own resize handler can't fix this
+      // (same stale count). Wipe the whole viewport ourselves, then reset Ink's
+      // line bookkeeping via clear() so its next render redraws from a clean slate,
+      // and bump a re-render so content widths recompute against the new size.
+      // Erase only the visible screen (not the scrollback buffer — no \x1b[3J — so
+      // history the user scrolled past is preserved) and home the cursor.
+      stdout.write("\x1b[2J\x1b[H");
+      props.inkInstance?.current?.clear();
+      bumpResize();
+    };
     stdout.on("resize", onResize);
     return () => {
       stdout.off("resize", onResize);
     };
-  }, [stdout]);
+  }, [stdout, props.inkInstance]);
 
   // Mutable engine state lives in refs (read inside async loops); React state
   // mirrors what the UI shows.
@@ -1148,9 +1162,11 @@ function App(props: AppProps): React.ReactElement {
 
   // ── `/` autocomplete suggestions, recomputed each render from the input ──
   // Only while the prompt is an in-progress slash command and the popover isn't
-  // dismissed/busy/blocked by a plan. The refs are mirrored for the key handler.
+  // dismissed/blocked by a plan. This stays active while the agent is busy so
+  // you can compose/queue a command without waiting for the turn to finish; the
+  // refs are mirrored for the key handler.
   const completeActive =
-    !busy && !pendingPlan && input.startsWith("/") && !completeDismissed;
+    !pendingPlan && input.startsWith("/") && !completeDismissed;
   const suggestions = completeActive
     ? completions(input, buildCompletionContext(props.config, props.store))
     : [];
