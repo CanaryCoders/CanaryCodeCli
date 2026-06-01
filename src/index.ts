@@ -714,9 +714,9 @@ async function runHeadless(args: Args): Promise<number> {
           // ⚙ start line so every tool run shows a begin and an end.
           if (ev.isError) {
             sawError = true;
-            process.stderr.write(`✗ ${ev.name}: ${ev.result}\n`);
+            process.stderr.write(`ERR ${ev.name}: ${ev.result}\n`);
           } else {
-            process.stderr.write(`✓ ${ev.name}\n`);
+            process.stderr.write(`OK ${ev.name}\n`);
             if (ev.diff && ev.diff.hunks.length > 0) {
               // write_file/edit_file carry a diff — show what changed (green/red on a TTY).
               const color =
@@ -962,7 +962,7 @@ async function runLoginCodex(rest: string[]): Promise<number> {
             console.log(`Opening your browser to sign in:\n${url}\n`),
         });
     console.log(
-      `✓ Signed in to ChatGPT${account_id ? ` (account ${account_id})` : ""}. Your models are listed on next launch; pick one with --model (e.g. --model gpt-5.5) and set reasoning effort with --think (off→low … ultrathink→xhigh).`,
+      `OK Signed in to ChatGPT${account_id ? ` (account ${account_id})` : ""}. Your models are listed on next launch; pick one with --model (e.g. --model gpt-5.5) and set reasoning effort with --think (off->low ... ultrathink->xhigh).`,
     );
     return 0;
   } catch (err) {

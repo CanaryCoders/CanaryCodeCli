@@ -126,7 +126,14 @@ function spanProps(span: Span): {
  * re-parses the accumulated text on every render and never throws on a partial
  * marker, so the live region can grow delta-by-delta.
  */
-function Markdown({ text }: { text: string }): React.ReactElement {
+function Markdown({
+  text,
+  dim,
+}: {
+  text: string;
+  /** Render dimmed + italic — used for thinking blocks. */
+  dim?: boolean;
+}): React.ReactElement {
   // Drop a single trailing newline: streaming commits each block at a line
   // boundary (its text ends with "\n"), and `"…\n".split("\n")` yields a trailing
   // empty element that would render as a spurious blank row between chunks. The
@@ -141,7 +148,11 @@ function Markdown({ text }: { text: string }): React.ReactElement {
     <Box flexDirection="column">
       {lines.map((line, li) => {
         const spans = line.spans.map((span, si) => (
-          <Text key={rowKey(si, span.text)} {...spanProps(span)}>
+          <Text
+            key={rowKey(si, span.text)}
+            {...spanProps(span)}
+            {...(dim ? { dimColor: true, italic: true } : {})}
+          >
             {span.text}
           </Text>
         ));
@@ -326,9 +337,7 @@ export function ItemView({
           glyphless={item.continuation}
           marginTop={topGap(item, prevKind)}
         >
-          <Text dimColor italic>
-            {item.text}
-          </Text>
+          <Markdown text={item.text} dim />
         </Gutter>
       );
     case "tool": {

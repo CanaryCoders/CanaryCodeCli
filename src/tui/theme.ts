@@ -44,11 +44,12 @@ export const ROLE: Record<Role, RoleStyle> = {
   // A filled dot marks the start of each distinct AI answer (Claude-Code style),
   // so consecutive answers/tool groups read as separate units at a glance.
   user: { glyph: "›", color: "cyan", bold: true, bg: "gray" },
-  assistant: { glyph: "⏺", color: undefined, bold: true },
-  thinking: { glyph: "💭", color: undefined, dim: true },
-  tool: { glyph: "⚙", color: undefined }, // coloured by status — see TOOL_STATUS
-  note: { glyph: "ℹ", color: "gray", dim: true },
-  error: { glyph: "✗", color: "red" },
+  assistant: { glyph: "*", color: undefined, bold: true },
+  // Keep thinking ASCII-only while retaining the two-cell gutter.
+  thinking: { glyph: "~", color: undefined, dim: true },
+  tool: { glyph: ">", color: undefined }, // coloured by status — see TOOL_STATUS
+  note: { glyph: "i", color: "gray", dim: true },
+  error: { glyph: "x", color: "red" },
 };
 
 // ── Modes (border + accent colour) ─────────────────────────────────────────────
@@ -66,16 +67,16 @@ export function modeColor(mode: AgentMode): string {
 }
 
 // ── Tool-call status ───────────────────────────────────────────────────────────
-// The `⚙` glyph and the trailing mark are coloured by where the call is in its
-// lifecycle: pending (yellow `…`), ok (green `✓`), error (red `✗`).
+// The tool glyph and the trailing mark are coloured by where the call is in its
+// lifecycle: pending (yellow `...`), ok (green `OK`), error (red `ERR`).
 
 export type ToolStatus = "pending" | "ok" | "error";
 
 export const TOOL_STATUS: Record<ToolStatus, { color: string; mark: string }> =
   {
-    pending: { color: "yellow", mark: "…" },
-    ok: { color: "green", mark: "✓" },
-    error: { color: "red", mark: "✗" },
+    pending: { color: "yellow", mark: "..." },
+    ok: { color: "green", mark: "OK" },
+    error: { color: "red", mark: "ERR" },
   };
 
 /** Resolve a tool call's status from its pending/error flags. */
