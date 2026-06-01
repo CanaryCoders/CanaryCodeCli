@@ -32,6 +32,9 @@ export interface ProviderConfig {
   models?: ModelConfig[];
 }
 
+/** A model "role" — a slot in the optional `models` map that overrides the base model. */
+export type ModelRole = "reasoning" | "coding" | "subagent" | "permission";
+
 export interface WebSearchConfig {
   /**
    * Backend identifier: "duckduckgo" (free, no API key — the default),
@@ -89,6 +92,9 @@ export interface HooksConfig {
 export interface Config {
   /** Active model id. Resolved against providers' model lists. */
   model: string;
+  /** Optional per-role model overrides. Unset roles fall back to `model`
+   * (or, for `permission`, to `permission.model` then a cheap default). */
+  models?: Partial<Record<ModelRole, string>>;
   providers: Record<string, ProviderConfig>;
   webSearch: WebSearchConfig;
   mcpServers: Record<string, McpServerConfig>;
@@ -181,6 +187,7 @@ function interpolateEnv<T>(
 function mergeConfig(base: Config, user: Partial<Config>): Config {
   return {
     model: user.model ?? base.model,
+    models: user.models ?? base.models,
     providers: { ...base.providers, ...(user.providers ?? {}) },
     webSearch: { ...base.webSearch, ...(user.webSearch ?? {}) },
     mcpServers: { ...base.mcpServers, ...(user.mcpServers ?? {}) },
@@ -282,4 +289,18 @@ export function resolveModel(
     if (model) return { provider, providerConfig, model };
   }
   return undefined;
+}
+
+/**
+ * Resolve a role to a model id. `reasoning` and `coding` fall back to the base
+ * `model`. `permission` falls back to the legacy `permission.model`, then to a
+ * cheap default ("haiku"), since the checker runs on every gated call. The
+ * `subagent` role is intentionally resolved by subagents.ts directly (its
+ * fallback is the parent's model, not the base model), so it is not handled here.
+ */
+export function modelForRole(config: Config, role: ModelRole): string {
+  const explicit = config.models?.[role];
+  if (explicit) return explicit;
+  if (role === "permission") return config.permission?.model ?? "haiku";
+  return config.model;
 }
