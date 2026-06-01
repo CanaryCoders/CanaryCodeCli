@@ -9,11 +9,16 @@
 import { useRef, useState } from "react";
 import type { Item, ItemInput } from "./Message.tsx";
 
+type BannerInput = Extract<ItemInput, { kind: "banner" }>;
+type BannerPatch = Partial<Omit<BannerInput, "kind">>;
+
 export interface Transcript {
   history: Item[];
   setHistory: React.Dispatch<React.SetStateAction<Item[]>>;
   live: Item[];
   setLive: React.Dispatch<React.SetStateAction<Item[]>>;
+  /** Update the launch banner (only useful before real conversation turns). */
+  updateBanner: (patch: BannerPatch) => void;
   /** Append a finished item to the scrollback. */
   push: (item: ItemInput) => void;
   /** Append an info/error note to the scrollback. */
@@ -24,7 +29,7 @@ export interface Transcript {
 
 export function useTranscript(opts: {
   /** The launch banner — the first <Static> item, so it scrolls away naturally. */
-  banner: Extract<ItemInput, { kind: "banner" }>;
+  banner: BannerInput;
   /** Startup notes (context/skills/mcp) shown right after the banner. */
   startupNotes: string[];
 }): Transcript {
@@ -39,10 +44,26 @@ export function useTranscript(opts: {
   ]);
   const [live, setLive] = useState<Item[]>([]);
 
+  const updateBanner = (patch: BannerPatch) => {
+    setHistory((prev) => {
+      const [first, ...rest] = prev;
+      if (first?.kind !== "banner") return prev;
+      return [{ ...first, ...patch }, ...rest];
+    });
+  };
   const push = (item: ItemInput) =>
     setHistory((prev) => [...prev, { ...item, id: nextId() } as Item]);
   const note = (text: string, tone: "info" | "error" = "info") =>
     push({ kind: "note", text, tone });
 
-  return { history, setHistory, live, setLive, push, note, nextId };
+  return {
+    history,
+    setHistory,
+    live,
+    setLive,
+    updateBanner,
+    push,
+    note,
+    nextId,
+  };
 }

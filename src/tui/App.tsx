@@ -218,6 +218,25 @@ function App(props: AppProps): React.ReactElement {
   // bash…", "searching…"), derived from the live transcript's most recent item.
   const verb = statusVerb(transcript.live);
 
+  // Ink's <Static> output is permanent, so keep the startup banner/notes dynamic
+  // until a real conversation item exists. That lets an early `/model ...` repaint
+  // the banner; once the conversation starts, history returns to static scrollback.
+  const staticScrollback = transcript.history.some(
+    (item) => item.kind !== "banner" && item.kind !== "note",
+  );
+  const renderHistoryItem = (
+    item: (typeof transcript.history)[number],
+    index: number,
+  ) => (
+    <ItemView
+      key={item.id}
+      item={item}
+      prevKind={index > 0 ? transcript.history[index - 1]!.kind : undefined}
+      expanded={session.verbose}
+      showExpandHint={item.id === firstToolId}
+    />
+  );
+
   // Cap the live (in-flight) region to the terminal viewport. `live` holds only
   // the currently-streaming item (finished items have moved to `<Static>`), so the
   // one thing that can outgrow the screen is a long assistant/thinking block — we
@@ -238,19 +257,13 @@ function App(props: AppProps): React.ReactElement {
 
   return (
     <Box flexDirection="column">
-      <Static items={transcript.history}>
-        {(item, index) => (
-          <ItemView
-            key={item.id}
-            item={item}
-            prevKind={
-              index > 0 ? transcript.history[index - 1]!.kind : undefined
-            }
-            expanded={session.verbose}
-            showExpandHint={item.id === firstToolId}
-          />
-        )}
-      </Static>
+      {staticScrollback ? (
+        <Static items={transcript.history}>{renderHistoryItem}</Static>
+      ) : (
+        <Box flexDirection="column">
+          {transcript.history.map(renderHistoryItem)}
+        </Box>
+      )}
 
       <LiveRegion
         live={transcript.live}

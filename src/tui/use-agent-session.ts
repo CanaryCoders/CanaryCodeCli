@@ -104,7 +104,7 @@ export function useAgentSession(deps: {
 }): AgentSession {
   const { props, transcript, approvals, promptInput, promptHistory, pasteMap } =
     deps;
-  const { setHistory, setLive, push, note, nextId } = transcript;
+  const { setHistory, setLive, updateBanner, push, note, nextId } = transcript;
   const { setInput, inputRef, bumpCursor } = promptInput;
   const controllerRef = deps.controllerRef;
   const app = useApp();
@@ -162,6 +162,8 @@ export function useAgentSession(deps: {
   // The agent's live task list (from the update_tasks tool), shown in the Tasks
   // panel above the input. Ephemeral: it lives only for the session.
   const [tasks, setTasks] = useState<Task[]>([]);
+
+  const hasConversation = () => messagesRef.current.length > 0;
 
   // Resolve the provider + concrete model for a run, by the mode's role. Falls back
   // to the base refs (set at launch / by /model) when the role is unset or unresolvable.
@@ -541,6 +543,9 @@ export function useAgentSession(deps: {
     modelNameRef.current = resolved.model.name ?? resolved.model.id;
     const label = resolved.model.id;
     setModelLabel(label);
+    if (!hasConversation()) {
+      updateBanner({ model: label, provider: providerRef.current.id });
+    }
     // Persist: update the session row (so --resume restores this model) and write
     // the preference to ~/.cc/config.json (so it's the default next launch).
     props.store.setModel(sessionIdRef.current, modelNameRef.current);
