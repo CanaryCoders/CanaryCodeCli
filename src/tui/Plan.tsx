@@ -31,9 +31,16 @@ export function PlanView({
         borderColor={accent}
         paddingX={SPACING.boxPadX}
       >
-        <Text color={accent} bold>
-          {`${planIcon} Proposed plan`}
-        </Text>
+        <Box>
+          <Text color={accent} bold>
+            {planIcon}
+          </Text>
+          <Box marginLeft={1}>
+            <Text color={accent} bold>
+              Proposed plan
+            </Text>
+          </Box>
+        </Box>
         <Text>{plan.trim()}</Text>
       </Box>
       <Box marginTop={SPACING.inputGap}>

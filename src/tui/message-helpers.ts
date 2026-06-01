@@ -26,24 +26,40 @@ const TOOL_SUMMARY_FIELD: Record<string, string> = {
   spawn_agent: "task",
 };
 
+/** Split cc's MCP namespace (`mcp__server__tool`) into display-friendly parts. */
+export function parseMcpToolName(
+  name: string,
+): { server: string; tool: string } | null {
+  const match = /^mcp__([^_].*?)__(.+)$/.exec(name);
+  if (!match) return null;
+  return { server: match[1]!, tool: match[2]! };
+}
+
+/** Human-facing tool label. MCP calls drop the mechanical `mcp__…__` prefix. */
+export function displayToolName(name: string): string {
+  const mcp = parseMcpToolName(name);
+  return mcp ? `${mcp.server}.${mcp.tool}` : name;
+}
+
 /** Pull the single most salient argument from a tool's input, e.g. the command
- * for `bash` or the path for `read_file`. Falls back to compact JSON for tools
- * with no known summary field (MCP tools, etc.). Returns "" when there's nothing
- * worth showing. */
+ * for `bash` or the path for `read_file`. Falls back to a compact key/value list
+ * instead of raw JSON so unknown/MCP tools stay readable. Returns "" when there's
+ * nothing worth showing. */
 export function summarizeToolInput(name: string, input: unknown): string {
-  if (input && typeof input === "object") {
+  if (input && typeof input === "object" && !Array.isArray(input)) {
     const rec = input as Record<string, unknown>;
     const field = TOOL_SUMMARY_FIELD[name];
     if (field && typeof rec[field] === "string" && rec[field]) {
       return collapseWhitespace(rec[field] as string);
     }
+    return fmtArgs(rec);
   }
   return fmtInput(input);
 }
 
 /** Compact one-line rendering of a tool's full input arguments (JSON). */
 export function fmtInput(input: unknown): string {
-  let s: string;
+  let s: string | undefined;
   try {
     s = JSON.stringify(input);
   } catch {
@@ -51,6 +67,23 @@ export function fmtInput(input: unknown): string {
   }
   if (s === "{}" || s === undefined || s === "null") return "";
   return s;
+}
+
+function fmtArgs(rec: Record<string, unknown>): string {
+  const parts = Object.entries(rec)
+    .filter(([, value]) => value !== undefined)
+    .map(([key, value]) => `${key}: ${formatValue(value)}`)
+    .filter((part) => !part.endsWith(": "));
+  return parts.join(", ");
+}
+
+function formatValue(value: unknown): string {
+  if (typeof value === "string") return collapseWhitespace(value);
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (value === null) return "null";
+  return fmtInput(value);
 }
 
 function collapseWhitespace(s: string): string {

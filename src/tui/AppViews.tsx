@@ -149,13 +149,18 @@ export function PromptArea({
   if (approvals.pendingCheckpoint !== null) {
     return (
       <Box flexDirection="column" marginTop={SPACING.inputGap}>
-        <Text color={tint("yellow")}>
-          {`${checkpointIcon} ${approvals.pendingCheckpoint} turns in — keep going? `}
-          <Text bold>{"[y]"}</Text>
-          <Text dimColor>{"es / "}</Text>
-          <Text bold>{"[n]"}</Text>
-          <Text dimColor>{"o stop"}</Text>
-        </Text>
+        <Box>
+          <Text color={tint("yellow")}>{checkpointIcon}</Text>
+          <Box marginLeft={1}>
+            <Text color={tint("yellow")}>
+              {`${approvals.pendingCheckpoint} turns in — keep going? `}
+              <Text bold>{"[y]"}</Text>
+              <Text dimColor>{"es / "}</Text>
+              <Text bold>{"[n]"}</Text>
+              <Text dimColor>{"o stop"}</Text>
+            </Text>
+          </Box>
+        </Box>
       </Box>
     );
   }
@@ -165,9 +170,12 @@ export function PromptArea({
   return (
     <Box flexDirection="column" marginTop={SPACING.inputGap}>
       {session.queued !== null ? (
-        <Text
-          dimColor
-        >{`${queuedIcon} queued: ${session.queued} (Esc to cancel)`}</Text>
+        <Box>
+          <Text dimColor>{queuedIcon}</Text>
+          <Box marginLeft={1}>
+            <Text dimColor>{`queued: ${session.queued} (Esc to cancel)`}</Text>
+          </Box>
+        </Box>
       ) : null}
       {autocomplete.completeOpen ? (
         <Complete
@@ -191,7 +199,9 @@ export function PromptArea({
         paddingX={SPACING.boxPadX}
         flexDirection="row"
       >
-        <Text color={tint(modeColor)}>{`${promptIcon} `}</Text>
+        <Box width={1} marginRight={1}>
+          <Text color={tint(modeColor)}>{promptIcon}</Text>
+        </Box>
         <Box flexGrow={1} flexShrink={1} minWidth={0}>
           <MultilineInput
             value={promptInput.input}
@@ -206,10 +216,7 @@ export function PromptArea({
             // Inner content width = terminal − border (2) − paddingX (2) − the
             // Prompt prefix + 1 spare so the EOL cursor block never pushes a row
             // past the border (which smears on redraw).
-            width={Math.max(
-              1,
-              columns - 2 - 2 * SPACING.boxPadX - `${promptIcon} `.length - 1,
-            )}
+            width={Math.max(1, columns - 2 - 2 * SPACING.boxPadX - 2 - 1)}
             placeholder={
               session.busy
                 ? "Enter to queue · Esc to cancel"

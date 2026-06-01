@@ -178,7 +178,9 @@ export function AskUserView({
       {writing ? (
         <Box flexDirection="column" marginTop={SPACING.blockGap}>
           <Box>
-            <Text color={accent}>{`${promptIcon} `}</Text>
+            <Box width={1} marginRight={1}>
+              <Text color={accent}>{promptIcon}</Text>
+            </Box>
             <MultilineInput
               value={draft}
               onChange={(v) => dispatch({ type: "setDraft", draft: v })}
@@ -205,13 +207,17 @@ export function AskUserView({
             const checked = q.multiSelect && picks.has(i);
             return (
               <Box key={`${i}:${o.label}`}>
-                <Text color={isSel ? accent : undefined}>
-                  {isSel ? `${promptIcon} ` : "  "}
-                </Text>
-                {q.multiSelect ? (
+                <Box width={1} marginRight={1}>
                   <Text color={isSel ? accent : undefined}>
-                    {`${checked ? selectedIcon : emptyIcon} `}
+                    {isSel ? promptIcon : " "}
                   </Text>
+                </Box>
+                {q.multiSelect ? (
+                  <Box width={1} marginRight={1}>
+                    <Text color={isSel ? accent : undefined}>
+                      {checked ? selectedIcon : emptyIcon}
+                    </Text>
+                  </Box>
                 ) : null}
                 <Text color={isSel ? accent : undefined} bold={isSel}>
                   {o.label}
@@ -223,14 +229,21 @@ export function AskUserView({
             );
           })}
           <Box>
-            <Text color={cursor === customRow ? accent : undefined}>
-              {cursor === customRow ? `${promptIcon} ` : "  "}
-            </Text>
+            <Box width={1} marginRight={1}>
+              <Text color={cursor === customRow ? accent : undefined}>
+                {cursor === customRow ? promptIcon : " "}
+              </Text>
+            </Box>
+            <Box width={1} marginRight={1}>
+              <Text color={cursor === customRow ? accent : undefined}>
+                {writeCustomIcon}
+              </Text>
+            </Box>
             <Text
               color={cursor === customRow ? accent : undefined}
               bold={cursor === customRow}
             >
-              {`${writeCustomIcon} ${CUSTOM_LABEL}`}
+              {CUSTOM_LABEL}
             </Text>
           </Box>
           <Text dimColor>

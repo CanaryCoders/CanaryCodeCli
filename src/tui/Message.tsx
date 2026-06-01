@@ -15,6 +15,7 @@ import { type Diff, type DiffLine, diffStat } from "../diff.ts";
 import { codeLineFlags, parseMarkdown, type Span } from "../markdown.ts";
 import { useIcon } from "./Icon.tsx";
 import {
+  displayToolName,
   fmtInput,
   head,
   rowKey,
@@ -235,18 +236,20 @@ function Gutter({
 }): React.ReactElement {
   const s = ROLE[speaker];
   const icon = useIcon(s.icon);
-  const glyph = !glyphless && icon ? `${icon} ` : "  ";
+  const glyph = !glyphless && icon ? icon : " ";
   const bg = highlight ? tint(s.bg) : undefined;
   return (
     <Box flexDirection="row" marginTop={marginTop}>
-      <Text
-        color={tint(colorOverride ?? s.color)}
-        backgroundColor={bg}
-        bold={s.bold}
-        dimColor={s.dim}
-      >
-        {glyph}
-      </Text>
+      <Box width={1} marginRight={1}>
+        <Text
+          color={tint(colorOverride ?? s.color)}
+          backgroundColor={bg}
+          bold={s.bold}
+          dimColor={s.dim}
+        >
+          {glyph}
+        </Text>
+      </Box>
       <Box flexDirection="column" flexGrow={1}>
         {bg ? <Text backgroundColor={bg}>{children}</Text> : children}
       </Box>
@@ -403,6 +406,7 @@ function ToolView({
   const mark = useIcon(TOOL_STATUS[status].icon);
   const color = TOOL_STATUS[status].color;
   const summary = summarizeToolInput(item.name, item.input);
+  const name = displayToolName(item.name);
   // `bash` shows the FULL command, wrapped, never truncated — "what shell command
   // ran" is the thing the user most wants to verify. Every other tool keeps the
   // 72-char one-line summary. Ink `<Text>` wraps by default, so leaving bash's
@@ -415,7 +419,7 @@ function ToolView({
       ? summary
       : truncate(summary, 72)
     : "";
-  const headline = shown ? `${item.name}: ${shown}` : item.name;
+  const headline = shown ? `${name}: ${shown}` : name;
 
   // Live (compact): render exactly one row — the headline plus its status mark,
   // truncated to the live content width (the 72-char summary cap above ignores the

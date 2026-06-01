@@ -78,7 +78,8 @@ export function Footer(props: FooterProps): React.ReactElement {
 
   const tokText = `${formatTokens(props.tokens)} tok`;
   const costText = `$${props.cost.toFixed(4)}`;
-  const verboseText = `${useIcon("verbose")} verbose`;
+  const verboseIcon = useIcon("verbose");
+  const verboseText = "verbose";
 
   const segs: Seg[] = [
     {
@@ -123,9 +124,16 @@ export function Footer(props: FooterProps): React.ReactElement {
   if (props.verbose) {
     segs.push({
       key: "verbose",
-      width: verboseText.length,
+      width: verboseIcon.length + 1 + verboseText.length,
       prio: 2,
-      node: <Text color={tint("cyan")}>{verboseText}</Text>,
+      node: (
+        <Box>
+          <Text color={tint("cyan")}>{verboseIcon}</Text>
+          <Box marginLeft={1}>
+            <Text color={tint("cyan")}>{verboseText}</Text>
+          </Box>
+        </Box>
+      ),
     });
   }
 

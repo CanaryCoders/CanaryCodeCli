@@ -56,9 +56,11 @@ export function Complete({
         const isSel = idx === selected;
         return (
           <Box key={`${idx}:${c.label}`}>
-            <Text color={isSel ? accent : undefined}>
-              {isSel ? `${promptIcon} ` : "  "}
-            </Text>
+            <Box width={1} marginRight={1}>
+              <Text color={isSel ? accent : undefined}>
+                {isSel ? promptIcon : " "}
+              </Text>
+            </Box>
             <Text color={isSel ? accent : undefined} bold={isSel}>
               {c.label}
             </Text>
