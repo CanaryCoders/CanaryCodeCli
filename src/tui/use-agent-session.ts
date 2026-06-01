@@ -52,7 +52,7 @@ import {
 } from "../hooks.ts";
 import { iconFor } from "../icons.ts";
 import { extractImagePaths, type ImageData, readImageFile } from "../image.ts";
-import { connectMcpServers, describeMcp } from "../mcp.ts";
+import { closeMcp, connectMcpServers, describeMcp } from "../mcp.ts";
 import {
   describeCodex,
   gateCodexModels,
@@ -232,7 +232,20 @@ export function useAgentSession(deps: {
       }
     } finally {
       props.store.close();
+      // Unmount Ink first so the terminal is restored to cooked mode immediately,
+      // then tear down the rest of the process. `app.exit()` only unmounts the UI —
+      // it does NOT end the process, and the live MCP clients (their child
+      // processes and sockets) keep the event loop alive, so without an explicit
+      // exit the process lingers after the UI is gone: the now-cooked terminal
+      // echoes any further keystrokes as raw `^[`/`^C` until a signal kills it.
       app.exit();
+      // Best-effort close of MCP transports (kills spawned servers like puppeteer's
+      // browser), capped so a wedged transport can't block the quit, then exit hard.
+      await Promise.race([
+        closeMcp(props.mcp).catch(() => {}),
+        new Promise((resolve) => setTimeout(resolve, 1000)),
+      ]);
+      process.exit(0);
     }
   }
 

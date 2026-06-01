@@ -118,6 +118,20 @@ function insert(value: string, cursor: number, text: string): InputResult {
   return { type: "update", value: next, cursor: cursor + text.length };
 }
 
+export const ESC = "\x1b";
+
+export function stripEscapes(input: string): string {
+  return input.split(ESC).join("");
+}
+
+/** True when `input` is nothing but raw Esc bytes. A rapid Esc repeat reaches Ink
+ *  as a single chunk of several `\x1b`; Ink only flags `key.escape` for one or two
+ *  of them (see parse-keypress), so the host must also recognise a bare-escape
+ *  chunk to treat it as Esc rather than letting it leak into the prompt as `^[`. */
+export function isRawEscapeInput(input: string): boolean {
+  return input.length > 0 && stripEscapes(input) === "";
+}
+
 /** Options that let the host suppress keys it handles itself (e.g. an open popover). */
 export interface ReduceOptions {
   /** When true, the autocomplete popover owns Enter and Up/Down — the input
@@ -182,11 +196,12 @@ export function reduceInput(
     };
   }
 
-  // Ignore control chords (Ctrl/Esc/Tab arrive with empty or control input); a
-  // real character (or a multi-char paste) is inserted at the cursor. Normalise
-  // any carriage returns in pasted text to plain newlines.
+  // Ignore control chords (Ctrl/Esc/Tab usually arrive with empty/control input).
+  // Some terminals report raw Esc as printable "\x1b" when keys are spammed; strip
+  // it so it never renders as a literal ^[ in the prompt. Normalise carriage
+  // returns in pasted text to plain newlines.
   if (input && !key.ctrl) {
-    const text = input.replace(/\r\n?/g, "\n");
+    const text = stripEscapes(input).replace(/\r\n?/g, "\n");
     if (!text) return { type: "none" };
     // A large multi-line/long paste collapses into a single sentinel chip, so a
     // wall of pasted text doesn't flood the prompt. Short input inserts verbatim.

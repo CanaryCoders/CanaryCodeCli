@@ -25,6 +25,7 @@ import type { AppProps } from "./app-types.ts";
 import { confirmChoiceForKey } from "./confirm-helpers.ts";
 import { Footer } from "./Footer.tsx";
 import { IconProvider } from "./Icon.tsx";
+import { isRawEscapeInput } from "./input-helpers.ts";
 import { ItemView } from "./Message.tsx";
 import { statusVerb } from "./message-helpers.ts";
 import { planChoiceForKey } from "./plan-helpers.ts";
@@ -154,9 +155,11 @@ function App(props: AppProps): React.ReactElement {
       session.handleCancel("Ctrl+C");
       return;
     }
-    if (key.escape) {
+    if (key.escape || isRawEscapeInput(_input)) {
       // Esc dismisses the autocomplete popover first; otherwise it escalates the
       // same way as Ctrl+C: cancel queued prompt → clear prompt → abort → quit.
+      // A rapid Esc repeat can arrive as raw "\x1b" bytes without key.escape set;
+      // handle that here so the prompt input never inserts visible ^[ text.
       if (autocomplete.completeOpenRef.current) autocomplete.dismissComplete();
       else session.handleCancel("Esc");
       return;

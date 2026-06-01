@@ -27,6 +27,7 @@ import {
   pasteChipLabel,
   pasteId,
   reduceInput,
+  stripEscapes,
   wrapDisplayLine,
 } from "./input-helpers.ts";
 
@@ -147,10 +148,15 @@ export function MultilineInput({
 
   useInput(
     (input, key) => {
+      // Raw Esc bursts can arrive with key.escape missing when the key is spammed.
+      // They are handled by App's global cancel listener; never buffer/render them.
+      const cleanInput = stripEscapes(input);
+      if (input && !cleanInput) return;
+
       // Printable input with no key chord is either a keystroke or one chunk of a
       // paste — buffer it and flush the whole burst together on the next tick.
       const printable =
-        input &&
+        cleanInput &&
         !key.ctrl &&
         !key.return &&
         !key.backspace &&
@@ -167,7 +173,7 @@ export function MultilineInput({
         // within the *same* event-loop turn, so they accumulate into one buffer
         // and are inserted as a single chip; an ordinary keystroke is a lone chunk
         // flushed a sub-millisecond tick later, which is imperceptible.
-        pasteBufRef.current += input;
+        pasteBufRef.current += cleanInput;
         if (!flushTimerRef.current) {
           flushTimerRef.current = setTimeout(flushPaste, 0);
         }
@@ -179,7 +185,7 @@ export function MultilineInput({
       applyResult(
         reduceInput(
           { value: valueRef.current, cursor: cursorRef.current },
-          input,
+          cleanInput,
           key,
           { capture, registerPaste },
         ),
