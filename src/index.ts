@@ -8,7 +8,12 @@
 // folded into the prompt as context (`git diff | cc -p "commit message"`). The
 // interactive TUI lands in Phase 4.
 
-import { type AgentMode, runAgent, systemForMode } from "./agent.ts";
+import {
+  type AgentMode,
+  roleForMode,
+  runAgent,
+  systemForMode,
+} from "./agent.ts";
 import {
   composeAgentsPrompt,
   describeAgents,
@@ -16,7 +21,12 @@ import {
 } from "./agents.ts";
 import { askUserTool, autoAnswer } from "./askuser.ts";
 import { describeCanary, populateCanaryModels } from "./canary.ts";
-import { type Config, loadConfig, resolveModel } from "./config.ts";
+import {
+  type Config,
+  loadConfig,
+  modelForRole,
+  resolveModel,
+} from "./config.ts";
 import {
   composeSystemPrompt,
   describeContext,
@@ -313,7 +323,19 @@ async function runHeadless(args: Args): Promise<number> {
   const canaryNote = describeCanary(await populateCanaryModels(config));
   if (canaryNote) process.stderr.write(`${canaryNote}\n`);
 
-  const resolved = resolveModel(config, args.model);
+  // Plan mode runs read-only (investigate, emit a plan, stop); auto mode runs
+  // autonomously to completion. They are mutually exclusive — plan wins if both given.
+  if (args.plan && args.auto) {
+    process.stderr.write(
+      "note: --plan and --auto conflict; using --plan (read-only)\n",
+    );
+  }
+  const mode: AgentMode = args.plan ? "plan" : args.auto ? "auto" : "normal";
+
+  // An explicit --model flag wins; otherwise the run uses the model for this
+  // mode's role (plan → reasoning, normal/auto → coding).
+  const wantedId = args.model ?? modelForRole(config, roleForMode(mode));
+  const resolved = resolveModel(config, wantedId);
   if (!resolved) {
     console.error("cc: no model available; check ~/.cc/config.json providers");
     return 1;
@@ -328,14 +350,6 @@ async function runHeadless(args: Args): Promise<number> {
   }
 
   const modelName = resolved.model.name ?? resolved.model.id;
-  // Plan mode runs read-only (investigate, emit a plan, stop); auto mode runs
-  // autonomously to completion. They are mutually exclusive — plan wins if both given.
-  if (args.plan && args.auto) {
-    process.stderr.write(
-      "note: --plan and --auto conflict; using --plan (read-only)\n",
-    );
-  }
-  const mode: AgentMode = args.plan ? "plan" : args.auto ? "auto" : "normal";
   // Turn cap: auto mode uses the configured autonomy budget; otherwise the
   // checkpoint budget as a hard runaway guard (headless is non-interactive, so
   // there's no human to answer a checkpoint). Surfaced in the max_turns message.
@@ -550,10 +564,13 @@ async function runHeadless(args: Args): Promise<number> {
       }>)
     | undefined;
   if (mode !== "auto" && config.permission.mode === "ai") {
-    const permResolved = resolveModel(config, config.permission.model);
+    const permResolved = resolveModel(
+      config,
+      modelForRole(config, "permission"),
+    );
     if (!permResolved) {
       process.stderr.write(
-        `note: permission model "${config.permission.model}" not found; AI safety check disabled\n`,
+        `note: permission model "${modelForRole(config, "permission")}" not found; AI safety check disabled\n`,
       );
     } else {
       try {
