@@ -17,7 +17,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { Box, render, Static, Text, useApp, useInput, useStdout } from "ink";
 import Spinner from "ink-spinner";
-import { useRef, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import { type AgentMode, runAgent, systemForMode } from "../agent.ts";
 import type { AgentDef } from "../agents.ts";
 import type { AskAnswer, AskQuestion } from "../askuser.ts";
@@ -138,9 +138,22 @@ function App(props: AppProps): React.ReactElement {
   const app = useApp();
   // Terminal size, used to cap the live (in-flight) region so it never grows past
   // the viewport — overflowing the dynamic region desyncs Ink's redraw and
-  // duplicates lines into the scrollback. Ink re-renders on resize, so these stay
-  // fresh. `<Static>` scrollback is printed once and is unaffected by height.
+  // duplicates lines into the scrollback. `<Static>` scrollback is printed once
+  // and is unaffected by height.
   const { stdout } = useStdout();
+  // Ink's `useStdout` does NOT subscribe to terminal resizes, so dimensions read
+  // during render would otherwise go stale until an unrelated re-render. Force a
+  // re-render on every `resize` event so the live-region cap and content widths
+  // recompute against the new size.
+  const [, bumpResize] = useReducer((n: number) => n + 1, 0);
+  useEffect(() => {
+    if (!stdout) return;
+    const onResize = () => bumpResize();
+    stdout.on("resize", onResize);
+    return () => {
+      stdout.off("resize", onResize);
+    };
+  }, [stdout]);
 
   // Mutable engine state lives in refs (read inside async loops); React state
   // mirrors what the UI shows.
