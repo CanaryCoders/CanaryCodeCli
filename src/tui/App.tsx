@@ -1262,6 +1262,7 @@ function App(props: AppProps): React.ReactElement {
                 expanded={verbose}
                 showExpandHint={item.id === firstToolId}
                 compact
+                width={liveContentWidth}
               />
             );
           })}

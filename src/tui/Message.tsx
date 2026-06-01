@@ -449,6 +449,7 @@ export function ItemView({
   expanded = false,
   showExpandHint = false,
   compact = false,
+  width,
 }: {
   item: Item;
   /** Kind of the immediately preceding transcript item, for group spacing. */
@@ -460,6 +461,10 @@ export function ItemView({
    * it can't overflow the dynamic region and desync Ink. The full command/output
    * still renders once the item lands in `<Static>`. */
   compact?: boolean;
+  /** Live content width (columns minus the deepest gutter). In `compact` mode the
+   * tool headline and note text are truncated to this so they occupy exactly one
+   * terminal row — a wrapped live line is what Ink mis-erases into stray fragments. */
+  width?: number;
 }): React.ReactElement {
   switch (item.kind) {
     case "banner":
@@ -512,21 +517,27 @@ export function ItemView({
             expanded={expanded}
             showHint={showExpandHint}
             compact={compact}
+            width={width}
           />
         </Gutter>
       );
     }
-    case "note":
+    case "note": {
+      // While live (compact), truncate to one row so the note can't wrap and
+      // desync the redrawn region; the full note lands in `<Static>` on finalise.
+      const text =
+        compact && width ? truncate(item.text, width) : item.text;
       return (
         <Gutter
           speaker={item.tone === "error" ? "error" : "note"}
           marginTop={prevKind === "note" ? SPACING.groupGap : SPACING.blockGap}
         >
           <Text color={tint(item.tone === "error" ? "red" : "gray")}>
-            {item.text}
+            {text}
           </Text>
         </Gutter>
       );
+    }
   }
 }
 
@@ -535,6 +546,7 @@ function ToolView({
   expanded,
   showHint = false,
   compact = false,
+  width,
 }: {
   item: Extract<Item, { kind: "tool" }>;
   expanded: boolean;
@@ -544,6 +556,9 @@ function ToolView({
    * body, no diff) so the redrawn dynamic region can't overflow and desync Ink.
    * The full version renders once the item lands in `<Static>`. */
   compact?: boolean;
+  /** Live content width — the compact headline is truncated to it (mark included)
+   * so the whole row fits the terminal and never wraps. */
+  width?: number;
 }): React.ReactElement {
   const mark = item.pending ? "…" : item.isError ? "✗" : "✓";
   const color = item.pending ? "yellow" : item.isError ? "red" : "green";
@@ -561,6 +576,21 @@ function ToolView({
       : truncate(summary, 72)
     : "";
   const headline = shown ? `${item.name}: ${shown}` : item.name;
+
+  // Live (compact): render exactly one row — the headline plus its status mark,
+  // truncated to the live content width (the 72-char summary cap above ignores the
+  // `name: ` prefix, the mark, and the terminal width, so on a normal-width
+  // terminal the row still wraps without this final clamp). A wrapped live row is
+  // what Ink mis-erases into the stray single-character fragments; the full, rich
+  // tool view (command, body, diff, hint) renders once the item lands in `<Static>`.
+  if (compact) {
+    const line = `${headline} ${mark}`;
+    return (
+      <Box flexDirection="column">
+        <Text color={tint(color)}>{width ? truncate(line, width) : line}</Text>
+      </Box>
+    );
+  }
 
   // Errors always reveal their first line; expansion reveals input + output head.
   // Suppressed while live (compact) — the body lands in `<Static>` on finalise.
