@@ -462,7 +462,7 @@ async function runHeadless(args: Args): Promise<number> {
         const lines = list
           .map((t) => `  ${statusMark(t.status)} ${t.content}`)
           .join("\n");
-        process.stderr.write(`\n📋 tasks:\n${lines}\n`);
+        process.stderr.write(`\n≡ tasks:\n${lines}\n`);
       }),
     ];
   }
@@ -482,9 +482,9 @@ async function runHeadless(args: Args): Promise<number> {
     ),
     mode,
   );
-  if (mode === "plan") process.stderr.write("📋 plan mode (read-only)\n");
+  if (mode === "plan") process.stderr.write("≡ plan mode (read-only)\n");
   if (mode === "auto")
-    process.stderr.write(`🤖 auto mode (autonomous · max ${turnCap} turns)\n`);
+    process.stderr.write(`◉ auto mode (autonomous · max ${turnCap} turns)\n`);
 
   // ── resolve the thinking level (explicit flag wins, else a prompt keyword) ──
   const thinking = resolveThinking({ flag: args.think, prompt });
@@ -495,7 +495,7 @@ async function runHeadless(args: Args): Promise<number> {
     );
     thinkingBudget = 0;
   } else if (thinkingBudget > 0) {
-    process.stderr.write(`💭 ${describeLevel(thinking.level)}\n`);
+    process.stderr.write(`✻ ${describeLevel(thinking.level)}\n`);
   }
 
   // ── Open the store and resolve which session to write into ──
@@ -613,7 +613,7 @@ async function runHeadless(args: Args): Promise<number> {
       try {
         const checkerProvider = createProvider(permResolved.providerConfig);
         const checkerModel = permResolved.model.name ?? permResolved.model.id;
-        process.stderr.write(`🛡 AI permission check (${checkerModel})\n`);
+        process.stderr.write(`⛉ AI permission check (${checkerModel})\n`);
         gate = async (call) => {
           if (!inPermissionScope(config.permission.scope, call.name)) {
             return { allow: true };
@@ -673,7 +673,7 @@ async function runHeadless(args: Args): Promise<number> {
           }
           // Stream reasoning to stderr (dimmed) so it stays out of stdout output.
           if (!thinkingOpen) {
-            process.stderr.write("\n💭 \x1b[2m");
+            process.stderr.write("\n✻ \x1b[2m");
             thinkingOpen = true;
           }
           process.stderr.write(ev.text);
@@ -714,9 +714,9 @@ async function runHeadless(args: Args): Promise<number> {
           // ⚙ start line so every tool run shows a begin and an end.
           if (ev.isError) {
             sawError = true;
-            process.stderr.write(`ERR ${ev.name}: ${ev.result}\n`);
+            process.stderr.write(`✗ ${ev.name}: ${ev.result}\n`);
           } else {
-            process.stderr.write(`OK ${ev.name}\n`);
+            process.stderr.write(`✓ ${ev.name}\n`);
             if (ev.diff && ev.diff.hunks.length > 0) {
               // write_file/edit_file carry a diff — show what changed (green/red on a TTY).
               const color =
@@ -767,7 +767,7 @@ async function runHeadless(args: Args): Promise<number> {
             // Cap reached before the model finished — the task may be incomplete.
             sawError = true;
             process.stderr.write(
-              `⚠ stopped after ${turnCap} turns (the turn limit) before the model signalled it was done.\n`,
+              `▲ stopped after ${turnCap} turns (the turn limit) before the model signalled it was done.\n`,
             );
           }
           break;
@@ -962,7 +962,7 @@ async function runLoginCodex(rest: string[]): Promise<number> {
             console.log(`Opening your browser to sign in:\n${url}\n`),
         });
     console.log(
-      `OK Signed in to ChatGPT${account_id ? ` (account ${account_id})` : ""}. Your models are listed on next launch; pick one with --model (e.g. --model gpt-5.5) and set reasoning effort with --think (off->low ... ultrathink->xhigh).`,
+      `✓ Signed in to ChatGPT${account_id ? ` (account ${account_id})` : ""}. Your models are listed on next launch; pick one with --model (e.g. --model gpt-5.5) and set reasoning effort with --think (off→low … ultrathink→xhigh).`,
     );
     return 0;
   } catch (err) {

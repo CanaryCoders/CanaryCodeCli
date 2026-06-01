@@ -149,5 +149,5 @@ export function describeHooks(hooks: HooksConfig): string | undefined {
   if (hooks.PostToolUse?.length)
     counts.push(`${hooks.PostToolUse.length} post`);
   if (hooks.Stop?.length) counts.push(`${hooks.Stop.length} stop`);
-  return counts.length ? `🪝 hooks: ${counts.join(", ")}` : undefined;
+  return counts.length ? `⎇ hooks: ${counts.join(", ")}` : undefined;
 }

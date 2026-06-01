@@ -41,7 +41,7 @@ export function ConfirmView({
       {reason ? (
         <Text
           color={tint("yellow")}
-        >{`⚠ flagged by safety check: ${reason}`}</Text>
+        >{`▲ flagged by safety check: ${reason}`}</Text>
       ) : null}
       {preview.kind === "bash" ? (
         <Text>{`$ ${preview.command}`}</Text>

@@ -156,5 +156,5 @@ export function composeAgentsPrompt(base: string, agents: AgentDef[]): string {
 /** A one-line stderr/startup note listing discovered agents (undefined if none). */
 export function describeAgents(agents: AgentDef[]): string | undefined {
   if (agents.length === 0) return undefined;
-  return `🧑‍🚀 agents: ${agents.map((a) => a.name).join(", ")}`;
+  return `◆ agents: ${agents.map((a) => a.name).join(", ")}`;
 }

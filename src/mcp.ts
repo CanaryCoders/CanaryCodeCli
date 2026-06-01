@@ -487,7 +487,7 @@ export function describeMcp(
   configured: number,
 ): string | undefined {
   if (configured === 0) return undefined;
-  return `🔌 mcp: ${conn.notes.join(", ")}`;
+  return `⌁ mcp: ${conn.notes.join(", ")}`;
 }
 
 /** Close every live MCP client (call after the run). */

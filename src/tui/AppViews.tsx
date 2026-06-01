@@ -145,7 +145,7 @@ export function PromptArea({
     return (
       <Box flexDirection="column" marginTop={SPACING.inputGap}>
         <Text color={tint("yellow")}>
-          {`⏸ ${approvals.pendingCheckpoint} turns in — keep going? `}
+          {`‖ ${approvals.pendingCheckpoint} turns in — keep going? `}
           <Text bold>{"[y]"}</Text>
           <Text dimColor>{"es / "}</Text>
           <Text bold>{"[n]"}</Text>

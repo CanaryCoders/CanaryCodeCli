@@ -1,7 +1,7 @@
 // diff.ts — a tiny, dependency-free unified-diff helper for write/edit previews.
 //
 // When the agent runs `write_file` or `edit_file` the user must see exactly what
-// changed, not just `> write_file: path OK`. This computes a line-level diff
+// changed, not just `⚙ write_file: path ✓`. This computes a line-level diff
 // between the prior and new contents and renders it in the familiar unified
 // (`@@ -a,b +c,d @@`) format so both front-ends can show it: headless prints it
 // (colourized on a TTY), the TUI renders it under the collapsed tool line.

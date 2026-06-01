@@ -30,7 +30,7 @@ export function PlanView({
         paddingX={SPACING.boxPadX}
       >
         <Text color={accent} bold>
-          {"📋 Proposed plan"}
+          {"≡ Proposed plan"}
         </Text>
         <Text>{plan.trim()}</Text>
       </Box>

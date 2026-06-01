@@ -405,7 +405,7 @@ export function useAgentSession(deps: {
             local.push({
               id: nextId(),
               kind: "note",
-              text: `compacted context: ${ev.summarized} msgs · ~${ev.beforeTokens}->${ev.afterTokens} tok`,
+              text: `⌘ compacted context: ${ev.summarized} msgs · ~${ev.beforeTokens}→${ev.afterTokens} tok`,
             });
             sync();
             break;
@@ -424,21 +424,21 @@ export function useAgentSession(deps: {
               local.push({
                 id: nextId(),
                 kind: "note",
-                text: "aborted",
+                text: "⨯ aborted",
                 tone: "error",
               });
             } else if (ev.reason === "max_turns") {
               local.push({
                 id: nextId(),
                 kind: "note",
-                text: `WARN stopped after ${maxTurns} turns (the turn limit)`,
+                text: `▲ stopped after ${maxTurns} turns (the turn limit)`,
                 tone: "error",
               });
             } else if (ev.reason === "stopped") {
               local.push({
                 id: nextId(),
                 kind: "note",
-                text: `PAUSED stopped at the ${lastCheckpoint}-turn checkpoint — send a message to continue`,
+                text: `‖ stopped at the ${lastCheckpoint}-turn checkpoint — send a message to continue`,
               });
             }
             break;

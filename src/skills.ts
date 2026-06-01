@@ -124,7 +124,7 @@ export function composeSkillsPrompt(base: string, skills: Skill[]): string {
 /** A one-line stderr note describing which skills were discovered (undefined if none). */
 export function describeSkills(skills: Skill[]): string | undefined {
   if (skills.length === 0) return undefined;
-  return `🧩 skills: ${skills.map((s) => s.name).join(", ")}`;
+  return `◇ skills: ${skills.map((s) => s.name).join(", ")}`;
 }
 
 /**
