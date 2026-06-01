@@ -114,12 +114,13 @@ export function resolveThinking(opts: {
 }
 
 /**
- * Whether a provider can act on a thinking budget. Only the Anthropic Messages API
- * exposes extended thinking; openai-compat gateways have no portable equivalent,
- * so the budget is dropped (the caller should note this once).
+ * Whether a provider can act on a thinking budget. The Anthropic Messages API
+ * exposes extended thinking, and the OpenAI Codex Responses provider maps the
+ * budget onto a reasoning effort level. Plain openai-compat gateways have no
+ * portable equivalent, so the budget is dropped (the caller should note this once).
  */
 export function supportsThinking(providerId: string): boolean {
-  return providerId === "anthropic";
+  return providerId === "anthropic" || providerId === "openai-responses";
 }
 
 /** Human-readable label, e.g. "think hard (10k)". For status lines / notes. */

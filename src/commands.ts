@@ -37,6 +37,8 @@ export type CommandAction =
   | { kind: "resume"; id?: string }
   | { kind: "cost" }
   | { kind: "init" }
+  | { kind: "login-codex" }
+  | { kind: "logout-codex" }
   | { kind: "exit" }
   | { kind: "error"; message: string };
 
@@ -77,6 +79,14 @@ export const COMMANDS: CommandSpec[] = [
   {
     name: "init",
     description: "generate a starter CC.md project-context file",
+  },
+  {
+    name: "login-codex",
+    description: "sign in with your ChatGPT (OpenAI Codex) subscription",
+  },
+  {
+    name: "logout-codex",
+    description: "sign out of your ChatGPT (OpenAI Codex) subscription",
   },
   { name: "help", aliases: ["?"], description: "show this command list" },
   { name: "exit", aliases: ["quit", "q"], description: "exit cc" },
@@ -168,6 +178,10 @@ export function dispatchCommand(input: string): CommandAction {
       return { kind: "cost" };
     case "init":
       return { kind: "init" };
+    case "login-codex":
+      return { kind: "login-codex" };
+    case "logout-codex":
+      return { kind: "logout-codex" };
     case "help":
       return { kind: "help", text: helpText() };
     case "exit":

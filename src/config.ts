@@ -8,9 +8,10 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { CANARY_PROVIDER, canaryProviderConfig } from "./canary.ts";
+import { OPENAI_PROVIDER, openaiCodexProviderConfig } from "./openai-codex.ts";
 import type { ThinkingLevel } from "./thinking.ts";
 
-export type ProviderApi = "anthropic" | "openai-compat";
+export type ProviderApi = "anthropic" | "openai-compat" | "openai-responses";
 
 /**
  * Confirm-before-running gate (a TUI-only concern). "off" runs every tool;
@@ -146,6 +147,10 @@ function defaultConfig(): Config {
       // CanaryLLM gateway, first-class. Inert until CANARYLLM_API_KEY is set;
       // models discovered from /api/public/models on startup (see canary.ts).
       [CANARY_PROVIDER]: canaryProviderConfig(),
+      // OpenAI Codex (ChatGPT subscription) preset. Inert until the user signs in
+      // with `cc login-codex`; its models are gated on ~/.cc/auth.json at startup
+      // (see openai-codex.ts / gateCodexModels).
+      [OPENAI_PROVIDER]: openaiCodexProviderConfig(),
     },
     webSearch: {},
     mcpServers: {},

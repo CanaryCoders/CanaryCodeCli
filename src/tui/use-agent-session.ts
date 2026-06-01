@@ -21,9 +21,16 @@ import {
   systemForMode,
 } from "../agent.ts";
 import { askUserTool } from "../askuser.ts";
+import { clearCredentials, loginWithBrowser, openBrowser } from "../auth.ts";
 import { dispatchCommand } from "../commands.ts";
 import { resolveModel, saveConfig } from "../config.ts";
 import { runPostToolHooks, runPreToolHooks, runStopHooks } from "../hooks.ts";
+import {
+  describeCodex,
+  gateCodexModels,
+  OPENAI_PROVIDER,
+  populateCodexModels,
+} from "../openai-codex.ts";
 import type { Message } from "../provider.ts";
 import { createProvider, type Provider } from "../provider.ts";
 import { readSkillTool } from "../skills.ts";
@@ -640,6 +647,12 @@ export function useAgentSession(deps: {
       case "init":
         doInit();
         break;
+      case "login-codex":
+        loginCodex();
+        break;
+      case "logout-codex":
+        void logoutCodex();
+        break;
       case "help":
         note(action.text);
         break;
@@ -670,6 +683,41 @@ export function useAgentSession(deps: {
     });
     note("investigating the project to write CC.md…");
     void runTurn("normal");
+  }
+
+  // `/login-codex` — sign in with the ChatGPT subscription via the browser OAuth
+  // flow (a background callback server on 127.0.0.1:1455). The URL is also printed
+  // so a remote user can copy it. On success the Codex models are discovered live;
+  // switch with `/model <a listed model>` (e.g. `/model gpt-5.5 high`).
+  function loginCodex(): void {
+    note("opening your browser to sign in with ChatGPT…");
+    void loginWithBrowser({
+      open: openBrowser,
+      onUrl: (url) => note(`if your browser didn't open, visit:\n${url}`),
+    })
+      .then(async ({ account_id }) => {
+        const result = await populateCodexModels(props.config);
+        const ids = (props.config.providers[OPENAI_PROVIDER]?.models ?? []).map(
+          (m) => m.id,
+        );
+        const codexNote = describeCodex(result);
+        if (codexNote) note(codexNote);
+        note(
+          `signed in to ChatGPT${account_id ? ` (account ${account_id})` : ""}${ids.length ? ` — switch with e.g. /model ${ids[0]}` : ""}`,
+        );
+      })
+      .catch((err) => note(`login failed: ${(err as Error).message}`, "error"));
+  }
+
+  // `/logout-codex` — drop the stored ChatGPT credentials and hide the Codex models.
+  async function logoutCodex(): Promise<void> {
+    try {
+      await clearCredentials();
+      gateCodexModels(props.config, false);
+      note("signed out of ChatGPT — Codex models hidden");
+    } catch (err) {
+      note(`logout failed: ${(err as Error).message}`, "error");
+    }
   }
 
   function quit(): void {
