@@ -88,20 +88,29 @@ export async function runPreToolHooks(
   const matching = (hooks.PreToolUse ?? []).filter((h) =>
     matches(h, call.name),
   );
-  for (const hook of matching) {
-    const { code, output } = await runHook(hook, {
-      event: "PreToolUse",
-      tool: call.name,
-      input: call.input,
-    });
-    if (code !== 0) {
-      return {
-        allow: false,
-        reason: output || `blocked by a PreToolUse hook (exit ${code})`,
-      };
-    }
-  }
-  return { allow: true };
+  // Hooks run strictly in order and short-circuit on the first non-zero exit (a
+  // deny stops the rest and they may have side effects), so this is sequential
+  // by design — never raced. `reduce` chains the sequential awaits without an
+  // inline await-in-loop: once a hook denies, the chain carries that decision
+  // through and skips the remaining `runHook` calls.
+  return matching.reduce<Promise<PreToolDecision>>(
+    (prev, hook) =>
+      prev.then(async (decision) => {
+        if (!decision.allow) return decision;
+        const { code, output } = await runHook(hook, {
+          event: "PreToolUse",
+          tool: call.name,
+          input: call.input,
+        });
+        return code !== 0
+          ? {
+              allow: false,
+              reason: output || `blocked by a PreToolUse hook (exit ${code})`,
+            }
+          : decision;
+      }),
+    Promise.resolve({ allow: true }),
+  );
 }
 
 /** Run all matching `PostToolUse` hooks (fire-and-forget; output ignored). */

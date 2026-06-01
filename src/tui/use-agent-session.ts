@@ -1,0 +1,715 @@
+// tui/use-agent-session.ts — the TUI's agent-session controller.
+//
+// This is the engine behind the App shell: it owns the run state (busy, queued,
+// metrics, mode/thinking, the task panel) and every action that drives a turn —
+// building the tool set, running the agent loop and mirroring its events into the
+// transcript, the plan accept/edit/reject flow, model switching, slash-command
+// dispatch (`onSubmit`), `/init`, and the shared Ctrl+C / Esc cancel escalation.
+//
+// Mutable engine state lives in refs (read inside the async loop across awaits);
+// React state mirrors what the UI shows. It composes the smaller hooks (transcript,
+// approvals, prompt input/history, paste chips) passed in by the App shell.
+
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { useApp } from "ink";
+import { useRef, useState } from "react";
+import { type AgentMode, runAgent, systemForMode } from "../agent.ts";
+import { askUserTool } from "../askuser.ts";
+import { dispatchCommand } from "../commands.ts";
+import { resolveModel, saveConfig } from "../config.ts";
+import { runPostToolHooks, runPreToolHooks, runStopHooks } from "../hooks.ts";
+import type { Message } from "../provider.ts";
+import { createProvider } from "../provider.ts";
+import { readSkillTool } from "../skills.ts";
+import { Semaphore, spawnAgentTool } from "../subagents.ts";
+import { type Task, updateTasksTool } from "../tasks.ts";
+import {
+  budgetFor,
+  describeLevel,
+  supportsThinking,
+  type ThinkingLevel,
+} from "../thinking.ts";
+import type { Tool } from "../tools.ts";
+import { tools as allTools } from "../tools.ts";
+import { webSearchTool } from "../websearch.ts";
+import type { AppProps } from "./app-types.ts";
+import { expandPastes } from "./input-helpers.ts";
+import type { Item } from "./Message.tsx";
+import { stablePrefixLen } from "./message-helpers.ts";
+import type { Approvals } from "./use-approvals.ts";
+import type { PasteChips } from "./use-paste-chips.ts";
+import type { PromptHistory } from "./use-prompt-history.ts";
+import type { PromptInput } from "./use-prompt-input.ts";
+import type { Transcript } from "./use-transcript.ts";
+
+// `/init` instruction: drives a real generation turn so the agent investigates
+// the repo and writes a genuine CC.md instead of a fill-in-the-blanks template.
+const INIT_PROMPT = `Create a CC.md file in the current directory — the project-context file cc reads on startup.
+
+First investigate the project: read package manifests (package.json, pyproject.toml, go.mod, Cargo.toml, etc.), config files, the README, and the directory layout to understand what this project is, its stack, and how to build/test/lint/run it.
+
+Then write CC.md with these sections, filled in from what you actually found (omit a section if it genuinely doesn't apply — do not leave placeholder comments):
+- # <project name>
+- ## Overview — one or two sentences on what the project is and does.
+- ## Stack — languages, frameworks, runtimes, key libraries.
+- ## Commands — the real build/test/run/lint commands for this repo.
+- ## Conventions — code style, patterns, and rules to follow.
+
+Keep it short and high-signal. Use write_file to create ./CC.md.`;
+
+export interface AgentSession {
+  busy: boolean;
+  queued: string | null;
+  tasks: Task[];
+  cost: number;
+  tokens: number;
+  modelLabel: string;
+  mode: AgentMode;
+  thinking: ThinkingLevel;
+  verbose: boolean;
+  setVerbose: React.Dispatch<React.SetStateAction<boolean>>;
+  /** Handle a submitted input line (slash command or prompt). */
+  onSubmit: (rawValue: string) => void;
+  /** Cycle the agent mode (Shift+Tab): normal → plan → auto → normal. */
+  cycleMode: () => void;
+  acceptPlan: () => void;
+  editPlan: () => void;
+  rejectPlan: () => void;
+  /** The shared Ctrl+C / Esc cancel escalation. */
+  handleCancel: (label: string) => void;
+}
+
+export function useAgentSession(deps: {
+  props: AppProps;
+  transcript: Transcript;
+  approvals: Approvals;
+  promptInput: PromptInput;
+  promptHistory: PromptHistory;
+  pasteMap: PasteChips["pasteMap"];
+  /** Shared abort controller (also read by the approval gate's safety check). */
+  controllerRef: React.MutableRefObject<AbortController | null>;
+}): AgentSession {
+  const { props, transcript, approvals, promptInput, promptHistory, pasteMap } =
+    deps;
+  const { setHistory, setLive, push, note, nextId } = transcript;
+  const { setInput, inputRef, bumpCursor } = promptInput;
+  const controllerRef = deps.controllerRef;
+  const app = useApp();
+
+  // Mutable engine state lives in refs (read inside async loops); React state
+  // mirrors what the UI shows.
+  const providerRef = useRef(props.provider);
+  const modelNameRef = useRef(props.modelName);
+  // Base system prompt (project context + skills already folded in). Held in a
+  // ref so `/init` can fold a freshly generated CC.md in live, mid-session.
+  const baseSystemRef = useRef(props.baseSystem);
+  // Seed with any resumed transcript; those turns are already stored, so the
+  // persist baseline starts past them (only new turns get appended).
+  const messagesRef = useRef<Message[]>(props.resumedMessages ?? []);
+  const persistedRef = useRef(props.resumedMessages?.length ?? 0);
+  const sessionIdRef = useRef(props.sessionId);
+  // Ctrl+C is "armed" after a first press with nothing to abort; a second press
+  // before the timer fires quits. The timer disarms it so a lone press never quits.
+  const quitArmedRef = useRef(false);
+  const quitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // A prompt typed and submitted while a turn is in flight; it sends automatically
+  // once the turn finishes. The ref mirrors state for the `useInput` closure.
+  const [queued, setQueued] = useState<string | null>(null);
+  const queuedRef = useRef<string | null>(null);
+
+  const [busy, setBusy] = useState(false);
+  const [mode, setModeState] = useState<AgentMode>(
+    props.initialMode ?? "normal",
+  );
+  const [thinking, setThinkingState] = useState<ThinkingLevel>(
+    props.initialThinking ?? "off",
+  );
+  // Persist mode / thinking onto the session row as they change, so a later
+  // `--resume` restores them. Wrappers keep React state + the stored row in sync.
+  const setMode = (next: AgentMode) => {
+    setModeState(next);
+    props.store.setMode(sessionIdRef.current, next);
+  };
+  const setThinking = (next: ThinkingLevel) => {
+    setThinkingState(next);
+    props.store.setThinking(sessionIdRef.current, next);
+    // Persist as the default thinking level so it survives restarts.
+    void saveConfig({ thinking: next }).catch((err) =>
+      note(
+        `could not save thinking preference: ${(err as Error).message}`,
+        "error",
+      ),
+    );
+  };
+  const [modelLabel, setModelLabel] = useState(props.modelLabel);
+  const [cost, setCost] = useState(0);
+  const [tokens, setTokens] = useState(0);
+  // Verbose expands tool calls to show full input + output head (Ctrl+R toggles).
+  const [verbose, setVerbose] = useState(false);
+  // The agent's live task list (from the update_tasks tool), shown in the Tasks
+  // panel above the input. Ephemeral: it lives only for the session.
+  const [tasks, setTasks] = useState<Task[]>([]);
+
+  // ── build the tool set for a run (fresh signal so spawn_agent can be aborted) ──
+  function buildTools(signal: AbortSignal): Tool[] {
+    if (props.noTools) return [];
+    let tools: Tool[] = [
+      ...allTools,
+      webSearchTool(props.config.webSearch),
+      readSkillTool(props.skills),
+      askUserTool(approvals.requestAsk),
+      ...props.mcp.tools,
+    ];
+    if (props.config.maxDepth > 0) {
+      const limiter = new Semaphore(props.config.maxConcurrent);
+      tools = [
+        ...tools,
+        spawnAgentTool({
+          config: props.config,
+          parentProvider: providerRef.current,
+          parentModel: modelNameRef.current,
+          inheritedTools: tools,
+          depth: 0,
+          limiter,
+          signal,
+          agents: props.agents,
+        }),
+      ];
+    }
+    // update_tasks is the orchestrator's own todo list — added top-level only (it
+    // is deliberately NOT in spawn_agent's inheritedTools above), so the panel
+    // reflects the main agent's plan while children just do their one task and
+    // return a summary.
+    tools = [...tools, updateTasksTool(setTasks)];
+    return tools;
+  }
+
+  /** Persist newly appended (or compacted) turns to the session store. */
+  function flush(compacted: boolean): void {
+    const msgs = messagesRef.current;
+    if (compacted) {
+      props.store.replaceTurns(sessionIdRef.current, msgs);
+    } else {
+      for (let i = persistedRef.current; i < msgs.length; i++) {
+        props.store.appendTurn(sessionIdRef.current, msgs[i]);
+      }
+    }
+    persistedRef.current = msgs.length;
+  }
+
+  // ── run one user prompt through the agent loop ──
+  // `modeOverride` lets callers run in a mode other than the current state value,
+  // which matters when accepting a plan: `setMode("normal")` hasn't flushed yet.
+  async function runTurn(modeOverride?: AgentMode): Promise<void> {
+    setBusy(true);
+    const controller = new AbortController();
+    controllerRef.current = controller;
+
+    const runMode = modeOverride ?? mode;
+    const system = systemForMode(baseSystemRef.current, runMode);
+    let tools = buildTools(controller.signal);
+    if (runMode === "plan") tools = tools.filter((t) => t.readOnly);
+
+    const budget = supportsThinking(providerRef.current.id)
+      ? budgetFor(thinking)
+      : 0;
+    // Auto mode runs unattended → a hard cap (no human to ask). Normal/plan run
+    // unbounded with a periodic "keep going?" checkpoint instead of a turn limit.
+    const interactive = runMode !== "auto";
+    const maxTurns = props.config.autoMaxTurns;
+    const checkpointEvery = interactive ? props.config.checkpointEvery : 0;
+
+    // Lifecycle hooks run in every mode (deterministic policy). PreToolUse can
+    // block a call; PostToolUse observes. Omitted when none are configured.
+    const hooks = props.config.hooks;
+    const preToolUse = hooks.PreToolUse?.length
+      ? (call: { name: string; input: unknown }) => runPreToolHooks(hooks, call)
+      : undefined;
+    const postToolUse = hooks.PostToolUse?.length
+      ? (
+          call: { name: string; input: unknown },
+          result: { content: string; isError: boolean },
+        ) => runPostToolHooks(hooks, call, result)
+      : undefined;
+
+    // The in-flight turn is built up here and mirrored into React state for render.
+    // Only the *last* item is ever mutated (text appends to it, a tool flips
+    // pending→done); every earlier item is final. So as the turn progresses we
+    // move finalised items into the `<Static>` scrollback and keep just the live
+    // (mutating) item in the dynamic region. This is what stops the dynamic region
+    // from growing past the terminal viewport — overflowing it desyncs Ink's
+    // redraw and duplicates lines into the scrollback. `committed` tracks how many
+    // of `local` have already been handed to `<Static>`.
+    const local: Item[] = [];
+    let committed = 0;
+    // Ghost-free streaming: a growing assistant/thinking block is the one item that
+    // can outgrow the viewport. Before each commit, peel its *stable* prefix (whole
+    // lines, never inside an open code fence) into its own finalised chunk inserted
+    // just before it — the existing "commit all but last" pass then moves the chunk
+    // into `<Static>` permanently, leaving only the unstable tail in the live region.
+    // The tail is ≤ one logical line (plus any open fence), so it can't overflow.
+    const splitStableText = () => {
+      const last = local[local.length - 1];
+      if (!last || (last.kind !== "assistant" && last.kind !== "thinking"))
+        return;
+      const cut = stablePrefixLen(last.text, last.kind);
+      if (cut <= 0) return;
+      const chunk: Item = {
+        id: nextId(),
+        kind: last.kind,
+        text: last.text.slice(0, cut),
+        continuation: last.continuation,
+      };
+      last.text = last.text.slice(cut);
+      last.continuation = true; // its head was already committed above
+      local.splice(local.length - 1, 0, chunk); // insert the chunk before the tail
+    };
+    const sync = () => {
+      splitStableText();
+      const finalCount = local.length - 1; // all but the still-mutating last item
+      if (finalCount > committed) {
+        const newlyFinal = local.slice(committed, finalCount);
+        setHistory((prev) => [...prev, ...newlyFinal]);
+        committed = finalCount;
+      }
+      setLive(local.length > committed ? [local[local.length - 1]!] : []);
+    };
+    let compacted = false;
+    let lastCheckpoint = 0; // turn count of the most recent checkpoint, for the note
+    let outcome: "stop" | "max_turns" | "aborted" | "stopped" | "error" =
+      "stop";
+
+    const appendText = (text: string) => {
+      const last = local[local.length - 1];
+      if (last && last.kind === "assistant") last.text += text;
+      else local.push({ id: nextId(), kind: "assistant", text });
+    };
+    const appendThinking = (text: string) => {
+      const last = local[local.length - 1];
+      if (last && last.kind === "thinking") last.text += text;
+      else local.push({ id: nextId(), kind: "thinking", text });
+    };
+
+    try {
+      for await (const ev of runAgent({
+        provider: providerRef.current,
+        model: modelNameRef.current,
+        system,
+        messages: messagesRef.current,
+        tools,
+        mode: runMode,
+        maxTurns,
+        checkpointEvery,
+        onCheckpoint: interactive ? approvals.requestCheckpoint : undefined,
+        thinkingBudget: budget,
+        compactAtTokens: props.config.compactAtTokens,
+        signal: controller.signal,
+        gate: (call) => approvals.requestGate(runMode, call),
+        preToolUse,
+        postToolUse,
+      })) {
+        switch (ev.type) {
+          case "text":
+            appendText(ev.text);
+            sync();
+            break;
+          case "thinking":
+            appendThinking(ev.text);
+            sync();
+            break;
+          case "tool_start":
+            local.push({
+              id: nextId(),
+              kind: "tool",
+              toolId: ev.id,
+              name: ev.name,
+              input: ev.input,
+              pending: true,
+            });
+            sync();
+            break;
+          case "tool_end": {
+            // `local` holds only the current turn's items (a handful of tool
+            // calls); a linear find runs once per tool_end. A keyed Map would add
+            // bookkeeping to this streaming reducer for no measurable gain.
+            // eslint-disable-next-line react-doctor/js-index-maps -- tiny per-turn array; see above
+            const t = local.find(
+              (i) => i.kind === "tool" && i.toolId === ev.id,
+            );
+            if (t && t.kind === "tool") {
+              t.pending = false;
+              t.result = ev.result;
+              t.isError = ev.isError;
+              t.diff = ev.diff;
+            }
+            sync();
+            break;
+          }
+          case "usage": {
+            props.store.addUsage(
+              sessionIdRef.current,
+              ev.inputTokens,
+              ev.outputTokens,
+            );
+            const s = props.store.getSession(sessionIdRef.current);
+            if (s) {
+              setCost(s.costUsd);
+              setTokens(s.inputTokens + s.outputTokens);
+            }
+            break;
+          }
+          case "compaction":
+            compacted = true;
+            local.push({
+              id: nextId(),
+              kind: "note",
+              text: `⌘ compacted context: ${ev.summarized} msgs · ~${ev.beforeTokens}→${ev.afterTokens} tok`,
+            });
+            sync();
+            break;
+          case "checkpoint":
+            // The onCheckpoint hook surfaces the prompt; just remember the turn
+            // count so a subsequent "stopped" can name it.
+            lastCheckpoint = ev.turn;
+            break;
+          case "done":
+            outcome = ev.reason;
+            // Stop hooks fire when the model finishes responding (observational).
+            if (ev.reason === "stop" && props.config.hooks.Stop?.length) {
+              void runStopHooks(props.config.hooks);
+            }
+            if (ev.reason === "aborted") {
+              local.push({
+                id: nextId(),
+                kind: "note",
+                text: "⨯ aborted",
+                tone: "error",
+              });
+            } else if (ev.reason === "max_turns") {
+              local.push({
+                id: nextId(),
+                kind: "note",
+                text: `⚠ stopped after ${maxTurns} turns (the turn limit)`,
+                tone: "error",
+              });
+            } else if (ev.reason === "stopped") {
+              local.push({
+                id: nextId(),
+                kind: "note",
+                text: `⏸ stopped at the ${lastCheckpoint}-turn checkpoint — send a message to continue`,
+              });
+            }
+            break;
+        }
+      }
+    } catch (err) {
+      outcome = "error";
+      local.push({
+        id: nextId(),
+        kind: "note",
+        text: `cc: ${(err as Error).message}`,
+        tone: "error",
+      });
+    } finally {
+      flush(compacted);
+      // Commit whatever `sync` hasn't already moved (the last, now-final item plus
+      // anything appended after the loop) into the scrollback and clear the live region.
+      const remaining = local.slice(committed);
+      if (remaining.length > 0) setHistory((prev) => [...prev, ...remaining]);
+      setLive([]);
+      controllerRef.current = null;
+      setBusy(false);
+      // A clean plan-mode turn produced a plan → surface accept/edit/reject.
+      if (runMode === "plan" && outcome === "stop") {
+        let planText = "";
+        for (const item of local)
+          if (item.kind === "assistant") planText += item.text;
+        if (planText.trim()) approvals.showPlan(planText);
+      }
+      // Send a prompt queued while this turn was running (unless it was aborted, a
+      // plan is now awaiting review, or it got canceled meanwhile).
+      const next = queuedRef.current;
+      if (
+        next !== null &&
+        outcome !== "aborted" &&
+        !approvals.pendingPlanRef.current
+      ) {
+        queuedRef.current = null;
+        setQueued(null);
+        push({ kind: "user", text: next });
+        messagesRef.current.push({
+          role: "user",
+          content: [{ type: "text", text: next }],
+        });
+        void runTurn();
+      }
+    }
+  }
+
+  // ── plan review: accept / edit / reject the pending plan ──
+  // Accept switches to normal mode and executes the plan as the next prompt; edit
+  // drops the plan text into the input box (in normal mode) for tweaking before
+  // running; reject discards it and stays in plan mode.
+  function acceptPlan(): void {
+    const plan = approvals.pendingPlanRef.current;
+    approvals.showPlan(null);
+    if (!plan) return;
+    setMode("normal");
+    const instruction = "Proceed with the plan above. Implement it now.";
+    push({ kind: "user", text: instruction });
+    messagesRef.current.push({
+      role: "user",
+      content: [{ type: "text", text: instruction }],
+    });
+    note("plan accepted — executing");
+    void runTurn("normal");
+  }
+  function editPlan(): void {
+    const plan = approvals.pendingPlanRef.current;
+    approvals.showPlan(null);
+    setMode("normal");
+    if (plan) setInput(plan.trim());
+    note("editing plan — submit to execute, or clear to discard");
+  }
+  function rejectPlan(): void {
+    approvals.showPlan(null);
+    note("plan rejected — still in plan mode");
+  }
+
+  // ── cycle the agent mode (Shift+Tab): normal → plan → auto → normal ──
+  // This is the canonical mode switch; the status line reflects it immediately.
+  // Disabled while a plan awaits review (those keys belong to accept/edit/reject).
+  function cycleMode(): void {
+    const next: AgentMode =
+      mode === "normal" ? "plan" : mode === "plan" ? "auto" : "normal";
+    setMode(next);
+    note(`mode → ${next}`);
+  }
+
+  // ── switch the active model (/model <id>) ──
+  function switchModel(id: string): void {
+    const resolved = resolveModel(props.config, id);
+    if (!resolved) {
+      note(`unknown model: ${id}`, "error");
+      return;
+    }
+    try {
+      providerRef.current = createProvider(resolved.providerConfig);
+    } catch (err) {
+      note((err as Error).message, "error");
+      return;
+    }
+    modelNameRef.current = resolved.model.name ?? resolved.model.id;
+    const label = resolved.model.id;
+    setModelLabel(label);
+    // Persist: update the session row (so --resume restores this model) and write
+    // the preference to ~/.cc/config.json (so it's the default next launch).
+    props.store.setModel(sessionIdRef.current, modelNameRef.current);
+    void saveConfig({ model: label }).catch((err) =>
+      note(
+        `could not save model preference: ${(err as Error).message}`,
+        "error",
+      ),
+    );
+    note(`model → ${label}`);
+  }
+
+  /** List every configured model id (/model with no argument). */
+  function listModels(): void {
+    const ids: string[] = [];
+    for (const pc of Object.values(props.config.providers)) {
+      for (const m of pc.models ?? [])
+        ids.push(m.name ? `${m.id} (${m.name})` : m.id);
+    }
+    note(ids.length ? `models: ${ids.join(", ")}` : "no models configured");
+  }
+
+  // ── handle a submitted input line (command or prompt) ──
+  function onSubmit(rawValue: string): void {
+    // The buffer may carry paste sentinels — expand them to the real pasted text
+    // before the prompt is sent, recorded to history, or dispatched as a command.
+    const value = expandPastes(rawValue, pasteMap);
+    const line = value.trim();
+    if (!line) return;
+    // Busy → queue this line to send when the current turn finishes. A second
+    // submit replaces the queued prompt rather than stacking.
+    if (busy) {
+      setInput("");
+      promptHistory.recordHistory(line);
+      queuedRef.current = line;
+      setQueued(line);
+      return;
+    }
+    setInput("");
+    promptHistory.recordHistory(line);
+
+    const action = dispatchCommand(line);
+    switch (action.kind) {
+      case "message":
+        push({ kind: "user", text: line });
+        messagesRef.current.push({
+          role: "user",
+          content: [{ type: "text", text: line }],
+        });
+        void runTurn();
+        break;
+      case "set-mode":
+        setMode(action.mode);
+        note(`mode → ${action.mode}`);
+        break;
+      case "set-think":
+        setThinking(action.level);
+        note(`thinking → ${describeLevel(action.level)}`);
+        break;
+      case "set-model":
+        switchModel(action.model);
+        break;
+      case "list-models":
+        listModels();
+        break;
+      case "clear": {
+        messagesRef.current = [];
+        persistedRef.current = 0;
+        sessionIdRef.current = props.store.createSession({
+          model: modelNameRef.current,
+          cwd: process.cwd(),
+          title: "(cleared)",
+          thinking,
+          mode,
+        });
+        // Ink's <Static> prints scrollback permanently — resetting React state
+        // alone leaves the old transcript on screen. We must clear via Ink's own
+        // instance.clear() so Ink resets its internal cursor/output bookkeeping;
+        // writing a raw clear escape (\x1b[2J…) out-of-band desyncs Ink and causes
+        // duplicated re-renders and a runaway layout. Reset history first, then
+        // clear on the next tick so the <Static> count is in sync.
+        setHistory([]);
+        setTasks([]);
+        queueMicrotask(() => props.inkInstance?.current?.clear());
+        setCost(0);
+        setTokens(0);
+        note("conversation cleared");
+        break;
+      }
+      case "cost": {
+        const s = props.store.getSession(sessionIdRef.current);
+        if (s) {
+          note(
+            `tokens: ${s.inputTokens}→${s.outputTokens} · cost: $${s.costUsd.toFixed(4)}`,
+          );
+        }
+        break;
+      }
+      case "resume":
+        note(
+          "resume from the TUI isn't supported yet — start with `cc --resume`",
+        );
+        break;
+      case "init":
+        doInit();
+        break;
+      case "help":
+        note(action.text);
+        break;
+      case "exit":
+        quit();
+        break;
+      case "error":
+        note(action.message, "error");
+        break;
+    }
+  }
+
+  // `/init` — drive a real agent turn that investigates the repo and writes a
+  // proper CC.md (not a placeholder template). Refuses to overwrite an existing
+  // CC.md so project memory is never clobbered.
+  function doInit(): void {
+    if (existsSync(join(process.cwd(), "CC.md"))) {
+      note(
+        `CC.md already exists — left intact (${join(process.cwd(), "CC.md")})`,
+        "error",
+      );
+      return;
+    }
+    push({ kind: "user", text: "/init" });
+    messagesRef.current.push({
+      role: "user",
+      content: [{ type: "text", text: INIT_PROMPT }],
+    });
+    note("investigating the project to write CC.md…");
+    void runTurn("normal");
+  }
+
+  function quit(): void {
+    if (quitTimerRef.current) clearTimeout(quitTimerRef.current);
+    props.store.close();
+    app.exit();
+  }
+
+  // Shared cancel escalation for both Ctrl+C and Esc. In priority order it:
+  //   1. cancels a queued prompt (the typed-while-busy line waiting to send),
+  //   2. clears the current prompt if there's text in it,
+  //   3. aborts the in-flight AI request,
+  //   4. arms quit (first press) then quits (second press within the window).
+  // `label` is the key name shown in the "press … again to quit" hint.
+  function handleCancel(label: string): void {
+    // 1. A queued prompt waiting to be sent after the current turn.
+    if (queuedRef.current !== null) {
+      queuedRef.current = null;
+      setQueued(null);
+      note("queued prompt canceled");
+      quitArmedRef.current = false;
+      if (quitTimerRef.current) clearTimeout(quitTimerRef.current);
+      return;
+    }
+    // 2. A non-empty prompt buffer — clear it.
+    if (inputRef.current.length > 0) {
+      setInput("");
+      bumpCursor();
+      quitArmedRef.current = false;
+      if (quitTimerRef.current) clearTimeout(quitTimerRef.current);
+      return;
+    }
+    // 3. An in-flight request — abort it.
+    if (controllerRef.current) {
+      controllerRef.current.abort();
+      // A pending confirm/checkpoint/ask holds the loop on an unresolved promise —
+      // decline them so the abort can actually propagate instead of deadlocking.
+      approvals.declineAllPending();
+      quitArmedRef.current = false;
+      if (quitTimerRef.current) clearTimeout(quitTimerRef.current);
+      return;
+    }
+    // 4. Nothing left to cancel — arm, then quit on the second press.
+    if (quitArmedRef.current) {
+      quit();
+      return;
+    }
+    quitArmedRef.current = true;
+    note(`press ${label} again to quit`);
+    if (quitTimerRef.current) clearTimeout(quitTimerRef.current);
+    quitTimerRef.current = setTimeout(() => {
+      quitArmedRef.current = false;
+    }, 1500);
+  }
+
+  return {
+    busy,
+    queued,
+    tasks,
+    cost,
+    tokens,
+    modelLabel,
+    mode,
+    thinking,
+    verbose,
+    setVerbose,
+    onSubmit,
+    cycleMode,
+    acceptPlan,
+    editPlan,
+    rejectPlan,
+    handleCancel,
+  };
+}

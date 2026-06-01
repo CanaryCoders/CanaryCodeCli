@@ -75,19 +75,28 @@ class McpClient {
 
   constructor(private readonly transport: Transport) {}
 
-  /** Run the transport + MCP handshake. Throws if either fails. */
+  /** Run the transport + MCP handshake. Throws if either fails.
+   *
+   * The three steps are a strict protocol ordering, NOT independent work: the
+   * transport must be live before `initialize` can be sent, and the server must
+   * finish `initialize` before it will accept the `initialized` notification.
+   * They are chained so each step depends on the previous completing — racing
+   * them with `Promise.all` would violate the MCP handshake. */
   async connect(): Promise<void> {
     this.transport.onMessage((m) => this.handle(m));
     this.transport.onClose((err) =>
       this.failAll(err ?? new Error("transport closed")),
     );
-    await this.transport.start();
-    await this.request("initialize", {
-      protocolVersion: PROTOCOL_VERSION,
-      capabilities: {},
-      clientInfo: { name: "cc", version: "0.0.1" },
-    });
-    await this.notify("notifications/initialized");
+    await this.transport
+      .start()
+      .then(() =>
+        this.request("initialize", {
+          protocolVersion: PROTOCOL_VERSION,
+          capabilities: {},
+          clientInfo: { name: "cc", version: "0.0.1" },
+        }),
+      )
+      .then(() => this.notify("notifications/initialized"));
   }
 
   /** List the server's tools. */
@@ -205,6 +214,18 @@ function wrapMcpTool(server: string, mt: McpTool, client: McpClient): Tool {
 // ── stdio transport ──────────────────────────────────────────────────────────
 
 /**
+ * Split the first newline-terminated line off a string buffer. Returns the line
+ * (without the trailing `\n`) and the remaining buffer, or `undefined` when the
+ * buffer holds no complete line yet. Pulling one frame per call keeps the
+ * line-scan out of the streaming read loop.
+ */
+function takeLine(buf: string): { line: string; rest: string } | undefined {
+  const nl = buf.indexOf("\n");
+  if (nl === -1) return undefined;
+  return { line: buf.slice(0, nl), rest: buf.slice(nl + 1) };
+}
+
+/**
  * Read newline-delimited JSON-RPC messages off a byte stream, dispatching each
  * parsed message to `onMessage`. Returns when the stream ends.
  */
@@ -212,23 +233,25 @@ async function readJsonLines(
   stream: ReadableStream<Uint8Array>,
   onMessage: (msg: RpcMessage) => void,
 ): Promise<void> {
-  const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buf = "";
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
+  // A stream pump: each chunk depends on the previous read advancing the cursor,
+  // so it is sequential by nature — `for await` over the async-iterable stream
+  // expresses that without a manual `reader.read()` await-in-loop.
+  for await (const value of stream) {
     buf += decoder.decode(value, { stream: true });
-    let nl: number;
-    while ((nl = buf.indexOf("\n")) !== -1) {
-      const line = buf.slice(0, nl).trim();
-      buf = buf.slice(nl + 1);
-      if (!line) continue;
-      try {
-        onMessage(JSON.parse(line) as RpcMessage);
-      } catch {
-        // Non-JSON line (e.g. server diagnostics) — ignore.
+    let frame = takeLine(buf);
+    while (frame) {
+      buf = frame.rest;
+      const line = frame.line.trim();
+      if (line) {
+        try {
+          onMessage(JSON.parse(line) as RpcMessage);
+        } catch {
+          // Non-JSON line (e.g. server diagnostics) — ignore.
+        }
       }
+      frame = takeLine(buf);
     }
   }
 }
@@ -359,7 +382,6 @@ async function readSse(
   stream: ReadableStream<Uint8Array>,
   onEvent: (event: string, data: string) => void,
 ): Promise<void> {
-  const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buf = "";
   let event = "message";
@@ -369,14 +391,14 @@ async function readSse(
     event = "message";
     data = [];
   };
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
+  // Sequential stream pump (each read advances the cursor) — `for await` over the
+  // async-iterable stream, no manual `reader.read()` await-in-loop.
+  for await (const value of stream) {
     buf += decoder.decode(value, { stream: true });
-    let nl: number;
-    while ((nl = buf.indexOf("\n")) !== -1) {
-      const line = buf.slice(0, nl).replace(/\r$/, "");
-      buf = buf.slice(nl + 1);
+    let frame = takeLine(buf);
+    while (frame) {
+      buf = frame.rest;
+      const line = frame.line.replace(/\r$/, "");
       if (line === "") {
         flush(); // blank line ends an event
       } else if (line.startsWith(":")) {
@@ -386,6 +408,7 @@ async function readSse(
       } else if (line.startsWith("data:")) {
         data.push(line.slice(5).replace(/^ /, ""));
       }
+      frame = takeLine(buf);
     }
   }
   flush();
@@ -417,20 +440,42 @@ export async function connectMcpServers(
   const clients: McpClient[] = [];
   const notes: string[] = [];
 
-  for (const [name, cfg] of Object.entries(servers)) {
+  // Different servers are independent, so connect to them concurrently. Each
+  // settles to its own tools/client/note; we fold the settled results back in
+  // `Object.entries` order so tool ordering and notes stay deterministic.
+  type ServerResult = {
+    tools: Tool[];
+    client?: McpClient;
+    note: string;
+  };
+  const connectOne = async (
+    name: string,
+    cfg: McpServerConfig,
+  ): Promise<ServerResult> => {
     const client = new McpClient(transportFor(cfg));
     try {
       await client.connect();
       const mcpTools = await client.listTools();
-      for (const mt of mcpTools) tools.push(wrapMcpTool(name, mt, client));
-      clients.push(client);
-      notes.push(
-        `${name} (${mcpTools.length} tool${mcpTools.length === 1 ? "" : "s"})`,
-      );
+      return {
+        tools: mcpTools.map((mt) => wrapMcpTool(name, mt, client)),
+        client,
+        note: `${name} (${mcpTools.length} tool${
+          mcpTools.length === 1 ? "" : "s"
+        })`,
+      };
     } catch (err) {
       await client.close().catch(() => {});
-      notes.push(`${name}: failed (${(err as Error).message})`);
+      return { tools: [], note: `${name}: failed (${(err as Error).message})` };
     }
+  };
+
+  const settled = await Promise.all(
+    Object.entries(servers).map(([name, cfg]) => connectOne(name, cfg)),
+  );
+  for (const r of settled) {
+    tools.push(...r.tools);
+    if (r.client) clients.push(r.client);
+    notes.push(r.note);
   }
 
   return { tools, clients, notes };

@@ -59,22 +59,33 @@ export interface Provider {
 
 // ── SSE parsing ──────────────────────────────────────────────────────────────
 
+/**
+ * Split the first blank-line-delimited SSE frame off a string buffer. Returns
+ * the frame text and the remaining buffer, or `undefined` when no complete frame
+ * is buffered yet. Pulling one frame per call keeps the scan out of the
+ * streaming read loop.
+ */
+function takeFrame(buf: string): { frame: string; rest: string } | undefined {
+  const sep = buf.indexOf("\n\n");
+  if (sep === -1) return undefined;
+  return { frame: buf.slice(0, sep), rest: buf.slice(sep + 2) };
+}
+
 /** Yield each parsed `data:` JSON object from a server-sent-events body. */
 async function* parseSSE(
   body: ReadableStream<Uint8Array>,
   // biome-ignore lint/suspicious/noExplicitAny: SSE frames are dynamically shaped JSON read with optional chaining.
 ): AsyncIterable<Record<string, any>> {
-  const reader = body.getReader();
   const decoder = new TextDecoder();
   let buf = "";
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  // Iterate the byte stream directly: each chunk strictly follows the previous
+  // one (the read cursor advances), so this pump is sequential by construction.
+  for await (const value of body as AsyncIterable<Uint8Array>) {
     buf += decoder.decode(value, { stream: true });
-    let idx: number;
-    while ((idx = buf.indexOf("\n\n")) !== -1) {
-      const chunk = buf.slice(0, idx);
-      buf = buf.slice(idx + 2);
+    let split = takeFrame(buf);
+    while (split) {
+      const chunk = split.frame;
+      buf = split.rest;
       for (const line of chunk.split("\n")) {
         if (line.startsWith("data:")) {
           const data = line.slice(5).trim();
@@ -87,6 +98,7 @@ async function* parseSSE(
           }
         }
       }
+      split = takeFrame(buf);
     }
   }
 }

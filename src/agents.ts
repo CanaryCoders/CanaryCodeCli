@@ -78,10 +78,10 @@ function parseAgent(text: string): ParsedAgent {
     meta[kv[1].toLowerCase()] = value;
   }
   const tools = meta.tools
-    ? meta.tools
-        .split(",")
-        .map((t) => t.trim())
-        .filter(Boolean)
+    ? meta.tools.split(",").flatMap((t) => {
+        const name = t.trim();
+        return name ? [name] : [];
+      })
     : undefined;
   return {
     name: meta.name,

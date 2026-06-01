@@ -209,6 +209,10 @@ export async function* runAgent(
         // checkpoint is a hard stop (the non-interactive runaway backstop).
         yield { type: "checkpoint", turn };
         if (opts.onCheckpoint) {
+          // The agent loop is inherently sequential — each turn depends on the
+          // previous turn's tool results, and this checkpoint blocks on a human
+          // y/n. Parallelizing (the rule's suggested fix) is impossible here.
+          // eslint-disable-next-line react-doctor/async-await-in-loop -- sequential by design; see above
           const keepGoing = await opts.onCheckpoint(turn);
           if (signal?.aborted) {
             yield { type: "done", reason: "aborted" };
@@ -372,6 +376,10 @@ export async function* runAgent(
 
       // ── 1. PreToolUse hooks: deterministic policy, every tool, every mode ──
       if (opts.preToolUse) {
+        // Tool calls run in order: each result is pushed sequentially and the gate
+        // below can prompt the human, which must be serialized. Awaiting per-call
+        // in the loop is intentional, not a missed Promise.all.
+        // eslint-disable-next-line react-doctor/async-await-in-loop -- sequential by design; see above
         const h = await opts.preToolUse(call);
         if (signal?.aborted) {
           yield { type: "done", reason: "aborted" };

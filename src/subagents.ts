@@ -150,14 +150,17 @@ async function runSubagent(
   // round-trip (and even when they sit outside what it would think to read).
   let brief = req.task;
   if (req.files && req.files.length > 0) {
-    const blocks: string[] = [];
-    for (const f of req.files) {
-      try {
-        blocks.push(`--- ${f} ---\n${await Bun.file(f).text()}`);
-      } catch {
-        blocks.push(`--- ${f} (could not read) ---`);
-      }
-    }
+    // The file reads are independent — race them, preserving the requested order
+    // in the assembled brief via the Promise.all result index.
+    const blocks = await Promise.all(
+      req.files.map(async (f) => {
+        try {
+          return `--- ${f} ---\n${await Bun.file(f).text()}`;
+        } catch {
+          return `--- ${f} (could not read) ---`;
+        }
+      }),
+    );
     brief += `\n\nRelevant files:\n${blocks.join("\n\n")}`;
   }
 

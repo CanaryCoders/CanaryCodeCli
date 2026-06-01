@@ -14,11 +14,12 @@ import { Box, Text } from "ink";
 import { type Diff, type DiffLine, diffStat } from "../diff.ts";
 import { codeLineFlags, parseMarkdown, type Span } from "../markdown.ts";
 import {
-  pickVerb,
-  RESPONDING_VERBS,
-  THINKING_VERBS,
-  TOOL_VERB,
-} from "../verbs.ts";
+  fmtInput,
+  head,
+  rowKey,
+  summarizeToolInput,
+  truncate,
+} from "./message-helpers.ts";
 import {
   DIFF,
   GUTTER_RULE,
@@ -77,180 +78,6 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown
   ? Omit<T, K>
   : never;
 export type ItemInput = DistributiveOmit<Item, "id">;
-
-// ── Tool input summarising ───────────────────────────────────────────────────────
-
-/** For each tool, the input field that best summarises the call on one line. */
-const TOOL_SUMMARY_FIELD: Record<string, string> = {
-  bash: "command",
-  read_file: "path",
-  write_file: "path",
-  edit_file: "path",
-  list_dir: "path",
-  grep: "pattern",
-  web_search: "query",
-  read_skill: "name",
-  spawn_agent: "task",
-};
-
-/** Pull the single most salient argument from a tool's input, e.g. the command
- * for `bash` or the path for `read_file`. Falls back to compact JSON for tools
- * with no known summary field (MCP tools, etc.). Returns "" when there's nothing
- * worth showing. */
-export function summarizeToolInput(name: string, input: unknown): string {
-  if (input && typeof input === "object") {
-    const rec = input as Record<string, unknown>;
-    const field = TOOL_SUMMARY_FIELD[name];
-    if (field && typeof rec[field] === "string" && rec[field]) {
-      return collapseWhitespace(rec[field] as string);
-    }
-  }
-  return fmtInput(input);
-}
-
-/** Compact one-line rendering of a tool's full input arguments (JSON). */
-function fmtInput(input: unknown): string {
-  let s: string;
-  try {
-    s = JSON.stringify(input);
-  } catch {
-    s = String(input);
-  }
-  if (s === "{}" || s === undefined || s === "null") return "";
-  return s;
-}
-
-function collapseWhitespace(s: string): string {
-  return s.replace(/\s+/g, " ").trim();
-}
-
-// ── Live status verb ───────────────────────────────────────────────────────────
-//
-// While a turn is in flight the spinner pairs with a short verb describing what's
-// happening *right now*, derived from the live items (the most recent one is the
-// best indicator). A pending tool maps to a literal tool verb ("running bash…",
-// "grepping…"); streaming assistant text and idle reasoning draw from rotating
-// mood pools (see verbs.ts), seeded by the live item's id so the verb is stable
-// for the step and changes on the next rather than flickering each spinner frame.
-
-/** A short status verb for the busy spinner, derived from the live transcript. */
-export function statusVerb(live: Item[]): string {
-  const last = live[live.length - 1];
-  if (!last) return `${pickVerb(THINKING_VERBS, 0)}…`;
-  // A stable per-step seed: holds steady while this item is live, rolls on the next.
-  const seed = last.id;
-  if (last.kind === "tool" && last.pending) {
-    return `${TOOL_VERB[last.name] ?? `running ${last.name}`}…`;
-  }
-  if (last.kind === "assistant") return `${pickVerb(RESPONDING_VERBS, seed)}…`;
-  // A finished tool, a note, or thinking → the model is (about to be) speaking.
-  return `${pickVerb(THINKING_VERBS, seed)}…`;
-}
-
-function truncate(s: string, max: number): string {
-  return s.length > max ? `${s.slice(0, max - 1)}…` : s;
-}
-
-/**
- * Keep only the trailing `maxRows` *visual* lines of `text`, accounting for
- * wrapping at `width` columns. Used to cap the live (in-flight) streaming block
- * so the dynamic region never grows past the terminal viewport — overflowing it
- * is what desyncs Ink's redraw and duplicates lines into the scrollback. The
- * complete text is still committed to `<Static>` when the block finalises, so
- * trimming here only affects what's shown *while* it streams.
- */
-export function tailLines(
-  text: string,
-  maxRows: number,
-  width: number,
-): { text: string; trimmed: boolean } {
-  if (maxRows <= 0) return { text: "", trimmed: text.length > 0 };
-  const w = Math.max(1, width);
-  const segs = text.split("\n");
-  const kept: string[] = [];
-  let used = 0;
-  for (let i = segs.length - 1; i >= 0; i--) {
-    const seg = segs[i]!;
-    const rows = Math.max(1, Math.ceil(seg.length / w));
-    if (used + rows > maxRows) {
-      // This segment doesn't fit whole. If we've already kept something, drop it
-      // entirely. Otherwise (a single trailing segment taller than the whole cap —
-      // e.g. one long unbroken paragraph streamed with no newline yet) keep only
-      // its last `remaining` visual rows: a single oversized segment that wrapped
-      // past the viewport is exactly what overflows the dynamic region and ghosts.
-      if (kept.length > 0) return { text: kept.join("\n"), trimmed: true };
-      const remaining = maxRows - used;
-      if (remaining <= 0) return { text: "", trimmed: true };
-      return { text: seg.slice(-(remaining * w)), trimmed: true };
-    }
-    kept.unshift(seg);
-    used += rows;
-  }
-  return { text, trimmed: false };
-}
-
-/**
- * Truncate every logical line of `text` to `width` columns so a live (redrawn)
- * block never *soft-wraps*. A wrapped line in the dynamic region is exactly what
- * Ink mis-erases — it under-counts the extra terminal rows the wrap occupies and
- * re-emits the line onto the stuck cursor row, smearing it horizontally. Keeping
- * each live line to a single terminal row makes Ink's per-line erase exact. The
- * complete, correctly-wrapped text is still committed to `<Static>` (printed once,
- * never redrawn) when the block finalises, so this only affects the live preview.
- *
- * Truncation is on the *raw* (pre-markdown) length, which only ever over-estimates
- * visible width (`**bold**` → 4 visible cols from 8 raw), so a clamped line can
- * never exceed `width` on screen — erring short, which is the safe direction.
- */
-export function clampLineWidth(text: string, width: number): string {
-  const w = Math.max(1, width);
-  return text
-    .split("\n")
-    .map((line) => (line.length > w ? `${line.slice(0, w - 1)}…` : line))
-    .join("\n");
-}
-
-/**
- * Length of the leading run of a streamed text block that is *stable* — i.e. safe
- * to commit to the permanent `<Static>` scrollback because it will never re-render
- * differently as more text arrives. This is the key to ghost-free streaming: only
- * the unstable tail stays in the dynamic region, so that region can't outgrow the
- * viewport (which is what desyncs Ink's redraw and duplicates lines).
- *
- * Stable = whole lines only (never a partial current line), and — for markdown —
- * never a line *inside* an open ``` code fence (the fence needs its closing marker
- * to render as one block). For plain `thinking` text it's simply everything up to
- * the last newline. Returns 0 when nothing is committable yet.
- */
-export function stablePrefixLen(
-  text: string,
-  kind: "assistant" | "thinking",
-): number {
-  const lastNl = text.lastIndexOf("\n");
-  if (lastNl < 0) return 0; // no complete line yet
-  if (kind === "thinking") return lastNl + 1;
-  // Markdown: walk complete lines, tracking ``` fence parity. The commit point is
-  // the offset after the last complete line that sits *outside* an open fence.
-  const lines = text.split("\n");
-  let fenceOpen = false;
-  let offset = 0;
-  let safe = 0;
-  for (let i = 0; i < lines.length - 1; i++) {
-    if (/^\s*```/.test(lines[i]!)) fenceOpen = !fenceOpen;
-    offset += lines[i]!.length + 1; // + the newline
-    if (!fenceOpen) safe = offset;
-  }
-  return safe;
-}
-
-/** First `n` non-trivial lines of a tool result, with an "(+N more)" marker. */
-function head(text: string, n: number): { lines: string[]; more: number } {
-  const all = text.replace(/\n+$/, "").split("\n");
-  return {
-    lines: all.slice(0, n).map((l) => truncate(l, 200)),
-    more: Math.max(0, all.length - n),
-  };
-}
 
 // ── Block gutter rule ──────────────────────────────────────────────────────────────
 //
@@ -314,16 +141,17 @@ function Markdown({ text }: { text: string }): React.ReactElement {
     <Box flexDirection="column">
       {lines.map((line, li) => {
         const spans = line.spans.map((span, si) => (
-          <Text key={si} {...spanProps(span)}>
+          <Text key={rowKey(si, span.text)} {...spanProps(span)}>
             {span.text}
           </Text>
         ));
+        const lineText = line.spans.map((s) => s.text).join("");
         return code[li] ? (
-          <RuleRow key={li}>
+          <RuleRow key={rowKey(li, lineText)}>
             <Text>{spans}</Text>
           </RuleRow>
         ) : (
-          <Text key={li}>{spans}</Text>
+          <Text key={rowKey(li, lineText)}>{spans}</Text>
         );
       })}
     </Box>
@@ -525,8 +353,7 @@ export function ItemView({
     case "note": {
       // While live (compact), truncate to one row so the note can't wrap and
       // desync the redrawn region; the full note lands in `<Static>` on finalise.
-      const text =
-        compact && width ? truncate(item.text, width) : item.text;
+      const text = compact && width ? truncate(item.text, width) : item.text;
       return (
         <Gutter
           speaker={item.tone === "error" ? "error" : "note"}
@@ -622,7 +449,7 @@ function ToolView({
       {body
         ? body.lines.map((line, i) => (
             <Text
-              key={i}
+              key={rowKey(i, line)}
               color={tint(item.isError ? "red" : undefined)}
               dimColor={!item.isError}
             >
@@ -702,7 +529,7 @@ export function DiffView({
         <Text dimColor>{diffStat(diff)}</Text>
       </RuleRow>
       {rows.map((r, i) => (
-        <RuleRow key={i}>
+        <RuleRow key={rowKey(i, r.text)}>
           <Text color={tint(r.color)}>{truncate(r.text, 200)}</Text>
         </RuleRow>
       ))}

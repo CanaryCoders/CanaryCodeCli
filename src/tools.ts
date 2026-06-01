@@ -239,11 +239,15 @@ const bash: Tool = {
       proc.kill();
     }, timeoutMs);
 
-    const [stdout, stderr] = await Promise.all([
+    // Drain both pipes *and* await exit together. The reads must be in flight
+    // before/while the process exits or a full pipe buffer deadlocks it, so these
+    // are not "sequential independent awaits" — racing them in one Promise.all is
+    // exactly the deadlock-safe ordering.
+    const [stdout, stderr, code] = await Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
+      proc.exited,
     ]);
-    const code = await proc.exited;
     clearTimeout(timer);
 
     const out = [stdout, stderr].filter((s) => s.length > 0).join("");

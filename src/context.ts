@@ -60,14 +60,20 @@ function dirChain(startDir: string): string[] {
 async function findContextFiles(
   startDir: string = process.cwd(),
 ): Promise<ContextFile[]> {
-  const found: ContextFile[] = [];
+  // Build the full candidate list in priority order (nearest dir first, then
+  // filename priority within a dir), then probe existence concurrently — the
+  // checks are independent, so racing them is safe. Filtering the resolved
+  // results back over the ordered candidates preserves the priority order.
+  const candidates: ContextFile[] = [];
   for (const dir of dirChain(startDir)) {
     for (const name of CONTEXT_FILENAMES) {
-      const path = join(dir, name);
-      if (await Bun.file(path).exists()) found.push({ path, name });
+      candidates.push({ path: join(dir, name), name });
     }
   }
-  return found;
+  const exists = await Promise.all(
+    candidates.map((c) => Bun.file(c.path).exists()),
+  );
+  return candidates.filter((_, i) => exists[i]);
 }
 
 /**
@@ -102,79 +108,6 @@ export async function loadProjectContext(
 export function composeSystemPrompt(base: string, ctx: ProjectContext): string {
   if (!ctx.content || !ctx.primary) return base;
   return `${base}\n\n── PROJECT CONTEXT (${ctx.primary.name}) ──\n${ctx.content}`;
-}
-
-/**
- * A starter CC.md template for `/init`. `name` labels the project (detected from
- * package.json or the directory name). Kept deliberately small — a scaffold the
- * user fills in, not a generated essay.
- */
-function starterContext(name: string): string {
-  return `# ${name}
-
-Project context for \`cc\`. This file is prepended to the system prompt so the
-agent knows how to work in this repo. Keep it short and high-signal.
-
-## Overview
-
-<!-- One or two sentences: what this project is and does. -->
-
-## Stack
-
-<!-- Languages, frameworks, runtimes, and key libraries. -->
-
-## Commands
-
-<!-- How to build, test, run, and lint. e.g.
-- build: \`...\`
-- test:  \`...\`
-- lint:  \`...\`
--->
-
-## Conventions
-
-<!-- Code style, patterns, and any rules the agent must follow. -->
-`;
-}
-
-/**
- * Detect a project name for the starter template: the `name` field of a
- * package.json in `dir`, else the directory's basename.
- */
-async function detectProjectName(dir: string): Promise<string> {
-  try {
-    const pkg = await Bun.file(join(dir, "package.json")).json();
-    if (pkg && typeof pkg.name === "string" && pkg.name.trim())
-      return pkg.name.trim();
-  } catch {
-    // no package.json or unparseable — fall through to the directory name
-  }
-  return resolve(dir).split("/").pop() || "project";
-}
-
-/** Result of an `/init` attempt. */
-export interface InitResult {
-  /** Absolute path to the CC.md (whether or not it was created). */
-  path: string;
-  /** True if a new file was written; false if one already existed (left intact). */
-  created: boolean;
-  /** The starter content written (only when `created`). */
-  content?: string;
-}
-
-/**
- * Generate a starter CC.md in `dir` (default cwd) for `/init`. Refuses to
- * overwrite an existing CC.md — returns `created:false` so the caller can warn
- * instead of clobbering project memory.
- */
-export async function initProjectContext(
-  dir: string = process.cwd(),
-): Promise<InitResult> {
-  const path = join(dir, "CC.md");
-  if (existsSync(path)) return { path, created: false };
-  const content = starterContext(await detectProjectName(dir));
-  await Bun.write(path, content);
-  return { path, created: true, content };
 }
 
 /** A one-line note for stderr describing what context was loaded (undefined if none). */

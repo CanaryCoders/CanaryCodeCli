@@ -15,7 +15,7 @@
 // two never fight over a keypress.
 
 import { Box, Text, useInput } from "ink";
-import { useRef, useState } from "react";
+import { useReducer, useRef } from "react";
 import type { AskAnswer, AskQuestion } from "../askuser.ts";
 import { recommendedIndex } from "../askuser.ts";
 import { MultilineInput } from "./Input.tsx";
@@ -23,6 +23,61 @@ import { SPACING, tint } from "./theme.ts";
 
 const CUSTOM_LABEL = "✎ Write my own answer";
 const ACCENT = "magenta";
+
+/** The wizard's full UI state: which question, cursor + picks, and the
+ *  free-text answer field. */
+interface State {
+  /** Index of the question currently shown. */
+  qIndex: number;
+  /** Row the cursor is on (an option index, or the "write my own" row). */
+  cursor: number;
+  /** Toggled option indices on a multiSelect question. */
+  picks: Set<number>;
+  /** Whether the free-text field has replaced the option list. */
+  writing: boolean;
+  /** The in-progress free-text answer. */
+  draft: string;
+}
+
+type Action =
+  | { type: "moveCursor"; rowCount: number; delta: number }
+  | { type: "togglePick"; index: number }
+  | { type: "startWriting" }
+  | { type: "setDraft"; draft: string }
+  | { type: "cancelWriting" }
+  | { type: "nextQuestion"; cursor: number };
+
+function reducer(state: State, action: Action): State {
+  switch (action.type) {
+    case "moveCursor": {
+      const { rowCount, delta } = action;
+      return {
+        ...state,
+        cursor: (state.cursor + delta + rowCount) % rowCount,
+      };
+    }
+    case "togglePick": {
+      const picks = new Set(state.picks);
+      if (picks.has(action.index)) picks.delete(action.index);
+      else picks.add(action.index);
+      return { ...state, picks };
+    }
+    case "startWriting":
+      return { ...state, writing: true };
+    case "setDraft":
+      return { ...state, draft: action.draft };
+    case "cancelWriting":
+      return { ...state, writing: false, draft: "" };
+    case "nextQuestion":
+      return {
+        qIndex: state.qIndex + 1,
+        cursor: action.cursor,
+        picks: new Set(),
+        writing: false,
+        draft: "",
+      };
+  }
+}
 
 interface AskUserViewProps {
   questions: AskQuestion[];
@@ -34,13 +89,15 @@ export function AskUserView({
   questions,
   onSubmit,
 }: AskUserViewProps): React.ReactElement {
-  const [qIndex, setQIndex] = useState(0);
   // Cursor starts on the recommended option so a bare Enter picks the default.
-  const [cursor, setCursor] = useState(() => recommendedIndex(questions[0]!));
-  const [picks, setPicks] = useState<Set<number>>(new Set());
-  // `writing` swaps the option list for the free-text field; `draft` holds it.
-  const [writing, setWriting] = useState(false);
-  const [draft, setDraft] = useState("");
+  const [state, dispatch] = useReducer(reducer, undefined, () => ({
+    qIndex: 0,
+    cursor: recommendedIndex(questions[0]!),
+    picks: new Set<number>(),
+    writing: false,
+    draft: "",
+  }));
+  const { qIndex, cursor, picks, writing, draft } = state;
   // Answers accumulate in a ref so advancing past the last question can submit
   // them synchronously without waiting for a state flush.
   const answersRef = useRef<AskAnswer[]>([]);
@@ -57,11 +114,10 @@ export function AskUserView({
       onSubmit(answersRef.current);
       return;
     }
-    setQIndex(next);
-    setCursor(recommendedIndex(questions[next]!));
-    setPicks(new Set());
-    setWriting(false);
-    setDraft("");
+    dispatch({
+      type: "nextQuestion",
+      cursor: recommendedIndex(questions[next]!),
+    });
   };
 
   // Confirm the preset selection: toggled picks if any (multiSelect), else the
@@ -69,7 +125,7 @@ export function AskUserView({
   const confirmPresets = (): void => {
     if (q.multiSelect && picks.size > 0) {
       const labels = [...picks]
-        .sort((a, b) => a - b)
+        .toSorted((a, b) => a - b)
         .map((i) => q.options[i]!.label);
       advance({ selected: labels });
     } else {
@@ -79,19 +135,16 @@ export function AskUserView({
 
   useInput(
     (input, key) => {
-      if (key.upArrow) return setCursor((c) => (c - 1 + rowCount) % rowCount);
-      if (key.downArrow) return setCursor((c) => (c + 1) % rowCount);
+      if (key.upArrow)
+        return dispatch({ type: "moveCursor", rowCount, delta: -1 });
+      if (key.downArrow)
+        return dispatch({ type: "moveCursor", rowCount, delta: 1 });
       // Space toggles a pick on multiSelect questions (not on the custom row).
       if (input === " " && q.multiSelect && cursor !== customRow) {
-        return setPicks((prev) => {
-          const next = new Set(prev);
-          if (next.has(cursor)) next.delete(cursor);
-          else next.add(cursor);
-          return next;
-        });
+        return dispatch({ type: "togglePick", index: cursor });
       }
       if (key.return) {
-        if (cursor === customRow) setWriting(true);
+        if (cursor === customRow) dispatch({ type: "startWriting" });
         else confirmPresets();
       }
     },
@@ -123,13 +176,12 @@ export function AskUserView({
             <Text color={accent}>{"› "}</Text>
             <MultilineInput
               value={draft}
-              onChange={setDraft}
+              onChange={(v) => dispatch({ type: "setDraft", draft: v })}
               onSubmit={(v) => {
                 const text = v.trim();
                 // Empty submit backs out to the option list; otherwise it's the answer.
                 if (!text) {
-                  setWriting(false);
-                  setDraft("");
+                  dispatch({ type: "cancelWriting" });
                   return;
                 }
                 advance({ selected: [], custom: text });
@@ -147,7 +199,7 @@ export function AskUserView({
             const isSel = i === cursor;
             const checked = q.multiSelect && picks.has(i);
             return (
-              <Box key={i}>
+              <Box key={`${i}:${o.label}`}>
                 <Text color={isSel ? accent : undefined}>
                   {isSel ? "› " : "  "}
                 </Text>

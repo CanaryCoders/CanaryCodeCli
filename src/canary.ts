@@ -58,6 +58,19 @@ function isCanaryProvider(pc: ProviderConfig): boolean {
  * the same bare id appearing under multiple providers (e.g. `gemini-2.5-flash`
  * is listed under both `gemini` and `vertex`), which a bare-id dedup would drop.
  */
+/**
+ * Whether a model's capability list marks it as chat-usable (`chat` or
+ * `reasoning`). A single pass over the tiny capabilities array — cheaper than
+ * allocating a Set per model, and keeps the membership test out of the parse
+ * loop.
+ */
+function isChatCapable(caps: readonly unknown[]): boolean {
+  for (const cap of caps) {
+    if (cap === "chat" || cap === "reasoning") return true;
+  }
+  return false;
+}
+
 function parseCanaryModels(payload: unknown): ModelConfig[] {
   const out: ModelConfig[] = [];
   const seen = new Set<string>();
@@ -74,10 +87,12 @@ function parseCanaryModels(payload: unknown): ModelConfig[] {
       const caps = Array.isArray(m?.capabilities)
         ? (m.capabilities as unknown[])
         : [];
-      if (!caps.includes("chat") && !caps.includes("reasoning")) continue;
+      if (!isChatCapable(caps)) continue;
       // The model is already `provider/model` only if the gateway ever changes
-      // its shape; otherwise prefix the group key it was listed under.
-      const id = rawId.includes("/") ? rawId : `${provider}/${rawId}`;
+      // its shape; otherwise prefix the group key it was listed under. (A regex
+      // test for the separator, not a membership scan — `rawId` is a string.)
+      const alreadyNamespaced = /\//.test(rawId);
+      const id = alreadyNamespaced ? rawId : `${provider}/${rawId}`;
       if (seen.has(id)) continue;
       seen.add(id);
       out.push({ id });
@@ -120,18 +135,24 @@ export async function populateCanaryModels(
   config: Config,
   opts: { fetchImpl?: typeof fetch; timeoutMs?: number } = {},
 ): Promise<CanaryPopulateResult | undefined> {
-  for (const [name, pc] of Object.entries(config.providers)) {
-    if (!isCanaryProvider(pc)) continue;
-    if ((pc.models?.length ?? 0) > 0) continue; // explicitly configured — leave it
-    if (!pc.apiKey) continue; // no key → not opted in → skip the network call
-    try {
-      pc.models = await fetchCanaryModels(opts);
-      return { provider: name, count: pc.models.length };
-    } catch (err) {
-      return { provider: name, error: (err as Error).message };
-    }
+  // Pick the single CanaryLLM provider to populate first (pure, no I/O), then do
+  // the one network call outside the loop. Only the first eligible provider is
+  // ever discovered, so there is nothing to parallelize here.
+  const target = Object.entries(config.providers).find(
+    ([, pc]) =>
+      isCanaryProvider(pc) &&
+      (pc.models?.length ?? 0) === 0 && // not explicitly configured
+      Boolean(pc.apiKey), // has a key → opted in
+  );
+  if (!target) return undefined;
+
+  const [name, pc] = target;
+  try {
+    pc.models = await fetchCanaryModels(opts);
+    return { provider: name, count: pc.models.length };
+  } catch (err) {
+    return { provider: name, error: (err as Error).message };
   }
-  return undefined;
 }
 
 /** One-line stderr/scrollback note describing a discovery result (or nothing). */

@@ -53,7 +53,7 @@ export function Complete({
         const idx = start + i;
         const isSel = idx === selected;
         return (
-          <Box key={idx}>
+          <Box key={`${idx}:${c.label}`}>
             <Text color={isSel ? accent : undefined}>
               {isSel ? "› " : "  "}
             </Text>

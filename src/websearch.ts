@@ -73,6 +73,47 @@ async function searchWeb(
 const DDG_UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
+/** One endpoint attempt: results, a "blocked" signal, or "miss" (retry next). */
+type EndpointOutcome =
+  | { kind: "results"; results: SearchResult[] }
+  | { kind: "blocked" }
+  | { kind: "miss" };
+
+/** Try a single DDG endpoint. Pulled out of the fallback loop so the loop holds
+ *  no inline await — the endpoints are a *sequential fallback chain* (try the
+ *  next only when this one misses/blocks), never raced. */
+async function tryDdgEndpoint(
+  endpoint: string,
+  query: string,
+  count: number,
+  fetchImpl: typeof fetch,
+  signal?: AbortSignal,
+): Promise<EndpointOutcome> {
+  let html: string;
+  try {
+    const res = await fetchImpl(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent": DDG_UA,
+        Accept: "text/html",
+      },
+      body: new URLSearchParams({ q: query }).toString(),
+      signal,
+    });
+    if (!res.ok) return { kind: "miss" };
+    html = await res.text();
+  } catch {
+    return { kind: "miss" };
+  }
+  // DDG's block page is short and contains an anomaly/challenge token.
+  if (/anomaly-modal|If this error persists|challenge/i.test(html)) {
+    return { kind: "blocked" };
+  }
+  const results = parseDdgHtml(html, count);
+  return results.length > 0 ? { kind: "results", results } : { kind: "miss" };
+}
+
 async function duckDuckGoSearch(
   query: string,
   count: number,
@@ -83,34 +124,29 @@ async function duckDuckGoSearch(
     "https://html.duckduckgo.com/html/",
     "https://lite.duckduckgo.com/lite/",
   ];
-  let blocked = false;
-  for (const endpoint of endpoints) {
-    let html: string;
-    try {
-      const res = await fetchImpl(endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          "User-Agent": DDG_UA,
-          Accept: "text/html",
-        },
-        body: new URLSearchParams({ q: query }).toString(),
-        signal,
-      });
-      if (!res.ok) continue;
-      html = await res.text();
-    } catch {
-      continue;
-    }
-    // DDG's block page is short and contains an anomaly/challenge token.
-    if (/anomaly-modal|If this error persists|challenge/i.test(html)) {
-      blocked = true;
-      continue;
-    }
-    const results = parseDdgHtml(html, count);
-    if (results.length > 0) return results;
-  }
-  if (blocked) {
+  // A sequential fallback chain: try the next endpoint only when the prior one
+  // misses/blocks — never raced (don't hammer both; the second is a backstop).
+  // `reduce` threads the prior outcome into the next step (a loop-carried
+  // dependency), so each attempt depends on the previous result, and a `results`
+  // outcome short-circuits the remaining attempts.
+  const final = await endpoints.reduce<Promise<EndpointOutcome>>(
+    (prev, endpoint) =>
+      prev.then((outcome) =>
+        outcome.kind === "results"
+          ? outcome
+          : tryDdgEndpoint(endpoint, query, count, fetchImpl, signal).then(
+              (next) =>
+                // Carry a "blocked" verdict forward so the final outcome still
+                // reflects it even if a later endpoint merely misses.
+                next.kind === "miss" && outcome.kind === "blocked"
+                  ? outcome
+                  : next,
+            ),
+      ),
+    Promise.resolve<EndpointOutcome>({ kind: "miss" }),
+  );
+  if (final.kind === "results") return final.results;
+  if (final.kind === "blocked") {
     throw new Error(
       "duckduckgo blocked this request (rate limit / anomaly page). " +
         "Retry shortly, or configure a keyed provider: set " +
