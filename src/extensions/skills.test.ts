@@ -7,12 +7,7 @@ import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  discoverSkills,
-  readSkillTool,
-  skillsExtension,
-  skillsPromptSection,
-} from "./skills.ts";
+import { discoverSkills, readSkillTool, skillsExtension } from "./skills.ts";
 
 // ---------------------------------------------------------------------------
 // Fixture helpers
@@ -118,7 +113,8 @@ test("skillsExtension().systemPrompt() reuses cached skills (no double discovery
 });
 
 test("skillsExtension().systemPrompt() returns undefined when skills is empty", () => {
-  const section = skillsPromptSection([]);
+  const ext = skillsExtension();
+  const section = ext.systemPrompt!({} as never);
   expect(section).toBeUndefined();
 });
 
