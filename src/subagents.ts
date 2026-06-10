@@ -100,6 +100,8 @@ function buildChildTools(
     childDepth < env.config.maxDepth &&
     (!allowed || allowed.has("spawn_agent"))
   ) {
+    // The env spread deliberately carries `gate` (and `signal`) down so every
+    // nested spawn_agent level stays under the parent's approval gate.
     childTools.push(spawnAgentTool({ ...env, depth: childDepth }));
   }
   return childTools;

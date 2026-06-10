@@ -51,6 +51,7 @@ function mutateOnceProvider(): Provider {
 describe("spawnAgentTool gate propagation", () => {
   test("spawn_agent child respects the parent gate", async () => {
     let toolRan = false;
+    let gateCalled = false;
     const mutating: Tool = {
       name: "mutate",
       description: "",
@@ -73,9 +74,13 @@ describe("spawnAgentTool gate propagation", () => {
       inheritedTools: [mutating],
       depth: 0,
       limiter: new Semaphore(1),
-      gate: async () => ({ allow: false, reason: "denied by test" }),
+      gate: async () => {
+        gateCalled = true;
+        return { allow: false, reason: "denied by test" };
+      },
     });
     await tool.run({ task: "do the thing" });
+    expect(gateCalled).toBe(true);
     expect(toolRan).toBe(false);
   });
 });
