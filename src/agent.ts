@@ -265,20 +265,30 @@ export async function* runAgent(
     if (compactAtTokens > 0) {
       const beforeTokens = estimateTokens(messages, system);
       if (beforeTokens > compactAtTokens) {
-        const result = await compactConversation({
-          provider,
-          model,
-          messages,
-          keepRecent,
-          signal,
-        });
-        if (result.summarized > 0) {
-          yield {
-            type: "compaction",
-            beforeTokens,
-            afterTokens: estimateTokens(messages, system),
-            summarized: result.summarized,
-          };
+        try {
+          const result = await compactConversation({
+            provider,
+            model,
+            messages,
+            keepRecent,
+            signal,
+          });
+          if (result.summarized > 0) {
+            yield {
+              type: "compaction",
+              beforeTokens,
+              afterTokens: estimateTokens(messages, system),
+              summarized: result.summarized,
+            };
+          }
+        } catch (err) {
+          // Same treatment as the streaming loop below: an abort mid-compaction
+          // must surface as the clean `aborted` outcome, not an error.
+          if (signal?.aborted) {
+            yield { type: "done", reason: "aborted" };
+            return;
+          }
+          throw err;
         }
       }
     }

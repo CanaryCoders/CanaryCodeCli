@@ -139,4 +139,33 @@ describe("runAgent abort during streaming", () => {
     expect(receivedSignal).toBeDefined();
     expect(events.at(-1)).toEqual({ type: "done", reason: "aborted" });
   });
+
+  test("abort before any event yields clean aborted done", async () => {
+    const controller = new AbortController();
+    // Mimics a fetch that is cancelled before the stream produces anything: the
+    // provider rejects with an AbortError without yielding a single event.
+    const provider: Provider = {
+      id: "fake",
+      // biome-ignore lint/correctness/useYield: aborts before producing anything by design
+      async *stream(): AsyncIterable<StreamEvent> {
+        controller.abort();
+        throw new DOMException("aborted", "AbortError");
+      },
+    };
+    const messages: Message[] = [
+      { role: "user", content: [{ type: "text", text: "hi" }] },
+    ];
+    const events: AgentEvent[] = [];
+    for await (const ev of runAgent({
+      provider,
+      model: "m",
+      system: "",
+      messages,
+      tools: [],
+      signal: controller.signal,
+    })) {
+      events.push(ev);
+    }
+    expect(events.at(-1)).toEqual({ type: "done", reason: "aborted" });
+  });
 });
