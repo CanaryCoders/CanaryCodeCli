@@ -198,7 +198,7 @@ function toToolDef(t: Tool): ToolDef {
 
 interface CollectedTurn {
   blocks: ContentBlock[];
-  toolUses: { id: string; name: string; input: unknown }[];
+  toolUses: { id: string; name: string; input: unknown; inputError?: string }[];
   stopReason?: string;
 }
 
@@ -340,6 +340,7 @@ export async function* runAgent(
               id: ev.id,
               name: ev.name,
               input: ev.input,
+              inputError: ev.inputError,
             });
             collected.blocks.push({
               type: "tool_use",
@@ -425,6 +426,22 @@ export async function* runAgent(
           is_error: true,
         });
       };
+
+      // ── 0. malformed streamed args: never execute, tell the model why ──
+      // The tool_use block is already in the assistant turn (collected during
+      // streaming), so this error tool_result keeps the conversation paired.
+      if (call.inputError) {
+        const msg = `tool call rejected: ${call.inputError} — issue the call again`;
+        yield {
+          type: "tool_end",
+          id: call.id,
+          name: call.name,
+          result: msg,
+          isError: true,
+        };
+        deny(msg);
+        continue;
+      }
 
       // ── 1. PreToolUse hooks: deterministic policy, every tool, every mode ──
       if (opts.preToolUse) {

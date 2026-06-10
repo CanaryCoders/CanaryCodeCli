@@ -271,6 +271,44 @@ describe("openai-responses provider stream", () => {
     ]);
   });
 
+  test("malformed function-call args yield inputError instead of silent {}", async () => {
+    const body = [
+      `data: ${JSON.stringify({ type: "response.output_item.added", item: { type: "function_call", id: "fc1", call_id: "call_1", name: "read", arguments: "" } })}`,
+      "",
+      // Truncated JSON — never closed.
+      `data: ${JSON.stringify({ type: "response.function_call_arguments.delta", item_id: "fc1", delta: '{"p":"a' })}`,
+      "",
+      `data: ${JSON.stringify({ type: "response.output_item.done", item: { type: "function_call", id: "fc1", call_id: "call_1", name: "read", arguments: '{"p":"a' } })}`,
+      "",
+      `data: ${JSON.stringify({ type: "response.completed", response: { usage: {} } })}`,
+      "",
+      "",
+    ].join("\n");
+
+    globalThis.fetch = (async () =>
+      new Response(sseStream(body), {
+        status: 200,
+      })) as unknown as typeof fetch;
+
+    const provider = createProvider(
+      { api: "openai-responses" },
+      { tokenGetter: fakeTokenGetter() },
+    );
+    const events = await collect(
+      provider.stream({ model: "m", system: "", messages: [], tools: [] }),
+    );
+
+    const toolUse = events.find((e) => e.type === "tool_use");
+    expect(toolUse).toEqual({
+      type: "tool_use",
+      id: "call_1",
+      name: "read",
+      input: {},
+      inputError: "tool call arguments were not valid JSON (stream truncated?)",
+    });
+    expect(events.at(-1)).toEqual({ type: "done", stopReason: "tool_use" });
+  });
+
   test("done stopReason is 'stop' when no tool was called", async () => {
     const body = [
       `data: ${JSON.stringify({ type: "response.output_text.delta", delta: "done" })}`,

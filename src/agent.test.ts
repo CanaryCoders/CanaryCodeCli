@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AgentEvent, roleForMode, runAgent } from "./agent.ts";
 import type { Message, Provider, StreamEvent } from "./provider.ts";
-import { tools } from "./tools.ts";
+import { type Tool, tools } from "./tools.ts";
 
 describe("roleForMode", () => {
   test("plan maps to reasoning", () => {
@@ -104,6 +104,74 @@ describe("runAgent image tool results", () => {
     expect(toolTurn.content.some((b) => b.type === "image")).toBe(false);
     const tr = toolTurn.content.find((b) => b.type === "tool_result");
     expect(tr && tr.type === "tool_result" && tr.content).toContain("cannot");
+  });
+});
+
+describe("runAgent malformed tool-call JSON", () => {
+  test("a tool_use carrying inputError is rejected without running the tool", async () => {
+    let turn = 0;
+    // Turn 1 emits a tool_use whose streamed args failed to parse; turn 2 stops.
+    const provider: Provider = {
+      id: "fake",
+      async *stream(): AsyncIterable<StreamEvent> {
+        if (turn++ === 0) {
+          yield {
+            type: "tool_use",
+            id: "1",
+            name: "t",
+            input: {},
+            inputError:
+              "tool call arguments were not valid JSON (stream truncated?)",
+          };
+          yield { type: "done", stopReason: "tool_use" };
+        } else {
+          yield { type: "done", stopReason: "stop" };
+        }
+      },
+    };
+    let ran = false;
+    const tool: Tool = {
+      name: "t",
+      description: "test tool",
+      schema: { type: "object" },
+      readOnly: true,
+      run: async () => {
+        ran = true;
+        return "ok";
+      },
+    };
+    const messages: Message[] = [
+      { role: "user", content: [{ type: "text", text: "go" }] },
+    ];
+    const events: AgentEvent[] = [];
+    for await (const ev of runAgent({
+      provider,
+      model: "m",
+      system: "",
+      messages,
+      tools: [tool],
+    })) {
+      events.push(ev);
+    }
+
+    // The tool itself must never execute.
+    expect(ran).toBe(false);
+
+    // The loop reports the rejection as an error tool_end.
+    const end = events.find((e) => e.type === "tool_end");
+    expect(end).toBeDefined();
+    expect(end!.type === "tool_end" && end!.isError).toBe(true);
+    expect(end!.type === "tool_end" && end!.result).toContain("rejected");
+
+    // The follow-up user message pairs the tool_use with an error tool_result.
+    const toolTurn = messages.find(
+      (m) =>
+        m.role === "user" && m.content.some((b) => b.type === "tool_result"),
+    );
+    expect(toolTurn).toBeDefined();
+    const tr = toolTurn!.content.find((b) => b.type === "tool_result");
+    expect(tr && tr.type === "tool_result" && tr.tool_use_id).toBe("1");
+    expect(tr && tr.type === "tool_result" && tr.is_error).toBe(true);
   });
 });
 

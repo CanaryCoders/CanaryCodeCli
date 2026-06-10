@@ -56,7 +56,14 @@ export interface StreamRequest {
 export type StreamEvent =
   | { type: "text_delta"; text: string }
   | { type: "thinking_delta"; text: string }
-  | { type: "tool_use"; id: string; name: string; input: unknown }
+  | {
+      type: "tool_use";
+      id: string;
+      name: string;
+      input: unknown;
+      /** Set when the streamed argument JSON failed to parse — the loop must not execute the call. */
+      inputError?: string;
+    }
   | { type: "usage"; inputTokens: number; outputTokens: number }
   | { type: "done"; stopReason?: string };
 
@@ -298,12 +305,20 @@ function anthropicProvider(opts: AnthropicOptions): Provider {
             const t = pending[ev.index];
             if (t) {
               let input: unknown = {};
+              let inputError: string | undefined;
               try {
                 input = t.json ? JSON.parse(t.json) : {};
               } catch {
-                input = {};
+                inputError =
+                  "tool call arguments were not valid JSON (stream truncated?)";
               }
-              yield { type: "tool_use", id: t.id, name: t.name, input };
+              yield {
+                type: "tool_use",
+                id: t.id,
+                name: t.name,
+                input,
+                ...(inputError ? { inputError } : {}),
+              };
               delete pending[ev.index];
             }
             break;
@@ -491,12 +506,20 @@ function openaiCompatProvider(opts: OpenAICompatOptions): Provider {
           .sort((a, b) => a - b)) {
           const t = pending[key]!;
           let input: unknown = {};
+          let inputError: string | undefined;
           try {
             input = t.args ? JSON.parse(t.args) : {};
           } catch {
-            input = {};
+            inputError =
+              "tool call arguments were not valid JSON (stream truncated?)";
           }
-          yield { type: "tool_use", id: t.id, name: t.name, input };
+          yield {
+            type: "tool_use",
+            id: t.id,
+            name: t.name,
+            input,
+            ...(inputError ? { inputError } : {}),
+          };
           delete pending[key];
         }
       };
@@ -732,13 +755,21 @@ function openaiResponsesProvider(opts: OpenAIResponsesOptions): Provider {
         args: string;
       }): Iterable<StreamEvent> {
         let input: unknown = {};
+        let inputError: string | undefined;
         try {
           input = slot.args ? JSON.parse(slot.args) : {};
         } catch {
-          input = {};
+          inputError =
+            "tool call arguments were not valid JSON (stream truncated?)";
         }
         sawToolCall = true;
-        yield { type: "tool_use", id: slot.id, name: slot.name, input };
+        yield {
+          type: "tool_use",
+          id: slot.id,
+          name: slot.name,
+          input,
+          ...(inputError ? { inputError } : {}),
+        };
       };
 
       for await (const ev of parseSSE(res.body)) {
