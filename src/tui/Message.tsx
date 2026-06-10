@@ -250,7 +250,9 @@ function Gutter({
   const bg = highlight ? tint(s.bg) : undefined;
   return (
     <Box flexDirection="row" marginTop={marginTop}>
-      <Box width={1} marginRight={1}>
+      {/* Leave enough room for Nerd Font glyphs that terminals render as two
+          cells; otherwise the glyph visually eats the following space. */}
+      <Box width={2} marginRight={1}>
         <Text
           color={tint(colorOverride ?? s.color)}
           backgroundColor={bg}
@@ -266,6 +268,8 @@ function Gutter({
     </Box>
   );
 }
+
+const NOTE_TEXT_ICON_RE = /^[▣◇⎇⌁⌘≡◉⛉]/u;
 
 // ── Rendering ────────────────────────────────────────────────────────────────────
 
@@ -379,9 +383,12 @@ export function ItemView({
       // While live (compact), truncate to one row so the note can't wrap and
       // desync the redrawn region; the full note lands in `<Static>` on finalise.
       const text = compact && width ? truncate(item.text, width) : item.text;
+      const speaker = item.tone === "error" ? "error" : "note";
+      const carriesIcon = item.tone !== "error" && NOTE_TEXT_ICON_RE.test(text);
       return (
         <Gutter
-          speaker={item.tone === "error" ? "error" : "note"}
+          speaker={speaker}
+          glyphless={carriesIcon}
           marginTop={prevKind === "note" ? SPACING.groupGap : SPACING.blockGap}
         >
           <Text color={tint(item.tone === "error" ? "red" : "gray")}>

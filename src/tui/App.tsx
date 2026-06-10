@@ -271,13 +271,13 @@ function App(props: AppProps): React.ReactElement {
   const rows = stdout?.rows ?? 24;
   const columns = stdout?.columns ?? 80;
   const liveCap = Math.max(3, rows - 10);
-  // Reserve for the *deepest* nested gutter a live line can sit behind: the 2-cell
+  // Reserve for the *deepest* nested gutter a live line can sit behind: the 3-cell
   // speaker gutter, plus the 2-cell `│ ` markdown rule that code-fence/indented
-  // lines get nested inside it. Clamping to `columns - 2` left code lines 2 cols
-  // too wide, so they soft-wrapped mid-word in the live region — and a wrapped
-  // live line occupies a terminal row `tailLines` never budgeted, overflowing the
-  // dynamic region and desyncing Ink into a flood of blank/duplicate lines.
-  const liveContentWidth = Math.max(1, columns - 4);
+  // lines get nested inside it. Clamping too wide makes code soft-wrap mid-word in
+  // the live region — and a wrapped live line occupies a terminal row `tailLines`
+  // never budgeted, overflowing the dynamic region and desyncing Ink into a flood
+  // of blank/duplicate lines.
+  const liveContentWidth = Math.max(1, columns - 5);
 
   return (
     <IconProvider config={props.config}>
