@@ -108,22 +108,31 @@ export async function discoverSkills(
 }
 
 /**
- * Append the available-skills catalog (names + descriptions only) to the base
- * system prompt. No-op when there are no skills. The model is told to call
- * `read_skill` to load a skill's full instructions before using it.
+ * The available-skills catalog section (names + descriptions only), or undefined
+ * when there are no skills. The model is told to call `read_skill` to load a
+ * skill's full instructions before using it. Returned as its own block so the
+ * extension kernel can append it as a named system-prompt section.
  */
-export function composeSkillsPrompt(base: string, skills: Skill[]): string {
-  if (skills.length === 0) return base;
+export function skillsPromptSection(skills: Skill[]): string | undefined {
+  if (skills.length === 0) return undefined;
   const lines = skills.map((s) => `- ${s.name}: ${s.description}`);
   return [
-    base,
-    "",
     "── SKILLS ──",
     "The following skills are available. Each is a set of instructions you can load on demand.",
     "When a skill is relevant to the task, call read_skill with its name to load its full instructions BEFORE acting.",
     "",
     ...lines,
   ].join("\n");
+}
+
+/**
+ * Append the available-skills catalog to the base system prompt. No-op when
+ * there are no skills. Thin wrapper over {@link skillsPromptSection} kept for the
+ * TUI assembly path (removed once it routes through the extension kernel too).
+ */
+export function composeSkillsPrompt(base: string, skills: Skill[]): string {
+  const section = skillsPromptSection(skills);
+  return section ? [base, "", section].join("\n") : base;
 }
 
 /** A one-line stderr note describing which skills were discovered (undefined if none). */

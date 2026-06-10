@@ -134,16 +134,15 @@ export async function discoverAgents(
 }
 
 /**
- * Append the available custom-agents catalog (names + descriptions) to the base
- * system prompt, telling the model it can delegate to them via `spawn_agent`'s
- * `agent` parameter. No-op when there are no custom agents.
+ * The available custom-agents catalog section (names + descriptions), or
+ * undefined when there are no custom agents. Tells the model it can delegate to
+ * them via `spawn_agent`'s `agent` parameter. Returned as its own block so the
+ * extension kernel can append it as a named system-prompt section.
  */
-export function composeAgentsPrompt(base: string, agents: AgentDef[]): string {
-  if (agents.length === 0) return base;
+export function agentsPromptSection(agents: AgentDef[]): string | undefined {
+  if (agents.length === 0) return undefined;
   const lines = agents.map((a) => `- ${a.name}: ${a.description}`);
   return [
-    base,
-    "",
     "── CUSTOM AGENTS ──",
     "You can delegate a focused sub-task to one of these purpose-built agents by",
     "calling spawn_agent with its name as the `agent` argument. Each runs with its",
@@ -151,6 +150,16 @@ export function composeAgentsPrompt(base: string, agents: AgentDef[]): string {
     "",
     ...lines,
   ].join("\n");
+}
+
+/**
+ * Append the custom-agents catalog to the base system prompt. No-op when there
+ * are no custom agents. Thin wrapper over {@link agentsPromptSection} kept for
+ * the TUI assembly path (removed once it routes through the extension kernel).
+ */
+export function composeAgentsPrompt(base: string, agents: AgentDef[]): string {
+  const section = agentsPromptSection(agents);
+  return section ? [base, "", section].join("\n") : base;
 }
 
 /** A one-line stderr/startup note listing discovered agents (undefined if none). */

@@ -71,7 +71,7 @@ describe("spawnAgentTool gate propagation", () => {
       } as Config,
       parentProvider: mutateOnceProvider(),
       parentModel: "m",
-      inheritedTools: [mutating],
+      inheritedTools: () => [mutating],
       depth: 0,
       limiter: new Semaphore(1),
       gate: async () => {

@@ -308,13 +308,16 @@ export function useAgentSession(deps: {
     ];
     if (props.config.maxDepth > 0) {
       const limiter = new Semaphore(props.config.maxConcurrent);
+      // Snapshot the base set children inherit (the tools built so far, before
+      // spawn_agent and update_tasks are appended).
+      const inherited = tools;
       tools = [
         ...tools,
         spawnAgentTool({
           config: props.config,
           parentProvider: turnProvider,
           parentModel: turnModel,
-          inheritedTools: tools,
+          inheritedTools: () => inherited,
           depth: 0,
           limiter,
           signal,

@@ -186,7 +186,7 @@ function configPath(): string {
 }
 
 /** Built-in defaults — a usable config with zero user setup (needs ANTHROPIC_API_KEY in env). */
-function defaultConfig(): Config {
+export function defaultConfig(): Config {
   return {
     model: "opus",
     providers: {

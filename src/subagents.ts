@@ -59,8 +59,10 @@ export interface SpawnAgentEnv {
   parentProvider: Provider;
   /** Concrete model name the parent is using (inherited by default). */
   parentModel: string;
-  /** Tools the child inherits. A nested spawn_agent is added on top per depth. */
-  inheritedTools: Tool[];
+  /** Tools the child inherits, resolved at spawn time. A nested spawn_agent is
+   * added on top per depth. Lazy so it can reflect the fully-composed tool set
+   * (the kernel hands the complete set only after assembly finishes). */
+  inheritedTools: () => Tool[];
   /** Depth of the agent that holds THIS tool (0 = top level). Children run at depth+1. */
   depth: number;
   /** Shared limiter bounding total concurrent sub-agent runs. */
@@ -93,9 +95,10 @@ function buildChildTools(
   allow?: string[],
 ): Tool[] {
   const allowed = allow ? new Set(allow) : null;
+  const inherited = env.inheritedTools();
   const childTools = allowed
-    ? env.inheritedTools.filter((t) => allowed.has(t.name))
-    : [...env.inheritedTools];
+    ? inherited.filter((t) => allowed.has(t.name))
+    : [...inherited];
   if (
     childDepth < env.config.maxDepth &&
     (!allowed || allowed.has("spawn_agent"))

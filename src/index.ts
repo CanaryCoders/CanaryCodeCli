@@ -8,18 +8,14 @@
 // folded into the prompt as context (`git diff | cc -p "commit message"`). The
 // interactive TUI lands in Phase 4.
 
-import {
-  type AgentMode,
-  roleForMode,
-  runAgent,
-  systemForMode,
-} from "./agent.ts";
+import { type AgentMode, roleForMode, runAgent } from "./agent.ts";
 import {
   composeAgentsPrompt,
   describeAgents,
   discoverAgents,
 } from "./agents.ts";
-import { askUserTool, autoAnswer } from "./askuser.ts";
+import { autoAnswer } from "./askuser.ts";
+import { assembleSession, SYSTEM_PROMPT } from "./assemble.ts";
 import {
   clearCredentials,
   hasCredentials,
@@ -43,8 +39,6 @@ import {
 import { diffStat, renderDiff } from "./diff.ts";
 import {
   describeHooks,
-  runPostToolHooks,
-  runPreToolHooks,
   runSessionEndHooks,
   runSessionStartHooks,
   runStopHooks,
@@ -52,12 +46,7 @@ import {
 } from "./hooks.ts";
 import { extractImagePaths, readImageFile } from "./image.ts";
 import { renderAnsi } from "./markdown.ts";
-import {
-  closeMcp,
-  connectMcpServers,
-  describeMcp,
-  type McpConnection,
-} from "./mcp.ts";
+import type { McpConnection } from "./mcp.ts";
 import {
   cachedCodexModels,
   describeCodex,
@@ -73,10 +62,8 @@ import {
   composeSkillsPrompt,
   describeSkills,
   discoverSkills,
-  readSkillTool,
 } from "./skills.ts";
-import { Semaphore, spawnAgentTool } from "./subagents.ts";
-import { statusMark, updateTasksTool } from "./tasks.ts";
+import { statusMark } from "./tasks.ts";
 import {
   describeLevel,
   parseLevel,
@@ -84,7 +71,6 @@ import {
   supportsThinking,
   type ThinkingLevel,
 } from "./thinking.ts";
-import { tools as allTools } from "./tools.ts";
 import { startTui } from "./tui/App.tsx";
 import {
   applyUpdate,
@@ -93,7 +79,6 @@ import {
   updateDisabledReason,
 } from "./update.ts";
 import { VERSION } from "./version.ts";
-import { webSearchTool } from "./websearch.ts";
 
 interface Args {
   help: boolean;
@@ -245,31 +230,6 @@ async function readStdin(): Promise<string> {
     return "";
   }
 }
-
-const SYSTEM_PROMPT = [
-  "You are cc, a concise terminal coding agent.",
-  "You operate in the user's current working directory and can read, search, and modify files and run shell commands via your tools.",
-  "Be direct. Use tools to inspect the project before answering; prefer evidence over assumptions.",
-  "",
-  "## Working approach",
-  "Think before you act. Before making any change, briefly inspect the relevant code and decide on an approach, then state the plan in one or two sentences before you start editing. Do NOT announce a change, make it, and then reverse course mid-task — that erodes trust. Settle on the approach first, then execute it. If you are genuinely unsure between real alternatives, investigate or ask before writing, rather than guessing and rewriting.",
-  "Never modify a file you have not read. Always read a file with read_file (or otherwise see its current contents) before you write_file or edit_file it, so your changes fit the existing code and don't clobber anything. Editing blind is not acceptable.",
-  "",
-  "## Tasks and delegation",
-  'When a request spans multiple distinct issues (e.g. "X is broken; also Y bothers me; also fix Z") OR is a large, multi-step feature, you MUST:',
-  "1. Call update_tasks FIRST to lay the work out as a task list (one task per distinct issue or major step), then keep it current — mark a task in_progress before you start it and completed the moment it is finished.",
-  "2. Work each task by delegating it to a sub-agent via spawn_agent with a complete, self-contained brief. This keeps your own context small, which matters most on large features where earlier context is lost to compaction.",
-  "3. When a custom agent (see the CUSTOM AGENTS section, if present) fits a task, dispatch to it by name via spawn_agent's `agent` argument instead of a generic sub-agent.",
-  "4. Decide per task whether the sub-agents can run in parallel (independent tasks — issue several spawn_agent calls in one turn) or must run sequentially (tasks that touch the same files or depend on each other's output).",
-  "For a single, small, self-contained request, skip all of this and just do the work inline — do not create a task list or spawn sub-agents for trivial work.",
-  "",
-  "ALWAYS end your turn with a recap once you have finished working (i.e. your final reply that makes no further tool calls). Never stop after a tool call without a closing message. The recap is mandatory — even for small tasks or when nothing changed. Format it exactly as:",
-  "",
-  "## Recap",
-  "- <what you did, one bullet per change or finding>",
-  "",
-  "Keep it short: list files touched and the key changes, plus anything the user should know (follow-ups, caveats, how to verify). If the task produced no changes, say so explicitly.",
-].join("\n");
 
 /** Render a one-line summary per recent session (the `/resume` listing). */
 function printSessions(store: SessionStore): void {
@@ -485,110 +445,10 @@ async function runHeadless(args: Args): Promise<number> {
     }
   }
 
-  // Discover skills (global ~/.cc/skills + project ./.cc/skills). Only their
-  // name+description go into the prompt; bodies load on demand via read_skill.
-  const skills = await discoverSkills();
-  const skillsNote = describeSkills(skills);
-  if (skillsNote) process.stderr.write(`${skillsNote}\n`);
-
-  // Discover custom agents (global ~/.cc/agents + project ./.cc/agents). Their
-  // name+description go into the prompt; spawn_agent dispatches to them by name.
-  const agents = await discoverAgents();
-  const agentsNote = describeAgents(agents);
-  if (agentsNote) process.stderr.write(`${agentsNote}\n`);
-
-  // Connect MCP servers (stdio + SSE) and merge their namespaced tools. A server
-  // that fails to connect is noted and skipped — the agent runs without it.
-  const mcp: McpConnection = args.noTools
-    ? { tools: [], clients: [], notes: [] }
-    : await connectMcpServers(config.mcpServers);
-  const mcpNote = describeMcp(mcp, Object.keys(config.mcpServers).length);
-  if (mcpNote) process.stderr.write(`${mcpNote}\n`);
-
-  // web_search is built from config (backend + key) and joins the static tool set.
-  // read_skill (read-only) lets the model pull a skill's full instructions on
-  // demand. MCP tools (namespaced `mcp__<server>__<tool>`) merge in too. In plan
-  // mode the loop gates non-read-only tools, but we also withhold them from the
-  // model entirely so it only sees what it can actually use.
-  let tools = args.noTools
-    ? []
-    : [
-        ...allTools,
-        webSearchTool(config.webSearch),
-        readSkillTool(skills),
-        // Headless has no interactive prompt — auto-answer each ask_user question
-        // with its recommended option so a call resolves instead of hanging.
-        askUserTool(async (questions) => autoAnswer(questions)),
-        ...mcp.tools,
-      ];
-  // spawn_agent lets the model delegate focused sub-tasks to child agents with a
-  // fresh context. Added only when sub-agents are enabled (maxDepth > 0); it is
-  // mutating, so the plan-mode filter below drops it. The inherited tool set is the
-  // base tools (children get their own nested spawn_agent up to the depth cap).
-  if (!args.noTools && config.maxDepth > 0) {
-    const limiter = new Semaphore(config.maxConcurrent);
-    tools = [
-      ...tools,
-      spawnAgentTool({
-        config,
-        parentProvider: provider,
-        parentModel: modelName,
-        inheritedTools: tools,
-        depth: 0,
-        limiter,
-        signal: controller.signal,
-        agents,
-        gate,
-      }),
-    ];
-  }
-  // update_tasks: the agent's own todo list. Headless prints each snapshot to
-  // stderr as a compact checklist (stdout stays clean for piped/--json output).
-  // Top-level only — deliberately not in spawn_agent's inheritedTools above.
-  if (!args.noTools) {
-    tools = [
-      ...tools,
-      updateTasksTool((list) => {
-        const lines = list
-          .map((t) => `  ${statusMark(t.status, config)} ${t.content}`)
-          .join("\n");
-        process.stderr.write(`\n≡ tasks:\n${lines}\n`);
-      }, config),
-    ];
-  }
-  if (mode === "plan") tools = tools.filter((t) => t.readOnly);
-  // Project memory (CC.md > AGENTS.md > CLAUDE.md, nearest dir first) is prepended
-  // to the base prompt before the mode-specific rules are appended.
-  const projectContext = await loadProjectContext();
-  const contextNote = describeContext(projectContext);
-  if (contextNote) process.stderr.write(`${contextNote}\n`);
-  const system = systemForMode(
-    composeAgentsPrompt(
-      composeSkillsPrompt(
-        composeSystemPrompt(SYSTEM_PROMPT, projectContext),
-        skills,
-      ),
-      agents,
-    ),
-    mode,
-  );
-  if (mode === "plan") process.stderr.write("≡ plan mode (read-only)\n");
-  if (mode === "auto")
-    process.stderr.write(`◉ auto mode (autonomous · max ${turnCap} turns)\n`);
-
-  // ── resolve the thinking level (explicit flag wins, else a prompt keyword) ──
-  const thinking = resolveThinking({ flag: args.think, prompt });
-  let thinkingBudget = thinking.budget;
-  if (thinkingBudget > 0 && !supportsThinking(provider.id)) {
-    process.stderr.write(
-      `note: ${modelName} (${provider.id}) does not support extended thinking; ignoring ${describeLevel(thinking.level)}\n`,
-    );
-    thinkingBudget = 0;
-  } else if (thinkingBudget > 0) {
-    process.stderr.write(`✻ ${describeLevel(thinking.level)}\n`);
-  }
-
   // ── Open the store and resolve which session to write into ──
+  // Resolved BEFORE assembly so the session id is available to extensions (the
+  // hooks extension stamps it into the hook payload). The "no session matching"
+  // error path returns before any MCP connection is opened, as it did before.
   const store = SessionStore.open();
   let sessionId: string;
   const messages: Message[] = [];
@@ -631,6 +491,46 @@ async function runHeadless(args: Args): Promise<number> {
   }
   if (config.hooks.UserPromptSubmit?.length) {
     await runUserPromptSubmitHooks(config.hooks, prompt, hookContext);
+  }
+
+  // ── Assemble the session: tools, system prompt, hooks, MCP cleanup ──
+  // Every capability is an Extension (see src/assemble.ts). Startup notes route
+  // to stderr (clean stdout for scripting); headless answers ask_user by
+  // auto-picking each question's recommended option and renders the task list as a
+  // compact stderr checklist.
+  const session = await assembleSession({
+    config,
+    mode,
+    provider,
+    model: modelName,
+    sessionId,
+    signal: controller.signal,
+    gate,
+    noTools: args.noTools,
+    note: (text) => process.stderr.write(`${text}\n`),
+    askUser: async (questions) => autoAnswer(questions),
+    onTasks: (list) => {
+      const lines = list
+        .map((t) => `  ${statusMark(t.status, config)} ${t.content}`)
+        .join("\n");
+      process.stderr.write(`\n≡ tasks:\n${lines}\n`);
+    },
+  });
+  const { tools, system } = session;
+  if (mode === "plan") process.stderr.write("≡ plan mode (read-only)\n");
+  if (mode === "auto")
+    process.stderr.write(`◉ auto mode (autonomous · max ${turnCap} turns)\n`);
+
+  // ── resolve the thinking level (explicit flag wins, else a prompt keyword) ──
+  const thinking = resolveThinking({ flag: args.think, prompt });
+  let thinkingBudget = thinking.budget;
+  if (thinkingBudget > 0 && !supportsThinking(provider.id)) {
+    process.stderr.write(
+      `note: ${modelName} (${provider.id}) does not support extended thinking; ignoring ${describeLevel(thinking.level)}\n`,
+    );
+    thinkingBudget = 0;
+  } else if (thinkingBudget > 0) {
+    process.stderr.write(`✻ ${describeLevel(thinking.level)}\n`);
   }
 
   // Everything already in `messages` is persisted; new entries (the prompt plus
@@ -707,18 +607,10 @@ async function runHeadless(args: Args): Promise<number> {
     }
   };
   // ── lifecycle hooks (PreToolUse can block; PostToolUse/Stop observe) ──
+  // PreToolUse/PostToolUse are now composed by the session's hooks extension;
+  // the Stop/SessionStart/SessionEnd hooks still fire from runHeadless directly.
   const hooksNote = describeHooks(config.hooks);
   if (hooksNote) process.stderr.write(`${hooksNote}\n`);
-  const preToolUse = config.hooks.PreToolUse?.length
-    ? (call: { name: string; input: unknown }) =>
-        runPreToolHooks(config.hooks, call, hookContext)
-    : undefined;
-  const postToolUse = config.hooks.PostToolUse?.length
-    ? (
-        call: { name: string; input: unknown },
-        result: { content: string; isError: boolean },
-      ) => runPostToolHooks(config.hooks, call, result, hookContext)
-    : undefined;
 
   try {
     for await (const ev of runAgent({
@@ -734,8 +626,8 @@ async function runHeadless(args: Args): Promise<number> {
       compactAtTokens: config.compactAtTokens,
       signal: controller.signal,
       gate,
-      preToolUse,
-      postToolUse,
+      preToolUse: session.preToolUse,
+      postToolUse: session.postToolUse,
     })) {
       switch (ev.type) {
         case "text":
@@ -895,7 +787,7 @@ async function runHeadless(args: Args): Promise<number> {
       }
     }
     store.close();
-    await closeMcp(mcp);
+    await session.dispose();
   }
 
   return sawError ? 1 : 0;
