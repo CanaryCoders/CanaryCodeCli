@@ -310,10 +310,20 @@ export class SessionStore {
         "SELECT role, content FROM turns WHERE session_id = ? ORDER BY idx ASC",
       )
       .all(sessionId) as TurnDbRow[];
-    return rows.map((r) => ({
-      role: r.role as Message["role"],
-      content: JSON.parse(r.content) as Message["content"],
-    }));
+    const out: Message[] = [];
+    for (const r of rows) {
+      // A corrupt row (partial write, manual edit) must not make the whole
+      // session unloadable — skip it and keep the rest of the transcript.
+      try {
+        out.push({
+          role: r.role as Message["role"],
+          content: JSON.parse(r.content) as Message["content"],
+        });
+      } catch {
+        // skip corrupt row
+      }
+    }
+    return out;
   }
 
   close(): void {
