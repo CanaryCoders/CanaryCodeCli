@@ -231,9 +231,7 @@ export function askUserTool(onAskUser: AskUserFn): Tool {
   };
 }
 
-export function askUserExtension(
-  answerer: Parameters<typeof askUserTool>[0],
-): Extension {
+export function askUserExtension(answerer: AskUserFn): Extension {
   return {
     name: "askuser",
     tools: () => [askUserTool(answerer)],

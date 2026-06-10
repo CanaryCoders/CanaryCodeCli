@@ -201,4 +201,7 @@ test("askUserExtension contributes ask_user and threads the answerer", async () 
     ],
   });
   expect(seen.length).toBe(1);
+  expect((seen[0] as AskQuestion[]).map((q) => q.question)).toEqual([
+    "Which database?",
+  ]);
 });
