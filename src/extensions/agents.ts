@@ -44,13 +44,13 @@ import { join } from "node:path";
 import { type AgentOptions, runAgent } from "../agent.ts";
 import { type Config, resolveModel } from "../config.ts";
 import type { Extension } from "../extension.ts";
+import { createProvider, type Message, type Provider } from "../provider.ts";
+import type { Tool } from "../tools.ts";
 import {
   runPostToolHooks,
   runPreToolHooks,
   runSubagentStopHooks,
-} from "../hooks.ts";
-import { createProvider, type Message, type Provider } from "../provider.ts";
-import type { Tool } from "../tools.ts";
+} from "./hooks.ts";
 
 export interface AgentDef {
   /** Agent name (frontmatter `name`, falling back to the filename). */

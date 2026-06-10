@@ -37,19 +37,19 @@ import {
   discoverAgents,
 } from "./extensions/agents.ts";
 import { autoAnswer } from "./extensions/askuser.ts";
-import type { McpConnection } from "./extensions/mcp.ts";
-import {
-  composeSkillsPrompt,
-  describeSkills,
-  discoverSkills,
-} from "./extensions/skills.ts";
 import {
   describeHooks,
   runSessionEndHooks,
   runSessionStartHooks,
   runStopHooks,
   runUserPromptSubmitHooks,
-} from "./hooks.ts";
+} from "./extensions/hooks.ts";
+import type { McpConnection } from "./extensions/mcp.ts";
+import {
+  composeSkillsPrompt,
+  describeSkills,
+  discoverSkills,
+} from "./extensions/skills.ts";
 import { extractImagePaths, readImageFile } from "./image.ts";
 import { renderAnsi } from "./markdown.ts";
 import {

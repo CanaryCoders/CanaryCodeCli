@@ -22,11 +22,11 @@ import type {
 import { composeExtensions } from "./extension.ts";
 import { agentsExtension } from "./extensions/agents.ts";
 import { type AskUserFn, askUserExtension } from "./extensions/askuser.ts";
+import { hooksExtension } from "./extensions/hooks.ts";
 import { mcpExtension } from "./extensions/mcp.ts";
 import { buildPermissionGate, composeGates } from "./extensions/permission.ts";
 import { skillsExtension } from "./extensions/skills.ts";
 import { webSearchExtension } from "./extensions/websearch.ts";
-import { runPostToolHooks, runPreToolHooks } from "./hooks.ts";
 import { updateTasksTool } from "./tasks.ts";
 import { tools as allTools } from "./tools.ts";
 
@@ -101,23 +101,7 @@ export async function assembleSession(
         askUserExtension(opts.askUser),
         mcpExtension(),
         agentsExtension(),
-        {
-          name: "hooks",
-          async preToolUse(call, ctx) {
-            if (!ctx.config.hooks.PreToolUse?.length) return { allow: true };
-            return runPreToolHooks(ctx.config.hooks, call, {
-              sessionId: ctx.sessionId,
-              cwd: process.cwd(),
-            });
-          },
-          async postToolUse(call, result, ctx) {
-            if (!ctx.config.hooks.PostToolUse?.length) return;
-            await runPostToolHooks(ctx.config.hooks, call, result, {
-              sessionId: ctx.sessionId,
-              cwd: process.cwd(),
-            });
-          },
-        },
+        hooksExtension(),
         {
           // MUST be last: update_tasks always sits at the end of the tool set.
           name: "tasks",

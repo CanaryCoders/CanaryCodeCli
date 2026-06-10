@@ -6,7 +6,7 @@
 // (`hook_event_name`, `tool_name`, `tool_input`, etc.) plus legacy aliases
 // (`event`, `tool`, `input`) so existing scripts keep working.
 
-import type { HookConfig, HooksConfig } from "./config.ts";
+import type { HookConfig, HooksConfig } from "../config.ts";
 
 export type HookEventName = keyof HooksConfig;
 
@@ -383,4 +383,26 @@ export function describeHooks(hooks: HooksConfig): string | undefined {
     if (count > 0) labels.push(`${count} ${event}`);
   }
   return labels.length ? `⎇ hooks: ${labels.join(", ")}` : undefined;
+}
+
+import type { Extension } from "../extension.ts";
+
+export function hooksExtension(): Extension {
+  return {
+    name: "hooks",
+    async preToolUse(call, ctx) {
+      if (!ctx.config.hooks.PreToolUse?.length) return { allow: true };
+      return runPreToolHooks(ctx.config.hooks, call, {
+        sessionId: ctx.sessionId,
+        cwd: process.cwd(),
+      });
+    },
+    async postToolUse(call, result, ctx) {
+      if (!ctx.config.hooks.PostToolUse?.length) return;
+      await runPostToolHooks(ctx.config.hooks, call, result, {
+        sessionId: ctx.sessionId,
+        cwd: process.cwd(),
+      });
+    },
+  };
 }
