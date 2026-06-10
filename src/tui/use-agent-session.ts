@@ -181,12 +181,19 @@ export function useAgentSession(deps: {
   const [mode, setModeState] = useState<AgentMode>(
     props.initialMode ?? "normal",
   );
+  // Mirror of `mode` for long-lived async closures. A turn dispatched from an
+  // older render (e.g. a queued prompt sent when the previous turn ends) would
+  // otherwise read that render's stale `mode` — after a plan accept it would
+  // silently run the next turn in plan mode (read-only tools) while the footer
+  // says normal. Always resolve the run mode through this ref.
+  const modeRef = useRef(mode);
   const [thinking, setThinkingState] = useState<ThinkingLevel>(
     props.initialThinking ?? "off",
   );
   // Persist mode / thinking onto the session row as they change, so a later
   // `--resume` restores them. Wrappers keep React state + the stored row in sync.
   const setMode = (next: AgentMode) => {
+    modeRef.current = next;
     setModeState(next);
     props.store.setMode(sessionIdRef.current, next);
   };
@@ -358,7 +365,7 @@ export function useAgentSession(deps: {
     const controller = new AbortController();
     controllerRef.current = controller;
 
-    const runMode = modeOverride ?? mode;
+    const runMode = modeOverride ?? modeRef.current;
     const {
       provider: turnProvider,
       model: turnModel,
@@ -822,7 +829,7 @@ export function useAgentSession(deps: {
     pendingImagesRef.current = [];
     const imagePaths = extractImagePaths(messageText);
     if (clipboardImages.length || imagePaths.length) {
-      const runMode = modeOverride ?? mode;
+      const runMode = modeOverride ?? modeRef.current;
       const resolved = resolveModel(
         props.config,
         props.config.models?.[roleForMode(runMode)],

@@ -191,6 +191,11 @@ export type AgentEvent =
   | { type: "checkpoint"; turn: number }
   | { type: "done"; reason: "stop" | "max_turns" | "aborted" | "stopped" };
 
+/** How many times in a row the exact same tool call may execute before the
+ * loop breaker denies it (legitimate back-to-back repeats — e.g. re-reading a
+ * file after an edit elsewhere failed — stay under this). */
+const MAX_IDENTICAL_CALLS = 2;
+
 /** Strip a Tool down to the provider-facing `ToolDef` (no executor). */
 function toToolDef(t: Tool): ToolDef {
   return { name: t.name, description: t.description, schema: t.schema };
@@ -220,6 +225,13 @@ export async function* runAgent(
   const toolDefs = tools.map(toToolDef);
   // Index tools by name once so the per-call lookups below are O(1).
   const toolByName = new Map(tools.map((t) => [t.name, t] as const));
+
+  // Repeated-call loop breaker: a model that re-issues the exact same call
+  // (same tool, same input) over and over is stuck — execute it at most
+  // MAX_IDENTICAL_CALLS times in a row, then deny with a corrective error so
+  // the model gets a signal it can act on instead of an endless echo.
+  let lastCallSig = "";
+  let lastCallSigCount = 0;
 
   // The loop is unbounded when checkpointing is on (`checkpointEvery > 0`): it runs
   // until the model stops asking for tools, the signal aborts, or the caller declines
@@ -433,6 +445,34 @@ export async function* runAgent(
       // tool_start was already emitted above; the error tool_end closes it.
       if (call.inputError) {
         const msg = `tool call rejected: ${call.inputError} — issue the call again (if it keeps failing, try a smaller or simpler call)`;
+        yield {
+          type: "tool_end",
+          id: call.id,
+          name: call.name,
+          result: msg,
+          isError: true,
+        };
+        deny(msg);
+        continue;
+      }
+
+      // ── 0.5. repeated-call loop breaker ──
+      // Counted across turns: text/thinking between calls does not reset it,
+      // only a different call (or different input) does.
+      const sig = `${call.name} ${JSON.stringify(call.input ?? {})}`;
+      if (sig === lastCallSig) {
+        lastCallSigCount++;
+      } else {
+        lastCallSig = sig;
+        lastCallSigCount = 1;
+      }
+      if (lastCallSigCount > MAX_IDENTICAL_CALLS) {
+        const msg =
+          `loop detected: this exact ${call.name} call has now been issued ` +
+          `${lastCallSigCount} times in a row with identical input, so it was NOT run — ` +
+          `repeating it will not change anything. Take a different next step: change the ` +
+          `input, use one of your other available tools, or reply in text describing what ` +
+          `you are trying to do and what is blocking you.`;
         yield {
           type: "tool_end",
           id: call.id,

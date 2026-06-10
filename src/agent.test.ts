@@ -179,6 +179,121 @@ describe("runAgent malformed tool-call JSON", () => {
   });
 });
 
+describe("runAgent repeated-call loop breaker", () => {
+  /** Provider that emits one identical tool call per turn, `n` times, then stops. */
+  function repeatProvider(n: number, input: unknown = { x: 1 }): Provider {
+    let turn = 0;
+    return {
+      id: "fake",
+      async *stream(): AsyncIterable<StreamEvent> {
+        if (turn++ < n) {
+          yield { type: "tool_use", id: `c${turn}`, name: "t", input };
+          yield { type: "done", stopReason: "tool_use" };
+        } else {
+          yield { type: "done", stopReason: "stop" };
+        }
+      },
+    };
+  }
+
+  function countingTool(): { tool: Tool; runs: () => number } {
+    let runs = 0;
+    const tool: Tool = {
+      name: "t",
+      description: "test tool",
+      schema: { type: "object" },
+      readOnly: true,
+      run: async () => {
+        runs++;
+        return "ok";
+      },
+    };
+    return { tool, runs: () => runs };
+  }
+
+  test("the third consecutive identical call is denied without running the tool", async () => {
+    const { tool, runs } = countingTool();
+    const messages: Message[] = [
+      { role: "user", content: [{ type: "text", text: "go" }] },
+    ];
+    const events: AgentEvent[] = [];
+    for await (const ev of runAgent({
+      provider: repeatProvider(3),
+      model: "m",
+      system: "",
+      messages,
+      tools: [tool],
+    })) {
+      events.push(ev);
+    }
+
+    // The first two identical calls run; the third is broken as a loop.
+    expect(runs()).toBe(2);
+    const ends = events.filter((e) => e.type === "tool_end");
+    expect(ends).toHaveLength(3);
+    const last = ends.at(-1)!;
+    expect(last.type === "tool_end" && last.isError).toBe(true);
+    expect(last.type === "tool_end" && last.result).toContain("loop");
+
+    // The denial reaches the model as an error tool_result, keeping turns paired.
+    const errorResults = messages.flatMap((m) =>
+      m.content.filter((b) => b.type === "tool_result" && b.is_error),
+    );
+    expect(errorResults).toHaveLength(1);
+  });
+
+  test("a different input resets the repeat counter", async () => {
+    const { tool, runs } = countingTool();
+    let turn = 0;
+    // Two identical calls, one different, then the first shape again: no loop.
+    const inputs = [{ x: 1 }, { x: 1 }, { x: 2 }, { x: 1 }];
+    const provider: Provider = {
+      id: "fake",
+      async *stream(): AsyncIterable<StreamEvent> {
+        if (turn < inputs.length) {
+          yield {
+            type: "tool_use",
+            id: `c${turn}`,
+            name: "t",
+            input: inputs[turn++],
+          };
+          yield { type: "done", stopReason: "tool_use" };
+        } else {
+          yield { type: "done", stopReason: "stop" };
+        }
+      },
+    };
+    const messages: Message[] = [
+      { role: "user", content: [{ type: "text", text: "go" }] },
+    ];
+    await drain(
+      runAgent({ provider, model: "m", system: "", messages, tools: [tool] }),
+    );
+    expect(runs()).toBe(4);
+  });
+
+  test("denied repeats stay denied until the call changes", async () => {
+    const { tool, runs } = countingTool();
+    const messages: Message[] = [
+      { role: "user", content: [{ type: "text", text: "go" }] },
+    ];
+    const events: AgentEvent[] = [];
+    for await (const ev of runAgent({
+      provider: repeatProvider(5),
+      model: "m",
+      system: "",
+      messages,
+      tools: [tool],
+    })) {
+      events.push(ev);
+    }
+    // Calls 3, 4 and 5 are all denied; the tool still ran only twice.
+    expect(runs()).toBe(2);
+    const errorEnds = events.filter((e) => e.type === "tool_end" && e.isError);
+    expect(errorEnds).toHaveLength(3);
+  });
+});
+
 describe("runAgent abort during streaming", () => {
   test("an aborted fetch rejection surfaces as a clean aborted done event", async () => {
     const controller = new AbortController();
