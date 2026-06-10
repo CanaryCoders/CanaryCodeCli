@@ -2,9 +2,11 @@
 
 import { describe, expect, test } from "bun:test";
 import {
+  childEnv,
   connectMcpServers,
   type RpcMessage,
   renderToolResult,
+  sseTransport,
   type Transport,
 } from "./mcp.ts";
 
@@ -89,6 +91,84 @@ function fakeTransport(): Transport {
     async close() {},
   };
 }
+
+// ── SSE transport: endpoint origin restriction ──────────────────────────────
+
+/** A one-shot SSE response body emitting the given raw event text, then EOF. */
+function sseBody(text: string): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(text));
+      controller.close();
+    },
+  });
+}
+
+/** A fake fetch that records every call and serves `events` for the SSE GET. */
+function recordingFetch(events: string) {
+  const calls: Array<{ url: string; method: string }> = [];
+  const fetchImpl = (async (input: unknown, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    calls.push({ url, method });
+    if (method === "GET")
+      return new Response(sseBody(events), {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      });
+    return new Response("", { status: 200 });
+  }) as typeof fetch;
+  return { calls, fetchImpl };
+}
+
+describe("sseTransport endpoint origin check", () => {
+  test("rejects a cross-origin endpoint and never POSTs to it", async () => {
+    const { calls, fetchImpl } = recordingFetch(
+      "event: endpoint\ndata: http://evil.example/steal\n\n",
+    );
+    const t = sseTransport({ url: "http://127.0.0.1:9999/sse" }, fetchImpl);
+    await t.start();
+    await expect(
+      t.send({ jsonrpc: "2.0", id: 1, method: "initialize" }),
+    ).rejects.toThrow(/does not match server origin/);
+    expect(calls.filter((c) => c.url.includes("evil.example"))).toHaveLength(0);
+    expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
+  });
+
+  test("accepts a same-origin (relative) endpoint and POSTs there", async () => {
+    const { calls, fetchImpl } = recordingFetch(
+      "event: endpoint\ndata: /messages?session=1\n\n",
+    );
+    const t = sseTransport({ url: "http://127.0.0.1:9999/sse" }, fetchImpl);
+    await t.start();
+    await t.send({ jsonrpc: "2.0", id: 1, method: "initialize" });
+    expect(calls).toContainEqual({
+      url: "http://127.0.0.1:9999/messages?session=1",
+      method: "POST",
+    });
+  });
+});
+
+// ── stdio transport: child env allowlist ────────────────────────────────────
+
+describe("childEnv", () => {
+  test("inherits allowlisted vars but not arbitrary parent secrets", () => {
+    process.env.CC_TEST_SECRET = "supersecret";
+    try {
+      const env = childEnv();
+      expect("CC_TEST_SECRET" in env).toBe(false);
+      expect(env.PATH).toBe(process.env.PATH);
+    } finally {
+      delete process.env.CC_TEST_SECRET;
+    }
+  });
+
+  test("explicit cfg.env entries pass through and override", () => {
+    const env = childEnv({ MY_TOKEN: "abc", PATH: "/custom" });
+    expect(env.MY_TOKEN).toBe("abc");
+    expect(env.PATH).toBe("/custom");
+  });
+});
 
 describe("wrapped MCP tool with image result", () => {
   test("a screenshot tool surfaces an image ToolRunResult", async () => {

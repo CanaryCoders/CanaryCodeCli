@@ -286,6 +286,30 @@ async function readJsonLines(
   }
 }
 
+/** Vars safe to inherit by default — secrets must be passed via cfg.env explicitly
+ *  (mirrors the official MCP SDK's default inherited env). */
+const SAFE_ENV = [
+  "HOME",
+  "LOGNAME",
+  "PATH",
+  "SHELL",
+  "TERM",
+  "USER",
+  "TMPDIR",
+  "LANG",
+  "LC_ALL",
+];
+
+/** Build the environment for a spawned MCP server: allowlisted parent vars plus
+ *  the server's explicit `env` entries. Exported for tests. */
+export function childEnv(
+  extra?: Record<string, string>,
+): Record<string, string | undefined> {
+  const env: Record<string, string | undefined> = {};
+  for (const k of SAFE_ENV) env[k] = process.env[k];
+  return { ...env, ...extra };
+}
+
 /** A stdio transport that spawns `command args...` and speaks JSON-RPC over its stdio. */
 function stdioTransport(cfg: McpServerConfig): Transport {
   let proc: ReturnType<typeof Bun.spawn> | undefined;
@@ -305,7 +329,7 @@ function stdioTransport(cfg: McpServerConfig): Transport {
         stdin: "pipe",
         stdout: "pipe",
         stderr: "ignore",
-        env: { ...process.env, ...(cfg.env ?? {}) },
+        env: childEnv(cfg.env),
       });
       // Pump stdout in the background; signal close when it ends or the process exits.
       readJsonLines(proc.stdout as ReadableStream<Uint8Array>, (m) =>
@@ -313,11 +337,13 @@ function stdioTransport(cfg: McpServerConfig): Transport {
       )
         .catch(() => {})
         .finally(() => onClose());
-      proc.exited.then((code) =>
-        onClose(
-          code ? new Error(`MCP server exited (code ${code})`) : undefined,
-        ),
-      );
+      proc.exited
+        .then((code) =>
+          onClose(
+            code ? new Error(`MCP server exited (code ${code})`) : undefined,
+          ),
+        )
+        .catch(() => onClose(new Error("MCP server process error")));
     },
     async send(msg) {
       if (!proc) throw new Error("transport not started");
@@ -338,7 +364,7 @@ function stdioTransport(cfg: McpServerConfig): Transport {
  * `endpoint` event carries the URL to POST client messages to; server messages
  * arrive as `message` events on the stream.
  */
-function sseTransport(
+export function sseTransport(
   cfg: McpServerConfig,
   fetchImpl: typeof fetch = fetch,
 ): Transport {
@@ -372,7 +398,18 @@ function sseTransport(
       // Pump the SSE stream in the background.
       readSse(resp.body as ReadableStream<Uint8Array>, (event, data) => {
         if (event === "endpoint") {
-          endpoint = new URL(data, base).href;
+          // The endpoint is server-controlled: restrict it to the configured
+          // server's origin so a malicious server can't redirect our POSTs.
+          const resolved = new URL(data, base);
+          if (resolved.origin !== new URL(base).origin) {
+            failReady(
+              new Error(
+                `SSE endpoint ${resolved.origin} does not match server origin`,
+              ),
+            );
+            return;
+          }
+          endpoint = resolved.href;
           markReady();
         } else if (event === "message") {
           try {
@@ -384,7 +421,10 @@ function sseTransport(
       })
         .catch(() => {})
         .finally(() => {
-          failReady(new Error("SSE stream closed before endpoint"));
+          // Only fail `ready` if the endpoint never arrived — after a
+          // successful session the promise is already settled.
+          if (!endpoint)
+            failReady(new Error("SSE stream closed before endpoint"));
           onClose();
         });
     },
