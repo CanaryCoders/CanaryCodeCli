@@ -1,7 +1,14 @@
-// tasks.test.ts — unit tests for the framework-agnostic update_tasks helpers.
+// tasks.test.ts — unit tests for the framework-agnostic update_tasks helpers
+// plus the tasksExtension factory.
 
 import { describe, expect, test } from "bun:test";
-import { formatTasks, parseTasks, statusMark, type Task } from "./tasks.ts";
+import {
+  formatTasks,
+  parseTasks,
+  statusMark,
+  type Task,
+  tasksExtension,
+} from "./tasks.ts";
 
 describe("parseTasks", () => {
   test("parses a minimal valid list", () => {
@@ -71,5 +78,38 @@ describe("formatTasks", () => {
     expect(out).toContain("1/3 done");
     expect(out).toContain("Fix X");
     expect(out).toContain("Fix Z");
+  });
+});
+
+describe("tasksExtension", () => {
+  test("returns an extension named 'tasks'", () => {
+    expect(tasksExtension(() => {}).name).toBe("tasks");
+  });
+
+  test("yields exactly one update_tasks tool with readOnly=true", async () => {
+    const ext = tasksExtension(() => {});
+    const tools = await ext.tools?.({} as never);
+    expect(tools).toHaveLength(1);
+    expect(tools?.[0]?.name).toBe("update_tasks");
+    expect(tools?.[0]?.readOnly).toBe(true);
+  });
+
+  test("running the tool invokes the onUpdate spy with parsed tasks", async () => {
+    const received: Task[][] = [];
+    const ext = tasksExtension((tasks) => received.push(tasks));
+    const tools = await ext.tools?.({} as never);
+    await tools?.[0]?.run({
+      tasks: [{ content: "Do something", status: "pending" }],
+    });
+    expect(received).toHaveLength(1);
+    expect(received[0]?.[0]?.content).toBe("Do something");
+    expect(received[0]?.[0]?.status).toBe("pending");
+  });
+
+  test("systemPrompt returns a string containing '## Tasks'", () => {
+    const ext = tasksExtension(() => {});
+    const section = ext.systemPrompt?.({} as never);
+    expect(typeof section).toBe("string");
+    expect(section).toContain("## Tasks");
   });
 });

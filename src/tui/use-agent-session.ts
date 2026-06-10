@@ -55,6 +55,7 @@ import {
 } from "../extensions/hooks.ts";
 import { closeMcp, connectMcpServers, describeMcp } from "../extensions/mcp.ts";
 import { readSkillTool } from "../extensions/skills.ts";
+import { type Task, updateTasksTool } from "../extensions/tasks.ts";
 import { webSearchTool } from "../extensions/websearch.ts";
 import { iconFor } from "../icons.ts";
 import { extractImagePaths, type ImageData, readImageFile } from "../image.ts";
@@ -67,7 +68,6 @@ import {
 import type { ContentBlock, Message } from "../provider.ts";
 import { createProvider, type Provider } from "../provider.ts";
 import { hasPriceData } from "../session.ts";
-import { type Task, updateTasksTool } from "../tasks.ts";
 import {
   budgetFor,
   describeLevel,

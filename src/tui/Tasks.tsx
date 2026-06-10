@@ -6,7 +6,7 @@
 // tasks are plain. Presentation only — state lives in App.
 
 import { Box, Text } from "ink";
-import type { Task, TaskStatus } from "../tasks.ts";
+import type { Task, TaskStatus } from "../extensions/tasks.ts";
 import { useIcon } from "./Icon.tsx";
 import { SPACING, tint } from "./theme.ts";
 

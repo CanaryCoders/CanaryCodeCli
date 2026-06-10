@@ -15,9 +15,9 @@
 // `in_progress` before working it and to `completed` when done, typically while
 // dispatching one sub-agent per task via spawn_agent.
 
-import type { Config } from "./config.ts";
-import { iconFor } from "./icons.ts";
-import type { Tool } from "./tools.ts";
+import type { Config } from "../config.ts";
+import { iconFor } from "../icons.ts";
+import type { Tool } from "../tools.ts";
 
 /** A task's lifecycle state. Exactly one task should be `in_progress` at a time. */
 export type TaskStatus = "pending" | "in_progress" | "completed";
@@ -170,5 +170,24 @@ export function updateTasksTool(onUpdate: TaskUpdateFn, config?: Config): Tool {
       onUpdate(tasks);
       return formatTasks(tasks, config);
     },
+  };
+}
+
+import type { Extension } from "../extension.ts";
+
+const TASKS_PROMPT_SECTION = [
+  "## Tasks",
+  "When a request spans multiple distinct issues or is a large multi-step",
+  "feature, call update_tasks FIRST to lay the work out as a task list (one",
+  "task per issue or major step), then keep it current — in_progress before",
+  "you start a task, completed the moment it is done. For a single small,",
+  "self-contained request, skip the task list and just do the work.",
+].join("\n");
+
+export function tasksExtension(onUpdate: TaskUpdateFn): Extension {
+  return {
+    name: "tasks",
+    tools: (ctx) => [updateTasksTool(onUpdate, ctx.config)],
+    systemPrompt: () => TASKS_PROMPT_SECTION,
   };
 }

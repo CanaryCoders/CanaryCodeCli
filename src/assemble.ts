@@ -26,8 +26,8 @@ import { hooksExtension } from "./extensions/hooks.ts";
 import { mcpExtension } from "./extensions/mcp.ts";
 import { buildPermissionGate, composeGates } from "./extensions/permission.ts";
 import { skillsExtension } from "./extensions/skills.ts";
+import { type TaskUpdateFn, tasksExtension } from "./extensions/tasks.ts";
 import { webSearchExtension } from "./extensions/websearch.ts";
-import { updateTasksTool } from "./tasks.ts";
 import { tools as allTools } from "./tools.ts";
 
 /**
@@ -44,10 +44,6 @@ export const SYSTEM_PROMPT = [
   "Think before you act. Before making any change, briefly inspect the relevant code and decide on an approach, then state the plan in one or two sentences before you start editing. Do NOT announce a change, make it, and then reverse course mid-task — that erodes trust. Settle on the approach first, then execute it. If you are genuinely unsure between real alternatives, investigate or ask before writing, rather than guessing and rewriting.",
   "Never modify a file you have not read. Always read a file with read_file (or otherwise see its current contents) before you write_file or edit_file it, so your changes fit the existing code and don't clobber anything. Editing blind is not acceptable.",
   "",
-  "## Tasks",
-  'When a request spans multiple distinct issues (e.g. "X is broken; also Y bothers me; also fix Z") OR is a large, multi-step feature, call update_tasks FIRST to lay the work out as a task list (one task per distinct issue or major step), then keep it current — mark a task in_progress before you start it and completed the moment it is finished.',
-  "For a single, small, self-contained request, skip this and just do the work inline — do not create a task list for trivial work.",
-  "",
   "ALWAYS end your turn with a recap once you have finished working (i.e. your final reply that makes no further tool calls). Never stop after a tool call without a closing message. The recap is mandatory — even for small tasks or when nothing changed. Format it exactly as:",
   "",
   "## Recap",
@@ -61,7 +57,7 @@ export interface AssembleOptions extends Omit<ExtensionHost, "gate"> {
   /** Answer ask_user questions (interactive in TUI, autoAnswer in headless). */
   askUser: AskUserFn;
   /** Render the agent's task list (stderr checklist / TUI component). */
-  onTasks: Parameters<typeof updateTasksTool>[0];
+  onTasks: TaskUpdateFn;
   noTools?: boolean;
 }
 
@@ -102,11 +98,8 @@ export async function assembleSession(
         mcpExtension(),
         agentsExtension(),
         hooksExtension(),
-        {
-          // MUST be last: update_tasks always sits at the end of the tool set.
-          name: "tasks",
-          tools: (ctx) => [updateTasksTool(opts.onTasks, ctx.config)],
-        },
+        // MUST be last: update_tasks always sits at the end of the tool set.
+        tasksExtension(opts.onTasks),
       ];
 
   const composed = await composeExtensions(extensions, { ...opts, gate });

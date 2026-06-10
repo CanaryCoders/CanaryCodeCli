@@ -50,6 +50,7 @@ import {
   describeSkills,
   discoverSkills,
 } from "./extensions/skills.ts";
+import { statusMark } from "./extensions/tasks.ts";
 import { extractImagePaths, readImageFile } from "./image.ts";
 import { renderAnsi } from "./markdown.ts";
 import {
@@ -62,7 +63,6 @@ import {
 import type { ContentBlock, Message, Provider } from "./provider.ts";
 import { createProvider } from "./provider.ts";
 import { hasPriceData, type SessionRow, SessionStore } from "./session.ts";
-import { statusMark } from "./tasks.ts";
 import {
   describeLevel,
   parseLevel,
