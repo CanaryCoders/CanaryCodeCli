@@ -397,9 +397,15 @@ async function runHeadless(args: Args): Promise<number> {
   const modelName = resolved.model.name ?? resolved.model.id;
   // Turn cap: auto mode uses the configured autonomy budget; otherwise the
   // checkpoint budget as a hard runaway guard (headless is non-interactive, so
-  // there's no human to answer a checkpoint). Surfaced in the max_turns message.
+  // there's no human to answer a checkpoint). `checkpointEvery: 0` disables the
+  // guard rather than capping the run at zero turns. Surfaced in the max_turns
+  // message.
   const turnCap =
-    mode === "auto" ? config.autoMaxTurns : config.checkpointEvery;
+    mode === "auto"
+      ? config.autoMaxTurns
+      : config.checkpointEvery > 0
+        ? config.checkpointEvery
+        : Number.MAX_SAFE_INTEGER;
   // Ctrl-C aborts the in-flight request cleanly. Created early so it can be threaded
   // into sub-agent runs spawned by the spawn_agent tool below.
   const controller = new AbortController();

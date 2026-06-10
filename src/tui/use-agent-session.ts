@@ -159,7 +159,6 @@ export function useAgentSession(deps: {
   const persistedRef = useRef(props.resumedMessages?.length ?? 0);
   const sessionIdRef = useRef(props.sessionId);
   const closedRef = useRef(false);
-  const sessionStartedRef = useRef(true);
   const hookContext = () => ({
     sessionId: sessionIdRef.current,
     cwd: process.cwd(),
@@ -212,14 +211,6 @@ export function useAgentSession(deps: {
   const [tasks, setTasks] = useState<Task[]>([]);
 
   const hasConversation = () => messagesRef.current.length > 0;
-
-  async function ensureSessionStarted(): Promise<void> {
-    if (sessionStartedRef.current) return;
-    sessionStartedRef.current = true;
-    if (props.config.hooks.SessionStart?.length) {
-      await runSessionStartHooks(props.config.hooks, "startup", hookContext());
-    }
-  }
 
   async function shutdown(reason: string): Promise<void> {
     if (closedRef.current) return;
@@ -815,7 +806,6 @@ export function useAgentSession(deps: {
     messageText = displayText,
     modeOverride?: AgentMode,
   ): Promise<void> {
-    await ensureSessionStarted();
     if (props.config.hooks.UserPromptSubmit?.length) {
       await runUserPromptSubmitHooks(
         props.config.hooks,
@@ -932,7 +922,6 @@ export function useAgentSession(deps: {
           thinking,
           mode,
         });
-        sessionStartedRef.current = true;
         if (props.config.hooks.SessionStart?.length) {
           void runSessionStartHooks(props.config.hooks, "clear", hookContext());
         }

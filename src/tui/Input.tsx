@@ -19,7 +19,7 @@
 // in state and renders the value with a fake inverse-block cursor (no chalk dep).
 
 import { Box, Text, useInput } from "ink";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   cursorLineCol,
   EMPTY_PASTES,
@@ -108,6 +108,13 @@ export function MultilineInput({
   cursorRef.current = effectiveCursor;
   const pasteBufRef = useRef("");
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // A queued paste flush must not fire onChange/onSubmit after unmount.
+  useEffect(
+    () => () => {
+      if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
+    },
+    [],
+  );
 
   const applyResult = (result: InputResult): void => {
     if (result.type === "submit") {
