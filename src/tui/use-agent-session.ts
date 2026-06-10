@@ -36,6 +36,7 @@ import {
   modelSupportsVision,
   parseConfigValue,
   redactConfig,
+  replaceConfigInPlace,
   resolveModel,
   saveConfig,
   setRawConfigPath,
@@ -687,12 +688,6 @@ export function useAgentSession(deps: {
     note(`model → ${label}`);
   }
 
-  function replaceConfig(next: typeof props.config): void {
-    const target = props.config as unknown as Record<string, unknown>;
-    for (const key of Object.keys(target)) delete target[key];
-    Object.assign(target, next);
-  }
-
   function formatConfigValue(value: unknown): string {
     return value === undefined ? "<unset>" : summarizeConfig(value);
   }
@@ -701,7 +696,7 @@ export function useAgentSession(deps: {
     const next = await loadConfig();
     if (await hasCredentials()) await populateCodexModels(next);
     else gateCodexModels(next, false);
-    replaceConfig(next);
+    replaceConfigInPlace(props.config, next);
   }
 
   // Deferred initial MCP connect: runTui hands the App an empty `props.mcp` and the

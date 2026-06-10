@@ -290,6 +290,19 @@ export async function loadConfig(path: string = configPath()): Promise<Config> {
 }
 
 /**
+ * Swap a live Config's contents for `next` WITHOUT changing its identity. The TUI
+ * shares one Config object across every closure, child component, and tool env;
+ * replacing the reference would leave them reading stale state, so a reload must
+ * mutate in place. The swap is synchronous (no awaits between delete and assign),
+ * so no caller can observe a partially-populated object.
+ */
+export function replaceConfigInPlace(target: Config, next: Config): void {
+  const t = target as unknown as Record<string, unknown>;
+  for (const key of Object.keys(t)) delete t[key];
+  Object.assign(t, next);
+}
+
+/**
  * The subset of config a user can change at runtime (via `/model`, `/think`'s
  * sibling settings, etc.) and that we persist back to `~/.cc/config.json` so it
  * becomes the default next launch.

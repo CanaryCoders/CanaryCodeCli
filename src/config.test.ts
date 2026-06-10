@@ -11,6 +11,7 @@ import {
   modelForRole,
   modelSupportsVision,
   redactConfig,
+  replaceConfigInPlace,
   setRawConfigPath,
   summarizeConfig,
   unsetRawConfigPath,
@@ -90,6 +91,20 @@ describe("modelForRole", () => {
     await Bun.write(path, JSON.stringify({ ui: { nerdFont: true } }));
     const loaded = await loadConfig(path);
     expect(loaded.ui.nerdFont).toBe(true);
+  });
+});
+
+describe("replaceConfigInPlace", () => {
+  test("same reference, new contents, stale keys dropped", () => {
+    const target = { a: 1, stale: true } as unknown as Config;
+    const next = { a: 2, fresh: "yes" } as unknown as Config;
+    const ref = target;
+    replaceConfigInPlace(target, next);
+    expect(ref).toBe(target);
+    expect(ref as unknown as Record<string, unknown>).toEqual({
+      a: 2,
+      fresh: "yes",
+    });
   });
 });
 
