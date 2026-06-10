@@ -1,7 +1,13 @@
 // input-helpers.test.ts — pure prompt editing behavior.
 
 import { describe, expect, test } from "bun:test";
-import { isRawEscapeInput, reduceInput } from "./tui/input-helpers.ts";
+import {
+  charWidth,
+  EMPTY_PASTES,
+  isRawEscapeInput,
+  reduceInput,
+  wrapDisplayLine,
+} from "./tui/input-helpers.ts";
 
 describe("reduceInput", () => {
   test("ignores raw escape bytes instead of inserting visible ^[ text", () => {
@@ -33,5 +39,24 @@ describe("isRawEscapeInput", () => {
     expect(isRawEscapeInput("")).toBe(false);
     expect(isRawEscapeInput("a")).toBe(false);
     expect(isRawEscapeInput("a\x1bb")).toBe(false);
+  });
+});
+
+describe("display width", () => {
+  test("charWidth: wide and narrow codepoints", () => {
+    expect(charWidth("a")).toBe(1);
+    expect(charWidth("漢")).toBe(2); // CJK ideograph
+    expect(charWidth("ｱ")).toBe(1); // halfwidth katakana
+    expect(charWidth("Ａ")).toBe(2); // fullwidth Latin
+    expect(charWidth("😀")).toBe(2); // emoji
+    expect(charWidth("한")).toBe(2); // hangul syllable
+  });
+
+  test("wrapDisplayLine: wide chars fill columns at 2 each", () => {
+    // 4 ideographs = 8 columns; width 4 → two rows of 2 chars each
+    const rows = wrapDisplayLine("漢字漢字", 4, EMPTY_PASTES);
+    expect(rows.map((r) => r.text)).toEqual(["漢字", "漢字"]);
+    expect(rows[0]).toMatchObject({ start: 0, end: 2 });
+    expect(rows[1]).toMatchObject({ start: 2, end: 4 });
   });
 });

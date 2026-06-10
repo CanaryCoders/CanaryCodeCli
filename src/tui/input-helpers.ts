@@ -224,6 +224,33 @@ export interface DisplayRow {
   end: number;
 }
 
+/** Display width of one codepoint: 2 for East Asian Wide/Fullwidth and emoji,
+ *  else 1. A pragmatic wcwidth subset — covers what users actually type (CJK,
+ *  Hangul, Kana, fullwidth forms, emoji); obscure zero-width cases fall back
+ *  to 1, which degrades to the old behavior rather than breaking the math. */
+export function charWidth(ch: string): number {
+  const cp = ch.codePointAt(0);
+  if (cp === undefined) return 1;
+  if (
+    (cp >= 0x1100 && cp <= 0x115f) || // Hangul Jamo
+    (cp >= 0x2e80 && cp <= 0x303e) || // CJK radicals, punctuation
+    (cp >= 0x3041 && cp <= 0x33ff) || // Kana, CJK symbols
+    (cp >= 0x3400 && cp <= 0x4dbf) || // CJK ext A
+    (cp >= 0x4e00 && cp <= 0x9fff) || // CJK unified
+    (cp >= 0xa000 && cp <= 0xa4cf) || // Yi
+    (cp >= 0xac00 && cp <= 0xd7a3) || // Hangul syllables
+    (cp >= 0xf900 && cp <= 0xfaff) || // CJK compat ideographs
+    (cp >= 0xfe30 && cp <= 0xfe4f) || // CJK compat forms
+    (cp >= 0xff00 && cp <= 0xff60) || // Fullwidth forms
+    (cp >= 0xffe0 && cp <= 0xffe6) || // Fullwidth signs
+    (cp >= 0x1f300 && cp <= 0x1faff) || // emoji blocks
+    (cp >= 0x20000 && cp <= 0x3fffd) // CJK ext B+
+  ) {
+    return 2;
+  }
+  return 1;
+}
+
 /** Split a logical line into display rows no wider than `width` visible columns,
  *  treating each paste sentinel as an atomic unit of its chip-label width. With
  *  `width <= 0` (unknown) the whole line is one row — Ink's own wrap then applies. */
@@ -243,7 +270,8 @@ export function wrapDisplayLine(
   let col = 0; // logical column (index into chars)
   for (const ch of chars) {
     const id = pasteId(ch);
-    const w = id >= 0 ? pasteChipLabel(id, pastes.get(id) ?? "").length : 1;
+    const w =
+      id >= 0 ? pasteChipLabel(id, pastes.get(id) ?? "").length : charWidth(ch);
     if (bufCols + w > width && bufCols > 0) {
       rows.push({ text: buf, start, end: col });
       buf = "";
