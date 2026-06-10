@@ -459,7 +459,7 @@ export async function* runAgent(
       // ── 0.5. repeated-call loop breaker ──
       // Counted across turns: text/thinking between calls does not reset it,
       // only a different call (or different input) does.
-      const sig = `${call.name} ${JSON.stringify(call.input ?? {})}`;
+      const sig = `${call.name} ${JSON.stringify(call.input ?? {})}`;
       if (sig === lastCallSig) {
         lastCallSigCount++;
       } else {
