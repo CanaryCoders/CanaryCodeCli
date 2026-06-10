@@ -44,6 +44,7 @@ import {
   validateConfigPathValue,
 } from "../config.ts";
 import { askUserTool } from "../extensions/askuser.ts";
+import { readSkillTool } from "../extensions/skills.ts";
 import { webSearchTool } from "../extensions/websearch.ts";
 import {
   runPostToolHooks,
@@ -65,7 +66,6 @@ import {
 import type { ContentBlock, Message } from "../provider.ts";
 import { createProvider, type Provider } from "../provider.ts";
 import { hasPriceData } from "../session.ts";
-import { readSkillTool } from "../skills.ts";
 import { Semaphore, spawnAgentTool } from "../subagents.ts";
 import { type Task, updateTasksTool } from "../tasks.ts";
 import {

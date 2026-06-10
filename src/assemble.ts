@@ -26,6 +26,7 @@ import type {
 } from "./extension.ts";
 import { composeExtensions } from "./extension.ts";
 import { type AskUserFn, askUserExtension } from "./extensions/askuser.ts";
+import { skillsExtension } from "./extensions/skills.ts";
 import { webSearchExtension } from "./extensions/websearch.ts";
 import { runPostToolHooks, runPreToolHooks } from "./hooks.ts";
 import {
@@ -34,12 +35,6 @@ import {
   describeMcp,
   type McpConnection,
 } from "./mcp.ts";
-import {
-  describeSkills,
-  discoverSkills,
-  readSkillTool,
-  skillsPromptSection,
-} from "./skills.ts";
 import { Semaphore, spawnAgentTool } from "./subagents.ts";
 import { updateTasksTool } from "./tasks.ts";
 import { tools as allTools } from "./tools.ts";
@@ -101,18 +96,7 @@ export async function assembleSession(
     : [
         { name: "core", tools: () => allTools },
         webSearchExtension(),
-        {
-          name: "skills",
-          async tools(ctx) {
-            const skills = await discoverSkills();
-            const note = describeSkills(skills);
-            if (note) ctx.note(note);
-            return [readSkillTool(skills)];
-          },
-          // Re-discovered so the section reflects exactly what was offered; skills
-          // are cheap file reads and discovery is deterministic.
-          systemPrompt: async () => skillsPromptSection(await discoverSkills()),
-        },
+        skillsExtension(),
         askUserExtension(opts.askUser),
         {
           name: "mcp",

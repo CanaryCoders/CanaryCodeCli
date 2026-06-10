@@ -11,7 +11,8 @@
 import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { Tool } from "./tools.ts";
+import type { Extension } from "../extension.ts";
+import type { Tool } from "../tools.ts";
 
 export interface Skill {
   /** Skill name (frontmatter `name`, falling back to the folder name). */
@@ -175,5 +176,19 @@ export function readSkillTool(skills: Skill[]): Tool {
       const text = await Bun.file(skill.path).text();
       return parseSkill(text).body || text.trim();
     },
+  };
+}
+
+export function skillsExtension(): Extension {
+  let skills: Awaited<ReturnType<typeof discoverSkills>> = [];
+  return {
+    name: "skills",
+    async tools(ctx) {
+      skills = await discoverSkills();
+      const note = describeSkills(skills);
+      if (note) ctx.note(note);
+      return [readSkillTool(skills)];
+    },
+    systemPrompt: () => skillsPromptSection(skills),
   };
 }

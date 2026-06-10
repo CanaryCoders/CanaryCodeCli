@@ -38,6 +38,11 @@ import {
 import { diffStat, renderDiff } from "./diff.ts";
 import { autoAnswer } from "./extensions/askuser.ts";
 import {
+  composeSkillsPrompt,
+  describeSkills,
+  discoverSkills,
+} from "./extensions/skills.ts";
+import {
   describeHooks,
   runSessionEndHooks,
   runSessionStartHooks,
@@ -58,11 +63,6 @@ import { checkCommandSafety, inPermissionScope } from "./permission.ts";
 import type { ContentBlock, Message, Provider } from "./provider.ts";
 import { createProvider } from "./provider.ts";
 import { hasPriceData, type SessionRow, SessionStore } from "./session.ts";
-import {
-  composeSkillsPrompt,
-  describeSkills,
-  discoverSkills,
-} from "./skills.ts";
 import { statusMark } from "./tasks.ts";
 import {
   describeLevel,
