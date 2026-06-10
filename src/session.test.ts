@@ -26,6 +26,9 @@ describe("SessionStore.loadMessages", () => {
       };
       store.appendTurn(id, user);
       store.appendTurn(id, assistant);
+      // WAL sidecars mirror transcript content — they must be owner-only too.
+      // (They exist by now: the schema run at open created them.)
+      expect(statSync(`${path}-wal`).mode & 0o777).toBe(0o600);
       store.close();
 
       // Corrupt the first turn's JSON behind the store's back (simulates a

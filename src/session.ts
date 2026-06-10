@@ -166,6 +166,10 @@ export class SessionStore {
   static open(path: string = dbPath()): SessionStore {
     if (path !== ":memory:") {
       mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+      // mkdirSync's mode is a no-op for pre-existing dirs — harden installs created before this change.
+      try {
+        chmodSync(dirname(path), 0o700);
+      } catch {}
     }
     const db = new Database(path, { create: true });
     if (path !== ":memory:") {
@@ -179,6 +183,19 @@ export class SessionStore {
     db.exec("PRAGMA journal_mode = WAL;");
     db.run(SCHEMA);
     migrate(db);
+    if (path !== ":memory:") {
+      // WAL mode mirrors transcript content into `<path>-wal`/`<path>-shm`,
+      // created with the umask — harden them like the db file itself. The
+      // sidecars appear on the first write (the SCHEMA run above), so they
+      // exist by now on a fresh db; chmod is best-effort regardless.
+      for (const suffix of ["-wal", "-shm"]) {
+        try {
+          chmodSync(path + suffix, 0o600);
+        } catch {
+          // sidecar may not exist yet — the dir mode is the backstop
+        }
+      }
+    }
     return new SessionStore(db);
   }
 

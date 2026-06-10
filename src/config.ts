@@ -325,7 +325,7 @@ export async function saveConfig(
   for (const [k, v] of Object.entries(settings)) {
     if (v !== undefined) raw[k] = v;
   }
-  await mkdir(dirname(path), { recursive: true });
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   await Bun.write(path, `${JSON.stringify(raw, null, 2)}\n`);
   // Config may hold inline API keys — owner-only, like auth.json.
   await chmod(path, 0o600);
@@ -410,7 +410,7 @@ async function writeRawConfig(
   raw: Record<string, unknown>,
   path: string,
 ): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   await Bun.write(path, `${JSON.stringify(raw, null, 2)}\n`);
   // Config may hold inline API keys — owner-only, like auth.json.
   await chmod(path, 0o600);
