@@ -23,6 +23,7 @@ import { composeExtensions } from "./extension.ts";
 import { agentsExtension } from "./extensions/agents.ts";
 import { type AskUserFn, askUserExtension } from "./extensions/askuser.ts";
 import { mcpExtension } from "./extensions/mcp.ts";
+import { buildPermissionGate, composeGates } from "./extensions/permission.ts";
 import { skillsExtension } from "./extensions/skills.ts";
 import { webSearchExtension } from "./extensions/websearch.ts";
 import { runPostToolHooks, runPreToolHooks } from "./hooks.ts";
@@ -67,12 +68,29 @@ export interface AssembleOptions extends Omit<ExtensionHost, "gate"> {
 export interface AssembledSession extends ComposedExtensions {
   /** Fully composed system prompt: base + project context + sections + mode. */
   system: string;
+  /** The composed approval gate (AI permission check + the frontend's gate),
+   * to hand to `runAgent`. Undefined when nothing gates this run. */
+  gate?: ExtensionHost["gate"];
 }
 
 export async function assembleSession(
   opts: AssembleOptions,
 ): Promise<AssembledSession> {
   const { mode } = opts;
+
+  // Build the AI permission gate and compose it with the frontend's own gate
+  // BEFORE composing extensions, so `ctx.gate` (which the agents extension hands
+  // to its children) already includes the AI check. The AI gate runs first; a
+  // deny short-circuits before the frontend gate (the TUI confirm box) is asked.
+  const aiGate =
+    mode !== "auto" && opts.config.permission.mode === "ai"
+      ? buildPermissionGate({
+          config: opts.config,
+          signal: opts.signal,
+          note: opts.note,
+        })
+      : undefined;
+  const gate = composeGates(aiGate, opts.gate);
 
   const extensions: Extension[] = opts.noTools
     ? []
@@ -107,7 +125,7 @@ export async function assembleSession(
         },
       ];
 
-  const composed = await composeExtensions(extensions, opts);
+  const composed = await composeExtensions(extensions, { ...opts, gate });
   let tools = composed.tools;
   if (mode === "plan") tools = tools.filter((t) => t.readOnly);
 
@@ -122,5 +140,5 @@ export async function assembleSession(
     mode,
   );
 
-  return { ...composed, tools, system };
+  return { ...composed, tools, system, gate };
 }

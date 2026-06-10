@@ -47,4 +47,22 @@ describe("assembleSession", () => {
     expect(session.tools).toEqual([]);
     await session.dispose();
   });
+
+  test("AI permission (failClosed, unresolvable model) composes a denying gate", async () => {
+    const config = defaultConfig();
+    // No providers → the permission checker model can't resolve, so failClosed
+    // makes the gate deny in-scope calls.
+    config.providers = {};
+    config.permission = {
+      mode: "ai",
+      model: "no-such-model-xyz",
+      scope: "writes",
+      failClosed: true,
+    };
+    const session = await assembleSession({ ...opts("normal"), config });
+    expect(session.gate).toBeDefined();
+    const v = await session.gate!({ id: "1", name: "bash", input: {} });
+    expect(v.allow).toBe(false);
+    await session.dispose();
+  });
 });

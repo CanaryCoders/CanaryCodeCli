@@ -13,8 +13,11 @@
 // failures to "unsafe" (headless blocks the call; the TUI escalates to the human
 // box). Auto mode / `--yolo` skip the checker entirely.
 
-import type { PermissionConfig } from "./config.ts";
-import type { Message, Provider } from "./provider.ts";
+import type { AgentOptions } from "../agent.ts";
+import type { Config, PermissionConfig } from "../config.ts";
+import { modelForRole, resolveModel } from "../config.ts";
+import type { Message, Provider } from "../provider.ts";
+import { createProvider } from "../provider.ts";
 
 /** The tools the engine ever gates (mutating). Scope narrows this set. */
 const WRITE_TOOLS = new Set(["bash", "write_file", "edit_file"]);
@@ -116,4 +119,106 @@ export async function checkCommandSafety(
       reason: "safety check returned no verdict",
     };
   return verdict;
+}
+
+// ===========================================================================
+// AI permission gate — construction + composition
+// ===========================================================================
+
+/** A mutating-tool approval gate: allow/deny a proposed call by name + input.
+ * Matches the agent loop's gate shape so a composed gate threads straight into
+ * `runAgent` and through spawn_agent to children. */
+export type Gate = NonNullable<AgentOptions["gate"]>;
+
+export interface PermissionGateOptions {
+  config: Config;
+  signal: AbortSignal;
+  /** Status note writer (stderr in headless). */
+  note(text: string): void;
+}
+
+/** Build the AI permission gate from config, or undefined when disabled.
+ * Kept as a `gate` (not a preToolUse hook) so it threads through
+ * spawn_agent to child agents exactly as before. */
+export function buildPermissionGate(
+  opts: PermissionGateOptions,
+): Gate | undefined {
+  const { config, signal, note } = opts;
+
+  // With permission.failClosed, an unavailable checker DENIES in-scope calls
+  // instead of letting everything run unchecked.
+  const denyGate = (text: string): Gate => {
+    note(text);
+    return async (call) =>
+      inPermissionScope(config.permission.scope, call.name)
+        ? {
+            allow: false,
+            reason:
+              "AI safety check unavailable and permission.failClosed is set",
+          }
+        : { allow: true };
+  };
+
+  const permResolved = resolveModel(config, modelForRole(config, "permission"));
+  if (!permResolved) {
+    if (config.permission.failClosed) {
+      return denyGate(
+        `note: permission model "${modelForRole(config, "permission")}" not found; safety checks are required (permission.failClosed) but unavailable — gated calls will be blocked`,
+      );
+    }
+    note(
+      `note: permission model "${modelForRole(config, "permission")}" not found; AI safety check disabled`,
+    );
+    return undefined;
+  }
+
+  try {
+    const checkerProvider = createProvider(permResolved.providerConfig);
+    const checkerModel = permResolved.model.name ?? permResolved.model.id;
+    note(`⛉ AI permission check (${checkerModel})`);
+    return async (call) => {
+      if (!inPermissionScope(config.permission.scope, call.name)) {
+        return { allow: true };
+      }
+      const v = await checkCommandSafety(
+        checkerProvider,
+        checkerModel,
+        call,
+        signal,
+        { failClosed: config.permission.failClosed },
+      );
+      if (v.safe) return { allow: true };
+      return {
+        allow: false,
+        reason: `blocked by AI safety check: ${v.reason}`,
+      };
+    };
+  } catch (err) {
+    if (config.permission.failClosed) {
+      return denyGate(
+        `note: AI safety check unavailable (${(err as Error).message}); checks are required (permission.failClosed) — gated calls will be blocked`,
+      );
+    }
+    note(`note: AI safety check disabled: ${(err as Error).message}`);
+    return undefined;
+  }
+}
+
+/**
+ * Compose two gates into one. The AI gate runs first — a deny short-circuits and
+ * the frontend gate is never consulted. An allow falls through to the frontend
+ * gate (e.g. the TUI confirm box). Undefined pieces are skipped; if both are
+ * undefined the result is undefined (no gate at all).
+ */
+export function composeGates(
+  aiGate: Gate | undefined,
+  frontendGate: Gate | undefined,
+): Gate | undefined {
+  if (!aiGate) return frontendGate;
+  if (!frontendGate) return aiGate;
+  return async (call) => {
+    const verdict = await aiGate(call);
+    if (!verdict.allow) return verdict;
+    return frontendGate(call);
+  };
 }

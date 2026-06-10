@@ -59,7 +59,6 @@ import {
   populateCodexModels,
   refreshCodexModels,
 } from "./openai-codex.ts";
-import { checkCommandSafety, inPermissionScope } from "./permission.ts";
 import type { ContentBlock, Message, Provider } from "./provider.ts";
 import { createProvider } from "./provider.ts";
 import { hasPriceData, type SessionRow, SessionStore } from "./session.ts";
@@ -370,81 +369,6 @@ async function runHeadless(args: Args): Promise<number> {
   // into sub-agent runs spawned by the spawn_agent tool below.
   const controller = new AbortController();
 
-  // ── AI permission gate ──
-  // The human confirm box is a TUI-only affordance, so headless has no one to
-  // escalate an "unsafe" verdict to: here an unsafe call is blocked outright and
-  // the model is told why. Auto/`--yolo` skips the gate entirely (run everything).
-  // Built before the tool set so spawn_agent can hand the same gate to its children.
-  let gate:
-    | ((call: { name: string; input: unknown }) => Promise<{
-        allow: boolean;
-        reason?: string;
-      }>)
-    | undefined;
-  if (mode !== "auto" && config.permission.mode === "ai") {
-    // With permission.failClosed, an unavailable checker DENIES in-scope calls
-    // instead of letting everything run unchecked.
-    const denyGate = (note: string) => {
-      process.stderr.write(`${note}\n`);
-      gate = async (call) =>
-        inPermissionScope(config.permission.scope, call.name)
-          ? {
-              allow: false,
-              reason:
-                "AI safety check unavailable and permission.failClosed is set",
-            }
-          : { allow: true };
-    };
-    const permResolved = resolveModel(
-      config,
-      modelForRole(config, "permission"),
-    );
-    if (!permResolved) {
-      if (config.permission.failClosed) {
-        denyGate(
-          `note: permission model "${modelForRole(config, "permission")}" not found; safety checks are required (permission.failClosed) but unavailable — gated calls will be blocked`,
-        );
-      } else {
-        process.stderr.write(
-          `note: permission model "${modelForRole(config, "permission")}" not found; AI safety check disabled\n`,
-        );
-      }
-    } else {
-      try {
-        const checkerProvider = createProvider(permResolved.providerConfig);
-        const checkerModel = permResolved.model.name ?? permResolved.model.id;
-        process.stderr.write(`⛉ AI permission check (${checkerModel})\n`);
-        gate = async (call) => {
-          if (!inPermissionScope(config.permission.scope, call.name)) {
-            return { allow: true };
-          }
-          const v = await checkCommandSafety(
-            checkerProvider,
-            checkerModel,
-            call,
-            controller.signal,
-            { failClosed: config.permission.failClosed },
-          );
-          if (v.safe) return { allow: true };
-          return {
-            allow: false,
-            reason: `blocked by AI safety check: ${v.reason}`,
-          };
-        };
-      } catch (err) {
-        if (config.permission.failClosed) {
-          denyGate(
-            `note: AI safety check unavailable (${(err as Error).message}); checks are required (permission.failClosed) — gated calls will be blocked`,
-          );
-        } else {
-          process.stderr.write(
-            `note: AI safety check disabled: ${(err as Error).message}\n`,
-          );
-        }
-      }
-    }
-  }
-
   // ── Open the store and resolve which session to write into ──
   // Resolved BEFORE assembly so the session id is available to extensions (the
   // hooks extension stamps it into the hook payload). The "no session matching"
@@ -505,7 +429,8 @@ async function runHeadless(args: Args): Promise<number> {
     model: modelName,
     sessionId,
     signal: controller.signal,
-    gate,
+    // Headless has no human to escalate an "unsafe" verdict to, so no frontend
+    // confirm gate; assembleSession builds the AI permission gate from config.
     noTools: args.noTools,
     note: (text) => process.stderr.write(`${text}\n`),
     askUser: async (questions) => autoAnswer(questions),
@@ -625,7 +550,7 @@ async function runHeadless(args: Args): Promise<number> {
       thinkingBudget,
       compactAtTokens: config.compactAtTokens,
       signal: controller.signal,
-      gate,
+      gate: session.gate,
       preToolUse: session.preToolUse,
       postToolUse: session.postToolUse,
     })) {

@@ -17,7 +17,10 @@ import type { AgentMode } from "../agent.ts";
 import type { Config } from "../config.ts";
 import { modelForRole, resolveModel } from "../config.ts";
 import type { AskAnswer, AskQuestion } from "../extensions/askuser.ts";
-import { checkCommandSafety, inPermissionScope } from "../permission.ts";
+import {
+  checkCommandSafety,
+  inPermissionScope,
+} from "../extensions/permission.ts";
 import type { Provider } from "../provider.ts";
 import { createProvider } from "../provider.ts";
 import { buildConfirmPreview, type ConfirmPreview } from "./confirm-helpers.ts";
