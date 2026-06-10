@@ -1,6 +1,7 @@
 // config.test.ts — role-to-model resolution and config merging.
 
 import { describe, expect, test } from "bun:test";
+import { statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -107,6 +108,8 @@ describe("raw config path helpers", () => {
 
     await setRawConfigPath("permission.mode", "ai", path);
     await setRawConfigPath("ui.nerdFont", true, path);
+    // Config can hold inline API keys — every write must leave it owner-only.
+    expect(statSync(path).mode & 0o777).toBe(0o600);
     expect(await getRawConfigPath("permission.mode", path)).toBe("ai");
     expect(await getRawConfigPath("ui.nerdFont", path)).toBe(true);
 

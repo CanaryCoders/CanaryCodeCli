@@ -10,7 +10,7 @@
 // never has to know about provider block shapes.
 
 import { Database } from "bun:sqlite";
-import { mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Message } from "./provider.ts";
@@ -164,8 +164,18 @@ export class SessionStore {
    * (used by tests). Parent directories are created as needed.
    */
   static open(path: string = dbPath()): SessionStore {
-    if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
+    if (path !== ":memory:") {
+      mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+    }
     const db = new Database(path, { create: true });
+    if (path !== ":memory:") {
+      // Transcripts can contain secrets the tools read — owner-only.
+      try {
+        chmodSync(path, 0o600);
+      } catch {
+        // best-effort: never block opening the store on a chmod failure
+      }
+    }
     db.exec("PRAGMA journal_mode = WAL;");
     db.run(SCHEMA);
     migrate(db);

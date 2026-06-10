@@ -8,7 +8,7 @@
 // secrets. The Codex provider (provider.ts) consumes a token getter from here.
 //
 // Flow: PKCE pair → open the browser to auth.openai.com/oauth/authorize → a local
-// callback server on 127.0.0.1:1455 catches the redirect's `code` → exchange it
+// callback server on loopback port 1455 catches the redirect's `code` → exchange it
 // for {access,refresh,id} tokens → decode the id_token JWT for the ChatGPT
 // account id. An SSH/headless fallback prints the URL and reads back the pasted
 // redirect URL instead of binding a port.
@@ -22,6 +22,11 @@ const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize";
 const TOKEN_URL = "https://auth.openai.com/oauth/token";
 const REDIRECT_PORT = 1455;
+// NOTE: must stay `localhost` — it is the exact redirect_uri the upstream Codex
+// CLI registered with OpenAI's OAuth client (Auth0 exact-match allowlist), so
+// `127.0.0.1` here would be rejected with redirect_uri_mismatch. The callback
+// server instead listens on both loopback families (see waitForCallback) so the
+// browser reaches us whether `localhost` resolves to 127.0.0.1 or ::1.
 const REDIRECT_URI = `http://localhost:${REDIRECT_PORT}/auth/callback`;
 const SCOPE = "openid profile email offline_access";
 const ORIGINATOR = "codex_cli_rs";
@@ -247,42 +252,53 @@ interface CallbackResult {
 }
 
 /**
- * Bind 127.0.0.1:1455 and resolve with the `code` from the OAuth redirect. The
- * `state` is validated against what we sent (CSRF guard). Rejects on timeout or a
- * state mismatch; always stops the server before settling.
+ * Bind port 1455 on both loopback addresses (127.0.0.1 and, best-effort, ::1 —
+ * the redirect_uri is `localhost`, which resolves to either family depending on
+ * the host) and resolve with the `code` from the OAuth redirect. The `state` is
+ * validated against what we sent (CSRF guard). Rejects on timeout or a state
+ * mismatch; always stops the servers before settling.
  */
 function waitForCallback(
   expectedState: string,
   signal?: AbortSignal,
 ): Promise<CallbackResult> {
   return new Promise<CallbackResult>((resolve, reject) => {
-    const server = Bun.serve({
-      port: REDIRECT_PORT,
-      hostname: "127.0.0.1",
-      fetch(req) {
-        const url = new URL(req.url);
-        if (url.pathname !== "/auth/callback") {
-          return new Response("not found", { status: 404 });
-        }
-        const code = url.searchParams.get("code");
-        const state = url.searchParams.get("state");
-        const err = url.searchParams.get("error");
-        if (err) {
-          finish(() => reject(new Error(`authorization denied: ${err}`)));
-          return new Response(`authorization error: ${err}`, { status: 400 });
-        }
-        if (!code || state !== expectedState) {
-          finish(() =>
-            reject(new Error("invalid OAuth callback (state mismatch)")),
-          );
-          return new Response("invalid callback", { status: 400 });
-        }
-        finish(() => resolve({ code, state }));
-        return new Response(SUCCESS_HTML, {
-          headers: { "content-type": "text/html" },
-        });
-      },
-    });
+    const handler = (req: Request): Response => {
+      const url = new URL(req.url);
+      if (url.pathname !== "/auth/callback") {
+        return new Response("not found", { status: 404 });
+      }
+      const code = url.searchParams.get("code");
+      const state = url.searchParams.get("state");
+      const err = url.searchParams.get("error");
+      if (err) {
+        finish(() => reject(new Error(`authorization denied: ${err}`)));
+        return new Response(`authorization error: ${err}`, { status: 400 });
+      }
+      if (!code || state !== expectedState) {
+        finish(() =>
+          reject(new Error("invalid OAuth callback (state mismatch)")),
+        );
+        return new Response("invalid callback", { status: 400 });
+      }
+      finish(() => resolve({ code, state }));
+      return new Response(SUCCESS_HTML, {
+        headers: { "content-type": "text/html" },
+      });
+    };
+
+    const servers = [
+      Bun.serve({ port: REDIRECT_PORT, hostname: "127.0.0.1", fetch: handler }),
+    ];
+    try {
+      // Loopback-only IPv6 listener for hosts where `localhost` → ::1 first.
+      // Best-effort: IPv4-only systems simply won't have the address.
+      servers.push(
+        Bun.serve({ port: REDIRECT_PORT, hostname: "::1", fetch: handler }),
+      );
+    } catch {
+      // no ::1 — the IPv4 listener alone is enough
+    }
 
     const timer = setTimeout(() => {
       finish(() =>
@@ -294,15 +310,15 @@ function waitForCallback(
     signal?.addEventListener("abort", onAbort, { once: true });
 
     let settled = false;
-    // Stop the server and clear the timer exactly once, then run the settle fn on
-    // the next tick so the HTTP response flushes to the browser before we exit.
+    // Stop the servers and clear the timer exactly once, then run the settle fn
+    // on the next tick so the HTTP response flushes to the browser before we exit.
     function finish(settle: () => void): void {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       signal?.removeEventListener("abort", onAbort);
       setTimeout(() => {
-        server.stop(true);
+        for (const server of servers) server.stop(true);
         settle();
       }, 100);
     }

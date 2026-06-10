@@ -246,7 +246,7 @@ export async function applyUpdate(
     };
 
   const target = process.execPath;
-  const tmp = join(dirname(target), `.cc.update.${process.pid}`);
+  const tmp = join(dirname(target), `.cc.update.${crypto.randomUUID()}`);
   try {
     await writeFile(tmp, bytes);
     chmodSync(tmp, 0o755);

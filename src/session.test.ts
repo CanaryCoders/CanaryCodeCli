@@ -2,7 +2,7 @@
 
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { rmSync } from "node:fs";
+import { rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Message } from "./provider.ts";
@@ -13,6 +13,8 @@ describe("SessionStore.loadMessages", () => {
     const path = join(tmpdir(), `cc-test-${crypto.randomUUID()}.db`);
     try {
       let store = SessionStore.open(path);
+      // Transcripts may hold secrets — the store must keep the db owner-only.
+      expect(statSync(path).mode & 0o777).toBe(0o600);
       const id = store.createSession({ model: "test-model", cwd: "/tmp" });
       const user: Message = {
         role: "user",

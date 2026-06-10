@@ -3,7 +3,7 @@
 // Resolution: built-in defaults  <  ~/.cc/config.json  <  (CLI overrides applied by callers).
 // Any string value of the form "${VAR}" is replaced with process.env.VAR (empty if unset).
 
-import { mkdir } from "node:fs/promises";
+import { chmod, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -327,6 +327,8 @@ export async function saveConfig(
   }
   await mkdir(dirname(path), { recursive: true });
   await Bun.write(path, `${JSON.stringify(raw, null, 2)}\n`);
+  // Config may hold inline API keys — owner-only, like auth.json.
+  await chmod(path, 0o600);
 }
 
 export const CONFIG_PATHS = [
@@ -410,6 +412,8 @@ async function writeRawConfig(
 ): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await Bun.write(path, `${JSON.stringify(raw, null, 2)}\n`);
+  // Config may hold inline API keys — owner-only, like auth.json.
+  await chmod(path, 0o600);
 }
 
 export function getRawConfigValue(
