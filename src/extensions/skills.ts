@@ -179,12 +179,14 @@ export function readSkillTool(skills: Skill[]): Tool {
   };
 }
 
-export function skillsExtension(): Extension {
-  let skills: Awaited<ReturnType<typeof discoverSkills>> = [];
+export function skillsExtension(
+  dirs?: Parameters<typeof discoverSkills>[0],
+): Extension {
+  let skills: Skill[] = [];
   return {
     name: "skills",
     async tools(ctx) {
-      skills = await discoverSkills();
+      skills = await discoverSkills(dirs);
       const note = describeSkills(skills);
       if (note) ctx.note(note);
       return [readSkillTool(skills)];

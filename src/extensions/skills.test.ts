@@ -66,12 +66,9 @@ test("discoverSkills finds a skill with valid frontmatter", async () => {
 // ---------------------------------------------------------------------------
 
 test("skillsExtension().tools() returns exactly one tool named read_skill", async () => {
-  const { root } = await makeTmpSkillDir("fixture-skill", "a test skill");
+  const { root, dir } = await makeTmpSkillDir("fixture-skill", "a test skill");
   try {
-    // Monkey-patch discoverSkills call: we can't inject dirs through the factory,
-    // so we verify via the public discoverSkills API that our fixture is real,
-    // and we call the factory itself and verify it returns exactly one tool.
-    const ext = skillsExtension();
+    const ext = skillsExtension([dir]);
     const noted: string[] = [];
     const ctx = {
       note: (s: string) => {
@@ -79,13 +76,15 @@ test("skillsExtension().tools() returns exactly one tool named read_skill", asyn
       },
     } as never;
 
-    // The factory calls discoverSkills() from the module (no injection point),
-    // so the tool list length and name are the stable assertions; we check that
-    // the fixture skill propagates by calling discoverSkills directly.
     const tools = await ext.tools!(ctx);
     expect(tools).toHaveLength(1);
     expect(tools[0]!.name).toBe("read_skill");
     expect(tools[0]!.readOnly).toBe(true);
+
+    // Fixture skill is discoverable through the factory — running the tool
+    // with the fixture skill name returns its body content.
+    const result = await tools[0]!.run({ name: "fixture-skill" });
+    expect(result).toContain("This is the fixture-skill skill body.");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -97,15 +96,24 @@ test("skillsExtension().systemPrompt() reuses cached skills (no double discovery
     "verifies no re-discovery",
   );
   try {
-    // Build a scoped extension over the fixture dir
-    const skills = await discoverSkills([dir]);
-    // Verify skillsPromptSection returns a section mentioning the skill name
-    const section = skillsPromptSection(skills);
+    const ext = skillsExtension([dir]);
+    const ctx = { note: () => {} } as never;
+
+    // Call tools() first to populate the closure cache.
+    await ext.tools!(ctx);
+
+    // Delete the fixture dir — if systemPrompt() re-discovered, it would find
+    // nothing and return undefined.
+    await rm(root, { recursive: true, force: true });
+
+    // systemPrompt() must still return the originally discovered skills.
+    const section = ext.systemPrompt!({} as never);
     expect(section).toBeDefined();
     expect(section).toContain("cached-skill");
     expect(section).toContain("── SKILLS ──");
   } finally {
-    await rm(root, { recursive: true, force: true });
+    // Guard against a double-remove if the test fails before the rm above.
+    await rm(root, { recursive: true, force: true }).catch(() => {});
   }
 });
 
