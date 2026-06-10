@@ -346,6 +346,10 @@ export function useAgentSession(deps: {
     controllerRef.current = null;
     setBusy(false);
     setLive([]);
+    // Clear any queued prompt waiting on this turn — the dispatch failed, so the
+    // queue is stale; the user can resubmit.
+    queuedRef.current = null;
+    setQueued(null);
   };
 
   // ── run one user prompt through the agent loop ──
@@ -569,6 +573,8 @@ export function useAgentSession(deps: {
       });
     } finally {
       // Persist first — Stop hooks and UI cleanup must not be able to lose the turn.
+      // This also means Stop hooks now run after the turn is committed to the store,
+      // so hooks observe completed state — that is the intended contract.
       try {
         flush(compacted);
       } catch (err) {
@@ -634,7 +640,7 @@ export function useAgentSession(deps: {
     setMode("normal");
     const instruction = "Proceed with the plan above. Implement it now.";
     note("plan accepted — executing");
-    void submitPrompt(instruction, instruction, "normal");
+    submitPrompt(instruction, instruction, "normal").catch(reportTurnFailure);
   }
   function editPlan(): void {
     const plan = approvals.pendingPlanRef.current;
@@ -900,7 +906,7 @@ export function useAgentSession(deps: {
     const action = dispatchCommand(line);
     switch (action.kind) {
       case "message":
-        void submitPrompt(line);
+        submitPrompt(line).catch(reportTurnFailure);
         break;
       case "set-mode":
         setMode(action.mode);
@@ -999,7 +1005,7 @@ export function useAgentSession(deps: {
       return;
     }
     note("investigating the project to write CC.md…");
-    void submitPrompt("/init", INIT_PROMPT, "normal");
+    submitPrompt("/init", INIT_PROMPT, "normal").catch(reportTurnFailure);
   }
 
   // `/login-codex` — sign in with the ChatGPT subscription via the browser OAuth
