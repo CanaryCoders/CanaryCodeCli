@@ -16,8 +16,8 @@
 
 import { Box, Text, useInput } from "ink";
 import { useReducer, useRef } from "react";
-import type { AskAnswer, AskQuestion } from "../askuser.ts";
-import { recommendedIndex } from "../askuser.ts";
+import type { AskAnswer, AskQuestion } from "../extensions/askuser.ts";
+import { recommendedIndex } from "../extensions/askuser.ts";
 import { useIcon } from "./Icon.tsx";
 import { MultilineInput } from "./Input.tsx";
 import { SPACING, tint } from "./theme.ts";

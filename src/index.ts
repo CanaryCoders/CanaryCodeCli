@@ -14,7 +14,6 @@ import {
   describeAgents,
   discoverAgents,
 } from "./agents.ts";
-import { autoAnswer } from "./askuser.ts";
 import { assembleSession, SYSTEM_PROMPT } from "./assemble.ts";
 import {
   clearCredentials,
@@ -37,6 +36,7 @@ import {
   loadProjectContext,
 } from "./context.ts";
 import { diffStat, renderDiff } from "./diff.ts";
+import { autoAnswer } from "./extensions/askuser.ts";
 import {
   describeHooks,
   runSessionEndHooks,

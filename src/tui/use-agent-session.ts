@@ -21,7 +21,6 @@ import {
   runAgent,
   systemForMode,
 } from "../agent.ts";
-import { askUserTool } from "../askuser.ts";
 import {
   clearCredentials,
   hasCredentials,
@@ -44,6 +43,7 @@ import {
   unsetRawConfigPath,
   validateConfigPathValue,
 } from "../config.ts";
+import { askUserTool } from "../extensions/askuser.ts";
 import { webSearchTool } from "../extensions/websearch.ts";
 import {
   runPostToolHooks,

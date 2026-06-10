@@ -14,9 +14,9 @@
 
 import { useRef, useState } from "react";
 import type { AgentMode } from "../agent.ts";
-import type { AskAnswer, AskQuestion } from "../askuser.ts";
 import type { Config } from "../config.ts";
 import { modelForRole, resolveModel } from "../config.ts";
+import type { AskAnswer, AskQuestion } from "../extensions/askuser.ts";
 import { checkCommandSafety, inPermissionScope } from "../permission.ts";
 import type { Provider } from "../provider.ts";
 import { createProvider } from "../provider.ts";

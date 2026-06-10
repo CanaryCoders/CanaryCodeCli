@@ -14,7 +14,6 @@ import {
   describeAgents,
   discoverAgents,
 } from "./agents.ts";
-import { askUserTool } from "./askuser.ts";
 import {
   composeSystemPrompt,
   describeContext,
@@ -26,6 +25,7 @@ import type {
   ExtensionHost,
 } from "./extension.ts";
 import { composeExtensions } from "./extension.ts";
+import { type AskUserFn, askUserExtension } from "./extensions/askuser.ts";
 import { webSearchExtension } from "./extensions/websearch.ts";
 import { runPostToolHooks, runPreToolHooks } from "./hooks.ts";
 import {
@@ -77,7 +77,7 @@ export const SYSTEM_PROMPT = [
 export interface AssembleOptions extends Omit<ExtensionHost, "gate"> {
   gate?: ExtensionHost["gate"];
   /** Answer ask_user questions (interactive in TUI, autoAnswer in headless). */
-  askUser: Parameters<typeof askUserTool>[0];
+  askUser: AskUserFn;
   /** Render the agent's task list (stderr checklist / TUI component). */
   onTasks: Parameters<typeof updateTasksTool>[0];
   noTools?: boolean;
@@ -113,10 +113,7 @@ export async function assembleSession(
           // are cheap file reads and discovery is deterministic.
           systemPrompt: async () => skillsPromptSection(await discoverSkills()),
         },
-        {
-          name: "askuser",
-          tools: () => [askUserTool(opts.askUser)],
-        },
+        askUserExtension(opts.askUser),
         {
           name: "mcp",
           async tools(ctx) {

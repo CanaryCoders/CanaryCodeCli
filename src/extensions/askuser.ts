@@ -12,7 +12,8 @@
 // each question's recommended option, so the model can't tell the difference and
 // never gets a lever to "skip" a genuine question.
 
-import type { Tool } from "./tools.ts";
+import type { Extension } from "../extension.ts";
+import type { Tool } from "../tools.ts";
 
 /** One selectable answer: a short `label` plus an optional explanatory `description`. */
 export interface AskOption {
@@ -227,5 +228,14 @@ export function askUserTool(onAskUser: AskUserFn): Tool {
         return "The user dismissed the questions without answering.";
       return formatAnswers(questions, answers);
     },
+  };
+}
+
+export function askUserExtension(
+  answerer: Parameters<typeof askUserTool>[0],
+): Extension {
+  return {
+    name: "askuser",
+    tools: () => [askUserTool(answerer)],
   };
 }

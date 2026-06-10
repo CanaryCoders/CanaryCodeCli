@@ -5,6 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   type AskQuestion,
+  askUserExtension,
   askUserTool,
   autoAnswer,
   formatAnswers,
@@ -179,4 +180,25 @@ describe("askUserTool", () => {
       /non-empty array/,
     );
   });
+});
+
+test("askUserExtension contributes ask_user and threads the answerer", async () => {
+  const seen: unknown[] = [];
+  const ext = askUserExtension(async (questions) => {
+    seen.push(questions);
+    return questions.map(() => ({ selected: ["Postgres"] }));
+  });
+  const tools = await ext.tools?.({} as never);
+  expect(tools?.map((t) => t.name)).toEqual(["ask_user"]);
+  expect(tools?.[0]?.readOnly).toBe(true);
+  await tools?.[0]?.run({
+    questions: [
+      {
+        header: "DB",
+        question: "Which database?",
+        options: [{ label: "Postgres" }, { label: "SQLite" }],
+      },
+    ],
+  });
+  expect(seen.length).toBe(1);
 });
