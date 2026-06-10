@@ -278,7 +278,7 @@ The model delegates to it through `spawn_agent` with `{ "agent": "test-writer", 
 - `scope`: `"bash"` or `"writes"` (bash plus write_file plus edit_file).
 - `failClosed`: `false` (default) or `true` — when the checker errors or can't run, treat the call as unsafe instead: headless blocks it, the TUI escalates to the human confirm box.
 
-The checker runs one-shot and tool-free. It fails open by default, so a network or parse error counts as safe and a flaky checker degrades to running the tool rather than wedging the agent; set `failClosed` to flip that. Auto and `--yolo` skip it.
+The checker runs one-shot and tool-free. It fails open by default, so a network or parse error counts as safe and a flaky checker degrades to running the tool rather than wedging the agent; set `failClosed` to flip that. Auto and `--yolo` skip the checker entirely — including the `failClosed` policy.
 
 ### Hooks
 

@@ -106,6 +106,9 @@ export async function checkCommandSafety(
       reason: `safety check failed: ${(err as Error).message}`,
     };
   }
+  // An aborted check is the user cancelling the run, not a checker failure —
+  // fail open regardless of failClosed so teardown isn't misclassified as unsafe.
+  if (signal?.aborted) return { safe: true, reason: "check aborted" };
   const verdict = parseVerdict(out);
   if (!verdict)
     return {

@@ -107,10 +107,14 @@ export function useApprovals(opts: {
       checkerRef.current = null;
       return null;
     }
+    // With failClosed the consequence of a missing checker is stricter, so say so.
+    const disabledSuffix = config.permission.failClosed
+      ? " — all gated calls will require confirmation (permission.failClosed)"
+      : "";
     const resolved = resolveModel(config, modelForRole(config, "permission"));
     if (!resolved) {
       note(
-        `permission model "${modelForRole(config, "permission")}" not found; AI safety check disabled`,
+        `permission model "${modelForRole(config, "permission")}" not found; AI safety check disabled${disabledSuffix}`,
         "error",
       );
       checkerRef.current = null;
@@ -122,7 +126,10 @@ export function useApprovals(opts: {
         model: resolved.model.name ?? resolved.model.id,
       };
     } catch (err) {
-      note(`AI safety check disabled: ${(err as Error).message}`, "error");
+      note(
+        `AI safety check disabled: ${(err as Error).message}${disabledSuffix}`,
+        "error",
+      );
       checkerRef.current = null;
     }
     return checkerRef.current;

@@ -50,6 +50,29 @@ test("no parseable verdict fails open by default", async () => {
   expect(v.safe).toBe(true);
 });
 
+test("an aborted check fails open even under failClosed", async () => {
+  const controller = new AbortController();
+  // Aborts mid-stream: one partial delta, then the user cancels the run.
+  const abortingProvider = {
+    id: "f",
+    async *stream(): AsyncIterable<StreamEvent> {
+      yield { type: "text_delta", text: '{"verdict":' };
+      controller.abort();
+      yield { type: "text_delta", text: '"unsafe","reason":"x"}' };
+      yield { type: "done", stopReason: "end_turn" } as StreamEvent;
+    },
+  } as unknown as Provider;
+  const v = await checkCommandSafety(
+    abortingProvider,
+    "m",
+    { name: "bash", input: {} },
+    controller.signal,
+    { failClosed: true },
+  );
+  expect(v.safe).toBe(true);
+  expect(v.reason).toBe("check aborted");
+});
+
 test("no parseable verdict fails closed when asked", async () => {
   const v = await checkCommandSafety(
     gibberishProvider,
