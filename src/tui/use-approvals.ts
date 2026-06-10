@@ -173,13 +173,25 @@ export function useApprovals(opts: {
         return { allow: true };
       }
       const checker = getChecker();
-      if (!checker) return { allow: true }; // misconfigured → fail open
-      const verdict = await checkCommandSafety(
-        checker.provider,
-        checker.model,
-        call,
-        getSignal(),
-      );
+      // Misconfigured checker: fail open by default; with permission.failClosed,
+      // escalate every in-scope call to the human box instead (same path an
+      // "unsafe" verdict takes — a present human means "ask", not hard-block).
+      const verdict = checker
+        ? await checkCommandSafety(
+            checker.provider,
+            checker.model,
+            call,
+            getSignal(),
+            {
+              failClosed: config.permission.failClosed,
+            },
+          )
+        : config.permission.failClosed
+          ? {
+              safe: false,
+              reason: "AI safety check unavailable (permission.failClosed)",
+            }
+          : { safe: true, reason: "" };
       if (verdict.safe) return { allow: true };
       const ok = await humanConfirm(call, verdict.reason);
       return { allow: ok, reason: ok ? undefined : "user declined the call" };

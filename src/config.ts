@@ -78,6 +78,9 @@ export interface PermissionConfig {
   model?: string;
   /** Which tools to check: "bash" or "writes" (bash + write_file + edit_file). */
   scope?: "bash" | "writes";
+  /** Fail CLOSED: when the checker errors or can't run, treat the call as unsafe
+   *  (headless blocks it; the TUI escalates to the human box). Default false. */
+  failClosed?: boolean;
 }
 
 /** A shell hook command. Claude-compatible entries use timeout seconds. */
@@ -213,7 +216,12 @@ function defaultConfig(): Config {
     maxDepth: 2,
     compactAtTokens: 120_000,
     confirm: "off",
-    permission: { mode: "off", model: "haiku", scope: "writes" },
+    permission: {
+      mode: "off",
+      model: "haiku",
+      scope: "writes",
+      failClosed: false,
+    },
     hooks: {},
     thinking: "off",
     autoUpdate: { enabled: true },
@@ -368,6 +376,7 @@ export const CONFIG_PATHS = [
   "permission.mode",
   "permission.model",
   "permission.scope",
+  "permission.failClosed",
   "hooks.<event>",
   "thinking",
   "autoUpdate.enabled",
@@ -499,6 +508,10 @@ export function validateConfigPathValue(path: string, value: unknown): void {
   if (path === "permission.scope") {
     if (!["bash", "writes"].includes(value as string))
       fail("expected bash or writes");
+    return;
+  }
+  if (path === "permission.failClosed") {
+    if (typeof value !== "boolean") fail("expected boolean");
     return;
   }
   if (parts[0] === "providers") {

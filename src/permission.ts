@@ -7,9 +7,11 @@
 // headless, with no human present, blocks an unsafe call and tells the model why.
 //
 // The checker is a one-shot, tool-free call — it never touches the filesystem; it
-// only reasons about the proposed call. It fails OPEN: any network/parse error
-// yields a "safe" verdict so a flaky checker degrades to today's behavior rather
-// than wedging the agent. Auto mode / `--yolo` skip the checker entirely.
+// only reasons about the proposed call. It fails OPEN by default: any network/parse
+// error yields a "safe" verdict so a flaky checker degrades to today's behavior
+// rather than wedging the agent. Setting `permission.failClosed` flips checker
+// failures to "unsafe" (headless blocks the call; the TUI escalates to the human
+// box). Auto mode / `--yolo` skip the checker entirely.
 
 import type { PermissionConfig } from "./config.ts";
 import type { Message, Provider } from "./provider.ts";
@@ -70,16 +72,18 @@ function parseVerdict(text: string): SafetyVerdict | null {
 }
 
 /**
- * Classify a proposed tool call. Fails open: a network error, an empty reply, or
- * an unparseable verdict all resolve to `{ safe: true }` (with a note) so the
- * agent is never blocked by checker flakiness — the human/headless layers still
- * apply their own policy on top.
+ * Classify a proposed tool call. Fails open by default: a network error, an empty
+ * reply, or an unparseable verdict all resolve to `{ safe: true }` (with a note)
+ * so the agent is never blocked by checker flakiness — the human/headless layers
+ * still apply their own policy on top. With `opts.failClosed` those same failures
+ * resolve to `{ safe: false }` instead, so the call cannot run unchecked.
  */
 export async function checkCommandSafety(
   provider: Provider,
   model: string,
   call: { name: string; input: unknown },
   signal?: AbortSignal,
+  opts: { failClosed?: boolean } = {},
 ): Promise<SafetyVerdict> {
   const messages: Message[] = [
     { role: "user", content: [{ type: "text", text: describeCall(call) }] },
@@ -98,12 +102,15 @@ export async function checkCommandSafety(
     }
   } catch (err) {
     return {
-      safe: true,
+      safe: !opts.failClosed,
       reason: `safety check failed: ${(err as Error).message}`,
     };
   }
   const verdict = parseVerdict(out);
   if (!verdict)
-    return { safe: true, reason: "safety check returned no verdict" };
+    return {
+      safe: !opts.failClosed,
+      reason: "safety check returned no verdict",
+    };
   return verdict;
 }

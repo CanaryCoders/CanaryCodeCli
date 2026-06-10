@@ -166,6 +166,12 @@ describe("raw config path helpers", () => {
       validateConfigPathValue("thinking", "think-hard"),
     ).not.toThrow();
     expect(() => validateConfigPathValue("permission.scope", "all")).toThrow();
+    expect(() =>
+      validateConfigPathValue("permission.failClosed", "yes"),
+    ).toThrow();
+    expect(() =>
+      validateConfigPathValue("permission.failClosed", true),
+    ).not.toThrow();
     expect(() => validateConfigPathValue("providers.x.api", "bogus")).toThrow();
     expect(() =>
       validateConfigPathValue("webSearch.apiKey", "${BRAVE_API_KEY}"),

@@ -422,14 +422,33 @@ async function runHeadless(args: Args): Promise<number> {
       }>)
     | undefined;
   if (mode !== "auto" && config.permission.mode === "ai") {
+    // With permission.failClosed, an unavailable checker DENIES in-scope calls
+    // instead of letting everything run unchecked.
+    const denyGate = (note: string) => {
+      process.stderr.write(`${note}\n`);
+      gate = async (call) =>
+        inPermissionScope(config.permission.scope, call.name)
+          ? {
+              allow: false,
+              reason:
+                "AI safety check unavailable and permission.failClosed is set",
+            }
+          : { allow: true };
+    };
     const permResolved = resolveModel(
       config,
       modelForRole(config, "permission"),
     );
     if (!permResolved) {
-      process.stderr.write(
-        `note: permission model "${modelForRole(config, "permission")}" not found; AI safety check disabled\n`,
-      );
+      if (config.permission.failClosed) {
+        denyGate(
+          `note: permission model "${modelForRole(config, "permission")}" not found; safety checks are required (permission.failClosed) but unavailable — gated calls will be blocked`,
+        );
+      } else {
+        process.stderr.write(
+          `note: permission model "${modelForRole(config, "permission")}" not found; AI safety check disabled\n`,
+        );
+      }
     } else {
       try {
         const checkerProvider = createProvider(permResolved.providerConfig);
@@ -444,6 +463,7 @@ async function runHeadless(args: Args): Promise<number> {
             checkerModel,
             call,
             controller.signal,
+            { failClosed: config.permission.failClosed },
           );
           if (v.safe) return { allow: true };
           return {
@@ -452,9 +472,15 @@ async function runHeadless(args: Args): Promise<number> {
           };
         };
       } catch (err) {
-        process.stderr.write(
-          `note: AI safety check disabled: ${(err as Error).message}\n`,
-        );
+        if (config.permission.failClosed) {
+          denyGate(
+            `note: AI safety check unavailable (${(err as Error).message}); checks are required (permission.failClosed) — gated calls will be blocked`,
+          );
+        } else {
+          process.stderr.write(
+            `note: AI safety check disabled: ${(err as Error).message}\n`,
+          );
+        }
       }
     }
   }
