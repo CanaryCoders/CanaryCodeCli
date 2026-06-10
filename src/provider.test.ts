@@ -6,6 +6,7 @@ import {
   createProvider,
   type Message,
   type StreamEvent,
+  TOOL_INPUT_PARSE_ERROR,
   toAnthropicMessage,
   toOpenAIMessages,
   toResponsesInput,
@@ -304,7 +305,7 @@ describe("openai-responses provider stream", () => {
       id: "call_1",
       name: "read",
       input: {},
-      inputError: "tool call arguments were not valid JSON (stream truncated?)",
+      inputError: TOOL_INPUT_PARSE_ERROR,
     });
     expect(events.at(-1)).toEqual({ type: "done", stopReason: "tool_use" });
   });

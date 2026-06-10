@@ -10,6 +10,11 @@ import { makeTokenGetter, type TokenGetter } from "./auth.ts";
 import type { ProviderConfig } from "./config.ts";
 import { type CodexEffort, parseCodexModel } from "./openai-codex.ts";
 
+/** Sentinel string carried on `StreamEvent.tool_use.inputError` when the
+ *  accumulated argument JSON failed to parse (typically a truncated stream). */
+export const TOOL_INPUT_PARSE_ERROR =
+  "tool call arguments were not valid JSON (stream truncated?)";
+
 // ── Shared, provider-agnostic shapes ────────────────────────────────────────
 
 export interface ToolDef {
@@ -309,8 +314,7 @@ function anthropicProvider(opts: AnthropicOptions): Provider {
               try {
                 input = t.json ? JSON.parse(t.json) : {};
               } catch {
-                inputError =
-                  "tool call arguments were not valid JSON (stream truncated?)";
+                inputError = TOOL_INPUT_PARSE_ERROR;
               }
               yield {
                 type: "tool_use",
@@ -510,8 +514,7 @@ function openaiCompatProvider(opts: OpenAICompatOptions): Provider {
           try {
             input = t.args ? JSON.parse(t.args) : {};
           } catch {
-            inputError =
-              "tool call arguments were not valid JSON (stream truncated?)";
+            inputError = TOOL_INPUT_PARSE_ERROR;
           }
           yield {
             type: "tool_use",
@@ -759,8 +762,7 @@ function openaiResponsesProvider(opts: OpenAIResponsesOptions): Provider {
         try {
           input = slot.args ? JSON.parse(slot.args) : {};
         } catch {
-          inputError =
-            "tool call arguments were not valid JSON (stream truncated?)";
+          inputError = TOOL_INPUT_PARSE_ERROR;
         }
         sawToolCall = true;
         yield {

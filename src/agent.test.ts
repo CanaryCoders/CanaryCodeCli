@@ -5,7 +5,12 @@ import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AgentEvent, roleForMode, runAgent } from "./agent.ts";
-import type { Message, Provider, StreamEvent } from "./provider.ts";
+import {
+  type Message,
+  type Provider,
+  type StreamEvent,
+  TOOL_INPUT_PARSE_ERROR,
+} from "./provider.ts";
 import { type Tool, tools } from "./tools.ts";
 
 describe("roleForMode", () => {
@@ -120,8 +125,7 @@ describe("runAgent malformed tool-call JSON", () => {
             id: "1",
             name: "t",
             input: {},
-            inputError:
-              "tool call arguments were not valid JSON (stream truncated?)",
+            inputError: TOOL_INPUT_PARSE_ERROR,
           };
           yield { type: "done", stopReason: "tool_use" };
         } else {

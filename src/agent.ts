@@ -430,8 +430,9 @@ export async function* runAgent(
       // ── 0. malformed streamed args: never execute, tell the model why ──
       // The tool_use block is already in the assistant turn (collected during
       // streaming), so this error tool_result keeps the conversation paired.
+      // tool_start was already emitted above; the error tool_end closes it.
       if (call.inputError) {
-        const msg = `tool call rejected: ${call.inputError} — issue the call again`;
+        const msg = `tool call rejected: ${call.inputError} — issue the call again (if it keeps failing, try a smaller or simpler call)`;
         yield {
           type: "tool_end",
           id: call.id,
