@@ -258,6 +258,7 @@ function App(props: AppProps): React.ReactElement {
       prevKind={index > 0 ? transcript.history[index - 1]!.kind : undefined}
       expanded={session.verbose}
       showExpandHint={item.id === firstToolId}
+      columns={columns}
     />
   );
 
@@ -282,7 +283,13 @@ function App(props: AppProps): React.ReactElement {
   return (
     <IconProvider config={props.config}>
       <Box flexDirection="column">
-        <Static items={transcript.history}>{renderHistoryItem}</Static>
+        {/* Ink's <Static> box is position:absolute with NO width, so Yoga sizes it
+            to its content instead of the terminal — text then wraps a couple of
+            columns too wide and the terminal hard-wraps the spill to column 0
+            (orphan letters with no gutter indent). Pin it to the terminal width. */}
+        <Static items={transcript.history} style={{ width: columns }}>
+          {renderHistoryItem}
+        </Static>
 
         <LiveRegion
           live={transcript.live}

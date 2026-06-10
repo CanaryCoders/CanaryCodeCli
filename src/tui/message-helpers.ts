@@ -9,7 +9,85 @@ import {
   THINKING_VERBS,
   TOOL_VERB,
 } from "../verbs.ts";
+import { charWidth } from "./input-helpers.ts";
 import type { Item } from "./Message.tsx";
+
+// ── display-width helpers ────────────────────────────────────────────────────────
+
+/** Visible terminal-cell width of `s` (wcwidth-style: CJK/emoji count 2). */
+export function visibleWidth(s: string): number {
+  let w = 0;
+  for (const ch of s) w += charWidth(ch);
+  return w;
+}
+
+/** Pad `row` with trailing spaces to exactly `width` visible columns (no-op for
+ * rows already at/over it). Ink's `backgroundColor` paints only the glyphs a
+ * `<Text>` actually draws, so a full-line highlight band needs its rows padded
+ * out to the content width. */
+export function padRow(row: string, width: number): string {
+  const pad = width - visibleWidth(row);
+  return pad > 0 ? row + " ".repeat(pad) : row;
+}
+
+/** Truncate `s` to at most `max` visible columns (CJK/emoji count 2), ending in
+ * `…` when anything was cut. The char-count `truncate` under-counts wide chars,
+ * which would let a CJK-heavy row escape a width-exact band. */
+export function truncateWidth(s: string, max: number): string {
+  if (visibleWidth(s) <= max) return s;
+  let out = "";
+  let w = 0;
+  for (const ch of s) {
+    const cw = charWidth(ch);
+    if (w + cw > max - 1) break;
+    out += ch;
+    w += cw;
+  }
+  return `${out}…`;
+}
+
+/** Word-wrap one logical line into rows no wider than `width` visible columns.
+ * Wraps at spaces; a word wider than a whole row is hard-broken at the width.
+ * Wide (CJK/emoji) chars count 2 columns. Rows come back unpadded. */
+export function wrapWords(line: string, width: number): string[] {
+  const w = Math.max(1, width);
+  const rows: string[] = [];
+  let cur = "";
+  let curW = 0;
+  for (const word of line.split(" ")) {
+    const joinW = cur ? 1 : 0;
+    const wordW = visibleWidth(word);
+    if (curW + joinW + wordW <= w) {
+      cur = cur ? `${cur} ${word}` : word;
+      curW += joinW + wordW;
+      continue;
+    }
+    if (cur) {
+      rows.push(cur);
+      cur = "";
+      curW = 0;
+    }
+    if (wordW <= w) {
+      cur = word;
+      curW = wordW;
+      continue;
+    }
+    // The word alone is wider than a row — hard-break it at the width.
+    for (const ch of word) {
+      const cw = charWidth(ch);
+      if (curW + cw > w) {
+        rows.push(cur);
+        cur = ch;
+        curW = cw;
+      } else {
+        cur += ch;
+        curW += cw;
+      }
+    }
+  }
+  rows.push(cur);
+  return rows;
+}
 
 // ── Tool input summarising ───────────────────────────────────────────────────────
 

@@ -95,6 +95,12 @@ export const DIFF = {
   del: "red",
   header: "cyan",
   gutter: "gray",
+  /** Muted backgrounds painted across the full row of +/− lines, so a diff line
+   * reads as a band (Claude-Code style) rather than coloured text floating in
+   * the terminal background. Hex degrades via chalk on non-truecolor terminals
+   * and is stripped entirely under NO_COLOR (`tint`). */
+  addBg: "#1c3a1c",
+  delBg: "#3a1c1c",
 } as const;
 
 /** The faint vertical rule drawn down the left of a diff/code block. */

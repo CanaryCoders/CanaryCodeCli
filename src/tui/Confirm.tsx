@@ -23,10 +23,13 @@ export type { ConfirmChoice, ConfirmPreview } from "./confirm-helpers.ts";
 export function ConfirmView({
   preview,
   reason,
+  columns = 80,
 }: {
   preview: ConfirmPreview;
   /** When set, the AI safety check flagged this call — shown above the prompt. */
   reason?: string | null;
+  /** Terminal width — the diff preview pads its +/− bands to fit inside the box. */
+  columns?: number;
 }): React.ReactElement {
   const warningIcon = useIcon("warning");
   return (
@@ -42,7 +45,12 @@ export function ConfirmView({
       </Text>
       {reason ? (
         <Box>
-          <Text color={tint("yellow")}>{warningIcon}</Text>
+          {/* flexShrink=0: a shrinkable fixed cell beside flexible text makes the
+              layout fractional and the wrapped reason spill a column past the
+              terminal edge (see Message.tsx RuleRow). */}
+          <Box flexShrink={0}>
+            <Text color={tint("yellow")}>{warningIcon}</Text>
+          </Box>
           <Box marginLeft={1}>
             <Text color={tint("yellow")}>
               {`flagged by safety check: ${reason}`}
@@ -55,7 +63,12 @@ export function ConfirmView({
       ) : preview.kind === "diff" ? (
         <Box flexDirection="column">
           <Text dimColor>{preview.path}</Text>
-          <DiffView diff={preview.diff} expanded />
+          {/* Rows after the box border+padding (4) and the 2-cell rule. */}
+          <DiffView
+            diff={preview.diff}
+            expanded
+            width={Math.max(1, columns - 6)}
+          />
         </Box>
       ) : (
         <Text>

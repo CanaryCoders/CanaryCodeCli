@@ -134,6 +134,7 @@ export function PromptArea({
       <ConfirmView
         preview={approvals.pendingConfirm}
         reason={approvals.pendingConfirmReason}
+        columns={columns}
       />
     );
   }
@@ -150,7 +151,12 @@ export function PromptArea({
     return (
       <Box flexDirection="column" marginTop={SPACING.inputGap}>
         <Box>
-          <Text color={tint("yellow")}>{checkpointIcon}</Text>
+          {/* flexShrink=0: a shrinkable fixed cell beside flexible text makes the
+              layout fractional and the wrapped text spill a column past the
+              terminal edge (see Message.tsx RuleRow). */}
+          <Box flexShrink={0}>
+            <Text color={tint("yellow")}>{checkpointIcon}</Text>
+          </Box>
           <Box marginLeft={1}>
             <Text color={tint("yellow")}>
               {`${approvals.pendingCheckpoint} turns in — keep going? `}
@@ -171,7 +177,10 @@ export function PromptArea({
     <Box flexDirection="column" marginTop={SPACING.inputGap}>
       {session.queued !== null ? (
         <Box>
-          <Text dimColor>{queuedIcon}</Text>
+          {/* flexShrink=0: see the checkpoint row above. */}
+          <Box flexShrink={0}>
+            <Text dimColor>{queuedIcon}</Text>
+          </Box>
           <Box marginLeft={1}>
             <Text dimColor>{`queued: ${session.queued} (Esc to cancel)`}</Text>
           </Box>

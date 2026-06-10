@@ -535,7 +535,7 @@ export function useAgentSession(deps: {
               local.push({
                 id: nextId(),
                 kind: "note",
-                text: "⨯ aborted",
+                text: "aborted",
                 tone: "error",
               });
             } else if (ev.reason === "max_turns") {

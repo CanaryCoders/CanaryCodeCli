@@ -18,9 +18,12 @@ import {
   displayToolName,
   fmtInput,
   head,
+  padRow,
   rowKey,
   summarizeToolInput,
   truncate,
+  truncateWidth,
+  wrapWords,
 } from "./message-helpers.ts";
 import {
   DIFF,
@@ -96,7 +99,15 @@ function RuleRow({
   const rule = useIcon(GUTTER_RULE_ICON);
   return (
     <Box flexDirection="row">
-      <Text color={tint(DIFF.gutter)} dimColor>{`${rule} `}</Text>
+      {/* flexShrink=0: Ink boxes default to flexShrink=1, so when the content's
+          max-content width over-constrains the row, Yoga shrinks this fixed cell
+          fractionally (e.g. 2 → 1.96). The fractional layout then rounds the text
+          node a column WIDER than the space it actually has, and the wrapped text
+          spills one character past the terminal edge. Pinning the fixed cells
+          keeps every width integral. */}
+      <Box width={2} flexShrink={0}>
+        <Text color={tint(DIFF.gutter)} dimColor>{`${rule} `}</Text>
+      </Box>
       <Box flexGrow={1}>{children}</Box>
     </Box>
   );
@@ -228,7 +239,6 @@ function Gutter({
   colorOverride,
   marginTop = 0,
   glyphless = false,
-  highlight = false,
   children,
 }: {
   speaker: Role;
@@ -238,23 +248,20 @@ function Gutter({
   /** Suppress the glyph (a two-space gutter) — used for continuation chunks of a
    * streamed block whose first chunk already carried the marker. */
   glyphless?: boolean;
-  /** Paint the role's highlight background behind the whole row (user lines), so
-   * they stand out from tool calls and AI output. */
-  highlight?: boolean;
   children: React.ReactNode;
 }): React.ReactElement {
   const s = ROLE[speaker];
   const icon = useIcon(s.icon);
   const glyph = !glyphless && icon ? icon : " ";
-  const bg = highlight ? tint(s.bg) : undefined;
   return (
     <Box flexDirection="row" marginTop={marginTop}>
       {/* Leave enough room for Nerd Font glyphs that terminals render as two
-          cells; otherwise the glyph visually eats the following space. */}
-      <Box width={2} marginRight={1}>
+          cells; otherwise the glyph visually eats the following space.
+          flexShrink=0: see RuleRow — a shrinkable fixed cell makes the layout
+          fractional and the wrapped content spill past the terminal edge. */}
+      <Box width={2} marginRight={1} flexShrink={0}>
         <Text
           color={tint(colorOverride ?? s.color)}
-          backgroundColor={bg}
           bold={s.bold}
           dimColor={s.dim}
         >
@@ -262,8 +269,44 @@ function Gutter({
         </Text>
       </Box>
       <Box flexDirection="column" flexGrow={1}>
-        {bg ? <Text backgroundColor={bg}>{children}</Text> : children}
+        {children}
       </Box>
+    </Box>
+  );
+}
+
+// ── User line ──────────────────────────────────────────────────────────────────
+//
+// A user line renders as a full-width highlight band (Claude-Code style): every
+// visual row — gutter cells included — is padded out to the content width, so the
+// role's background paints the whole line rather than just the glyphs of the text
+// (which is all Ink's `backgroundColor` covers). That requires owning the wrap:
+// rows are word-wrapped here at the known width instead of left to Ink, whose
+// wrapped output can't be padded per-row.
+
+function UserView({
+  text,
+  columns,
+}: {
+  text: string;
+  columns: number;
+}): React.ReactElement {
+  const s = ROLE.user;
+  const icon = useIcon(s.icon);
+  const bg = tint(s.bg);
+  // Same geometry as Gutter: 3 cells of glyph + spacing prefix every row.
+  const width = Math.max(1, columns - 3);
+  const rows = text.split("\n").flatMap((line) => wrapWords(line, width));
+  return (
+    <Box flexDirection="column" marginTop={SPACING.turnGap}>
+      {rows.map((row, i) => (
+        <Text key={rowKey(i, row)} backgroundColor={bg}>
+          <Text color={tint(s.color)} bold={s.bold}>
+            {i === 0 ? padRow(icon, 3) : "   "}
+          </Text>
+          {padRow(row, width)}
+        </Text>
+      ))}
     </Box>
   );
 }
@@ -308,6 +351,7 @@ export function ItemView({
   showExpandHint = false,
   compact = false,
   width,
+  columns = 80,
 }: {
   item: Item;
   /** Kind of the immediately preceding transcript item, for group spacing. */
@@ -323,19 +367,18 @@ export function ItemView({
    * tool headline and note text are truncated to this so they occupy exactly one
    * terminal row — a wrapped live line is what Ink mis-erases into stray fragments. */
   width?: number;
+  /** Terminal width — the rows that paint a full-width highlight band (user
+   * lines, diff +/− lines) wrap and pad themselves to it. */
+  columns?: number;
 }): React.ReactElement {
   switch (item.kind) {
     case "banner":
       return <BannerView {...item} />;
     case "user":
-      // A user line starts a new turn → one blank line above it. It also carries a
-      // subtle highlight background so it's instantly distinguishable from tool
+      // A user line starts a new turn → one blank line above it. It carries a
+      // full-width highlight band so it's instantly distinguishable from tool
       // calls and AI output (Claude-Code style).
-      return (
-        <Gutter speaker="user" marginTop={SPACING.turnGap} highlight>
-          <Text>{item.text}</Text>
-        </Gutter>
-      );
+      return <UserView text={item.text} columns={columns} />;
     case "assistant":
       // A `⏺` dot + blank line marks the start of each distinct AI answer; a
       // continuation chunk of the same streamed message stays glued (no gap, no
@@ -374,6 +417,7 @@ export function ItemView({
             showHint={showExpandHint}
             compact={compact}
             width={width}
+            columns={columns}
           />
         </Gutter>
       );
@@ -405,6 +449,7 @@ function ToolView({
   showHint = false,
   compact = false,
   width,
+  columns = 80,
 }: {
   item: Extract<Item, { kind: "tool" }>;
   expanded: boolean;
@@ -417,6 +462,8 @@ function ToolView({
   /** Live content width — the compact headline is truncated to it (mark included)
    * so the whole row fits the terminal and never wraps. */
   width?: number;
+  /** Terminal width — the diff preview pads its +/− bands to it. */
+  columns?: number;
 }): React.ReactElement {
   const status = toolStatus(item.pending, item.isError);
   const mark = useIcon(TOOL_STATUS[status].icon);
@@ -493,7 +540,14 @@ function ToolView({
       {body && body.more > 0 ? (
         <Text dimColor>{`  …(+${body.more} more lines)`}</Text>
       ) : null}
-      {showDiff ? <DiffView diff={item.diff!} expanded={expanded} /> : null}
+      {showDiff ? (
+        // Rows after the 3-cell speaker gutter + 2-cell rule.
+        <DiffView
+          diff={item.diff!}
+          expanded={expanded}
+          width={Math.max(1, columns - 5)}
+        />
+      ) : null}
     </Box>
   );
 }
@@ -507,13 +561,20 @@ const DIFF_PREFIX: Record<DiffLine["type"], string> = {
 };
 const DIFF_COLOR: Record<DiffLine["type"], string | undefined> = {
   context: undefined,
-  add: "green",
-  del: "red",
+  add: DIFF.add,
+  del: DIFF.del,
+};
+const DIFF_BG: Record<DiffLine["type"], string | undefined> = {
+  context: undefined,
+  add: DIFF.addBg,
+  del: DIFF.delBg,
 };
 
 interface DiffRow {
   text: string;
   color?: string;
+  /** Background painted across the full row width (`+`/`−` lines only). */
+  bg?: string;
 }
 
 /** Flatten a diff's hunks into renderable rows (headers + `+`/`-`/context lines). */
@@ -522,12 +583,13 @@ function diffRows(hunks: Diff["hunks"]): DiffRow[] {
   for (const h of hunks) {
     rows.push({
       text: `@@ -${h.oldStart},${h.oldLines} +${h.newStart},${h.newLines} @@`,
-      color: "cyan",
+      color: DIFF.header,
     });
     for (const line of h.lines) {
       rows.push({
         text: DIFF_PREFIX[line.type] + line.text,
         color: DIFF_COLOR[line.type],
+        bg: DIFF_BG[line.type],
       });
     }
   }
@@ -543,9 +605,16 @@ function diffRows(hunks: Diff["hunks"]): DiffRow[] {
 export function DiffView({
   diff,
   expanded,
+  width = 75,
 }: {
   diff: Diff;
   expanded: boolean;
+  /** Content width for one diff row (what's left after the caller's gutters and
+   * the 2-cell rule). `+`/`−` rows are truncated *and padded* to it, so their
+   * background paints a full-width band that can never soft-wrap (a wrapped row
+   * would desync Ink when this renders in the dynamic region, e.g. the confirm
+   * gate). */
+  width?: number;
 }): React.ReactElement {
   const cap = expanded ? 40 : 12;
   const totalRows = diff.hunks.reduce((s, h) => s + h.lines.length + 1, 0);
@@ -563,7 +632,11 @@ export function DiffView({
       </RuleRow>
       {rows.map((r, i) => (
         <RuleRow key={rowKey(i, r.text)}>
-          <Text color={tint(r.color)}>{truncate(r.text, 200)}</Text>
+          <Text color={tint(r.color)} backgroundColor={tint(r.bg)}>
+            {r.bg
+              ? padRow(truncateWidth(r.text, width), width)
+              : truncateWidth(r.text, width)}
+          </Text>
         </RuleRow>
       ))}
       {hidden > 0 ? (
