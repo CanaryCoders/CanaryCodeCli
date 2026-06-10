@@ -44,6 +44,7 @@ import {
   unsetRawConfigPath,
   validateConfigPathValue,
 } from "../config.ts";
+import { webSearchTool } from "../extensions/websearch.ts";
 import {
   runPostToolHooks,
   runPreToolHooks,
@@ -76,7 +77,6 @@ import {
 import type { Tool } from "../tools.ts";
 import { tools as allTools } from "../tools.ts";
 import { applyUpdate, updateDisabledReason } from "../update.ts";
-import { webSearchTool } from "../websearch.ts";
 import type { AppProps } from "./app-types.ts";
 import { drainInputQuiet, expandPastes } from "./input-helpers.ts";
 import type { Item } from "./Message.tsx";

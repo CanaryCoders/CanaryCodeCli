@@ -7,8 +7,9 @@
 // (safe in plan mode). The tool is built from config at startup and appended to
 // the registry by the caller, so tools.ts stays config-free.
 
-import type { WebSearchConfig } from "./config.ts";
-import type { Tool } from "./tools.ts";
+import type { WebSearchConfig } from "../config.ts";
+import type { Extension } from "../extension.ts";
+import type { Tool } from "../tools.ts";
 
 export interface SearchResult {
   title: string;
@@ -346,5 +347,12 @@ export function webSearchTool(cfg: WebSearchConfig): Tool {
       const results = await searchWeb(query, cfg, { count: input.count });
       return formatResults(query, results);
     },
+  };
+}
+
+export function webSearchExtension(): Extension {
+  return {
+    name: "websearch",
+    tools: (ctx) => [webSearchTool(ctx.config.webSearch)],
   };
 }

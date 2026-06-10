@@ -26,6 +26,7 @@ import type {
   ExtensionHost,
 } from "./extension.ts";
 import { composeExtensions } from "./extension.ts";
+import { webSearchExtension } from "./extensions/websearch.ts";
 import { runPostToolHooks, runPreToolHooks } from "./hooks.ts";
 import {
   closeMcp,
@@ -42,7 +43,6 @@ import {
 import { Semaphore, spawnAgentTool } from "./subagents.ts";
 import { updateTasksTool } from "./tasks.ts";
 import { tools as allTools } from "./tools.ts";
-import { webSearchTool } from "./websearch.ts";
 
 /**
  * The base system prompt, shared by both frontends. Each mode (plan/auto)
@@ -100,10 +100,7 @@ export async function assembleSession(
     ? []
     : [
         { name: "core", tools: () => allTools },
-        {
-          name: "websearch",
-          tools: (ctx) => [webSearchTool(ctx.config.webSearch)],
-        },
+        webSearchExtension(),
         {
           name: "skills",
           async tools(ctx) {
