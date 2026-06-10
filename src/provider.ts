@@ -49,6 +49,8 @@ export interface StreamRequest {
   thinkingBudget?: number;
   /** Output cap. Defaults to a sensible value per provider. */
   maxTokens?: number;
+  /** Abort the in-flight HTTP request/stream. */
+  signal?: AbortSignal;
 }
 
 export type StreamEvent =
@@ -244,6 +246,7 @@ function anthropicProvider(opts: AnthropicOptions): Provider {
           "anthropic-version": version,
         },
         body: JSON.stringify(body),
+        signal: req.signal,
       });
 
       if (!res.ok || !res.body) {
@@ -465,6 +468,7 @@ function openaiCompatProvider(opts: OpenAICompatOptions): Provider {
         method: "POST",
         headers,
         body: JSON.stringify(body),
+        signal: req.signal,
       });
 
       if (!res.ok || !res.body) {
@@ -691,8 +695,13 @@ function openaiResponsesProvider(opts: OpenAIResponsesOptions): Provider {
             accept: "text/event-stream",
           },
           body: JSON.stringify(body),
+          signal: req.signal,
         });
-        if (res.status === 401 && !force) return doFetch(true);
+        if (res.status === 401 && !force) {
+          if (req.signal?.aborted)
+            throw new DOMException("aborted", "AbortError");
+          return doFetch(true);
+        }
         return res;
       };
 

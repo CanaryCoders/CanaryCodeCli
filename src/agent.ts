@@ -300,54 +300,65 @@ export async function* runAgent(
       }
     };
 
-    for await (const ev of provider.stream({
-      model,
-      system,
-      messages,
-      tools: toolDefs,
-      thinkingBudget: opts.thinkingBudget,
-      maxTokens: opts.maxTokens,
-    })) {
+    try {
+      for await (const ev of provider.stream({
+        model,
+        system,
+        messages,
+        tools: toolDefs,
+        thinkingBudget: opts.thinkingBudget,
+        maxTokens: opts.maxTokens,
+        signal,
+      })) {
+        if (signal?.aborted) {
+          yield { type: "done", reason: "aborted" };
+          return;
+        }
+        switch (ev.type) {
+          case "text_delta":
+            textBuf += ev.text;
+            yield { type: "text", text: ev.text };
+            break;
+          case "thinking_delta":
+            thinkingBuf += ev.text;
+            yield { type: "thinking", text: ev.text };
+            break;
+          case "tool_use":
+            // A tool_use closes any open text block so ordering is preserved.
+            flushText();
+            collected.toolUses.push({
+              id: ev.id,
+              name: ev.name,
+              input: ev.input,
+            });
+            collected.blocks.push({
+              type: "tool_use",
+              id: ev.id,
+              name: ev.name,
+              input: ev.input,
+            });
+            break;
+          case "usage":
+            reportedUsage = true;
+            yield {
+              type: "usage",
+              inputTokens: ev.inputTokens,
+              outputTokens: ev.outputTokens,
+            };
+            break;
+          case "done":
+            collected.stopReason = ev.stopReason;
+            break;
+        }
+      }
+    } catch (err) {
+      // An attached signal makes an aborted fetch reject mid-stream; surface it as
+      // the clean `aborted` outcome rather than an error.
       if (signal?.aborted) {
         yield { type: "done", reason: "aborted" };
         return;
       }
-      switch (ev.type) {
-        case "text_delta":
-          textBuf += ev.text;
-          yield { type: "text", text: ev.text };
-          break;
-        case "thinking_delta":
-          thinkingBuf += ev.text;
-          yield { type: "thinking", text: ev.text };
-          break;
-        case "tool_use":
-          // A tool_use closes any open text block so ordering is preserved.
-          flushText();
-          collected.toolUses.push({
-            id: ev.id,
-            name: ev.name,
-            input: ev.input,
-          });
-          collected.blocks.push({
-            type: "tool_use",
-            id: ev.id,
-            name: ev.name,
-            input: ev.input,
-          });
-          break;
-        case "usage":
-          reportedUsage = true;
-          yield {
-            type: "usage",
-            inputTokens: ev.inputTokens,
-            outputTokens: ev.outputTokens,
-          };
-          break;
-        case "done":
-          collected.stopReason = ev.stopReason;
-          break;
-      }
+      throw err;
     }
     flushText();
     // Fallback usage: if the provider never reported token counts, estimate them
@@ -670,6 +681,7 @@ async function summarize(
     system: SUMMARIZER_SYSTEM,
     messages,
     tools: [],
+    signal,
   })) {
     if (signal?.aborted) break;
     if (ev.type === "text_delta") out += ev.text;

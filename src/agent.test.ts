@@ -4,7 +4,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { roleForMode, runAgent } from "./agent.ts";
+import { type AgentEvent, roleForMode, runAgent } from "./agent.ts";
 import type { Message, Provider, StreamEvent } from "./provider.ts";
 import { tools } from "./tools.ts";
 
@@ -104,5 +104,39 @@ describe("runAgent image tool results", () => {
     expect(toolTurn.content.some((b) => b.type === "image")).toBe(false);
     const tr = toolTurn.content.find((b) => b.type === "tool_result");
     expect(tr && tr.type === "tool_result" && tr.content).toContain("cannot");
+  });
+});
+
+describe("runAgent abort during streaming", () => {
+  test("an aborted fetch rejection surfaces as a clean aborted done event", async () => {
+    const controller = new AbortController();
+    let receivedSignal: AbortSignal | undefined;
+    // Mimics a provider whose underlying fetch carries the signal: it streams one
+    // delta, then the run is cancelled and the fetch rejects with an AbortError.
+    const provider: Provider = {
+      id: "fake",
+      async *stream(req): AsyncIterable<StreamEvent> {
+        receivedSignal = req.signal;
+        yield { type: "text_delta", text: "partial" };
+        controller.abort();
+        throw new DOMException("aborted", "AbortError");
+      },
+    };
+    const messages: Message[] = [
+      { role: "user", content: [{ type: "text", text: "hi" }] },
+    ];
+    const events: AgentEvent[] = [];
+    for await (const ev of runAgent({
+      provider,
+      model: "m",
+      system: "",
+      messages,
+      tools: [],
+      signal: controller.signal,
+    })) {
+      events.push(ev);
+    }
+    expect(receivedSignal).toBeDefined();
+    expect(events.at(-1)).toEqual({ type: "done", reason: "aborted" });
   });
 });
