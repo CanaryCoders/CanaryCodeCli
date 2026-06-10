@@ -153,94 +153,109 @@ const FENCE = /^\s*(?:```|~~~)/;
 const INDENT_CODE = /^(?: {4}|\t)/;
 
 /**
- * Parse a markdown document into styled lines. Block constructs handled:
- * fenced & indented code (dim), `#`–`######` headings (bold cyan), `>` quotes
- * (dim with a `│` gutter), `-`/`*`/`+` bullets (`•`), numbered lists, and plain
- * paragraphs (inline-styled). Unknown lines pass through as plain text.
+ * Parse a markdown document into styled lines AND per-line code flags in a
+ * single fence/indent walk. Block constructs handled: fenced & indented code
+ * (dim), `#`–`######` headings (bold cyan), `>` quotes (dim with a `│` gutter),
+ * `-`/`*`/`+` bullets (`•`), numbered lists, and plain paragraphs
+ * (inline-styled). Unknown lines pass through as plain text.
+ *
+ * `code[i]` is true when line `i` is code — a ``` fence delimiter, a line
+ * inside a fence, or an indented code line. Both arrays align 1:1 with
+ * `src.split("\n")` (each row consumes exactly one source line), so
+ * `lines.length === code.length` always holds and renderers can index either
+ * directly.
  */
-export function parseMarkdown(src: string): MdLine[] {
-  const out: MdLine[] = [];
+export function parseMarkdownWithFlags(src: string): {
+  lines: MdLine[];
+  code: boolean[];
+} {
+  const lines: MdLine[] = [];
+  const code: boolean[] = [];
   let inFence = false;
 
   for (const raw of src.split("\n")) {
-    // Fence delimiters toggle code mode; the ``` line itself renders dim.
+    // Fence delimiters toggle code mode; the ``` line itself renders dim and
+    // counts as part of the code block.
     if (FENCE.test(raw)) {
       inFence = !inFence;
-      out.push({ spans: [{ text: raw, dim: true }] });
+      lines.push({ spans: [{ text: raw, dim: true }] });
+      code.push(true);
       continue;
     }
     if (inFence) {
-      out.push({ spans: [{ text: raw, dim: true }] });
+      lines.push({ spans: [{ text: raw, dim: true }] });
+      code.push(true);
       continue;
     }
 
     const h = HEADING.exec(raw);
     if (h) {
-      out.push({ spans: parseInline(h[2]!, { bold: true, color: "cyan" }) });
+      lines.push({ spans: parseInline(h[2]!, { bold: true, color: "cyan" }) });
+      code.push(false);
       continue;
     }
 
     const q = QUOTE.exec(raw);
     if (q) {
-      out.push({
+      lines.push({
         spans: [
           { text: "│ ", dim: true },
           ...parseInline(q[1]!, { dim: true }),
         ],
       });
+      code.push(false);
       continue;
     }
 
     // Bullet before bold: `* item` (marker + space) won't match `**bold**`.
     const b = BULLET.exec(raw);
     if (b) {
-      out.push({ spans: [{ text: `${b[1]}• ` }, ...parseInline(b[2]!, {})] });
+      lines.push({ spans: [{ text: `${b[1]}• ` }, ...parseInline(b[2]!, {})] });
+      code.push(false);
       continue;
     }
 
     const n = NUMBERED.exec(raw);
     if (n) {
-      out.push({
+      lines.push({
         spans: [{ text: `${n[1]}${n[2]}${n[3]} ` }, ...parseInline(n[4]!, {})],
       });
+      code.push(false);
       continue;
     }
 
     // Indented (non-blank) lines are code blocks: render dim, verbatim.
     if (INDENT_CODE.test(raw) && raw.trim() !== "") {
-      out.push({ spans: [{ text: raw, dim: true }] });
+      lines.push({ spans: [{ text: raw, dim: true }] });
+      code.push(true);
       continue;
     }
 
-    out.push({ spans: parseInline(raw, {}) });
+    lines.push({ spans: parseInline(raw, {}) });
+    code.push(false);
   }
 
-  return out;
+  return { lines, code };
 }
 
 /**
- * Per-line flags marking which lines of `src` are code (fenced or indented). The
- * TUI draws a faint left gutter rule down code blocks so they read as a distinct
- * unit. The array aligns 1:1 with both `src.split("\n")` and `parseMarkdown`'s
- * output (each consumes exactly one line per row), so the renderer can index it
- * directly. Mirrors `parseMarkdown`'s fence/indent logic — keep them in sync.
+ * Styled lines only — a view over `parseMarkdownWithFlags` for callers that
+ * don't need the code flags (e.g. `renderAnsi`).
+ */
+export function parseMarkdown(src: string): MdLine[] {
+  return parseMarkdownWithFlags(src).lines;
+}
+
+/**
+ * Per-line flags marking which lines of `src` are code (fenced or indented) — a
+ * view over `parseMarkdownWithFlags` for callers that don't need the styled
+ * lines. The TUI draws a faint left gutter rule down code blocks so they read
+ * as a distinct unit. The array aligns 1:1 with both `src.split("\n")` and
+ * `parseMarkdown`'s output (each consumes exactly one line per row), so the
+ * renderer can index it directly.
  */
 export function codeLineFlags(src: string): boolean[] {
-  const flags: boolean[] = [];
-  let inFence = false;
-  for (const raw of src.split("\n")) {
-    if (FENCE.test(raw)) {
-      inFence = !inFence;
-      flags.push(true); // the ``` delimiter line is part of the block
-      continue;
-    }
-    if (inFence) {
-      flags.push(true);
-      continue;
-    }
-    flags.push(INDENT_CODE.test(raw) && raw.trim() !== "");
-  }
-  return flags;
+  return parseMarkdownWithFlags(src).code;
 }
 
 // ── ANSI rendering (headless) ────────────────────────────────────────────────────────

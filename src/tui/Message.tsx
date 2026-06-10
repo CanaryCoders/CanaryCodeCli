@@ -12,7 +12,7 @@
 
 import { Box, Text } from "ink";
 import { type Diff, type DiffLine, diffStat } from "../diff.ts";
-import { codeLineFlags, parseMarkdown, type Span } from "../markdown.ts";
+import { parseMarkdownWithFlags, type Span } from "../markdown.ts";
 import { useIcon } from "./Icon.tsx";
 import {
   displayToolName,
@@ -125,9 +125,9 @@ function spanProps(span: Span): {
 
 /**
  * Render assistant text as markdown: each parsed line is a `<Text>` row whose
- * styled spans become nested `<Text>` runs. Streaming-safe — `parseMarkdown`
- * re-parses the accumulated text on every render and never throws on a partial
- * marker, so the live region can grow delta-by-delta.
+ * styled spans become nested `<Text>` runs. Streaming-safe —
+ * `parseMarkdownWithFlags` re-parses the accumulated text on every render and
+ * never throws on a partial marker, so the live region can grow delta-by-delta.
  */
 function Markdown({
   text,
@@ -143,10 +143,9 @@ function Markdown({
   // newline is a separator, not content, so trimming one keeps prose tight while
   // leaving genuine `\n\n` paragraph gaps intact.
   const body = text.endsWith("\n") ? text.slice(0, -1) : text;
-  const lines = parseMarkdown(body);
-  // Code-fence/indented lines get a faint left gutter rule so the block reads as a
-  // distinct unit (`codeLineFlags` aligns 1:1 with `lines`).
-  const code = codeLineFlags(body);
+  // Code-fence/indented lines get a faint left gutter rule so the block reads as
+  // a distinct unit (`code` aligns 1:1 with `lines` — single-pass parse).
+  const { lines, code } = parseMarkdownWithFlags(body);
   return (
     <Box flexDirection="column">
       {lines.map((line, li) => {
