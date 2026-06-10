@@ -5,9 +5,9 @@
 // Anthropic-compatible (`/v1/messages`) endpoints. We integrate against the
 // OpenAI-compatible path via our `openai-compat` provider.
 //
-// Design constraints recorded in RALPH.md §5b (we consume the spec, never fix it):
-//   • the spec's `servers` only lists localhost, so we hard-set baseUrl here;
-//   • the spec ships no examples, so the model parser is written defensively;
+// CanaryLLM's public OpenAPI description has a few constraints we account for:
+//   • the documented `servers` value may point at localhost, so baseUrl is fixed;
+//   • examples may be absent, so the model parser is written defensively;
 //   • model ids come from the unauthenticated `GET /api/public/models` endpoint.
 
 import type { Config, ModelConfig, ProviderConfig } from "./config.ts";

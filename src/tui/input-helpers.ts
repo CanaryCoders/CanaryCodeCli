@@ -287,3 +287,39 @@ export function wrapDisplayLine(
 }
 
 export const EMPTY_PASTES: Map<number, string> = new Map();
+
+// ── quit-time input drain ─────────────────────────────────────────────────────
+
+/**
+ * Wait until `stdin` has been quiet for `quietMs`, capped at `maxMs` total.
+ *
+ * Used at quit: a user who taps Esc twice (or Ctrl+C) to leave is often still
+ * pressing keys when the tty is handed back. While Ink is mounted the terminal
+ * is in raw mode and its reads drain those keystrokes; exiting mid-spam leaves
+ * the tail buffered for the parent shell, where stray `\x1b` bytes corrupt the
+ * shell's own terminal handshake — fish's OSC 11 background-colour probe, for
+ * example, then renders its reply as literal `]11;rgb:…` at the prompt.
+ */
+export function drainInputQuiet(
+  stdin: NodeJS.EventEmitter,
+  quietMs = 150,
+  maxMs = 600,
+): Promise<void> {
+  return new Promise((resolve) => {
+    const deadline = Date.now() + maxMs;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const done = () => {
+      if (timer) clearTimeout(timer);
+      stdin.off("data", onData);
+      resolve();
+    };
+    const arm = () => {
+      if (timer) clearTimeout(timer);
+      const wait = Math.max(0, Math.min(quietMs, deadline - Date.now()));
+      timer = setTimeout(done, wait);
+    };
+    const onData = () => arm();
+    stdin.on("data", onData);
+    arm();
+  });
+}

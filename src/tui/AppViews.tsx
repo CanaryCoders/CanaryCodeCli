@@ -151,10 +151,10 @@ export function PromptArea({
     return (
       <Box flexDirection="column" marginTop={SPACING.inputGap}>
         <Box>
-          {/* flexShrink=0: a shrinkable fixed cell beside flexible text makes the
-              layout fractional and the wrapped text spill a column past the
-              terminal edge (see Message.tsx RuleRow). */}
-          <Box flexShrink={0}>
+          {/* width=2 leaves room for two-cell Nerd Font glyphs so the icon can't
+              eat the following space; flexShrink=0 keeps the fixed cell from
+              going fractional beside flexible text (see Message.tsx RuleRow). */}
+          <Box width={2} flexShrink={0}>
             <Text color={tint("yellow")}>{checkpointIcon}</Text>
           </Box>
           <Box marginLeft={1}>
@@ -177,8 +177,8 @@ export function PromptArea({
     <Box flexDirection="column" marginTop={SPACING.inputGap}>
       {session.queued !== null ? (
         <Box>
-          {/* flexShrink=0: see the checkpoint row above. */}
-          <Box flexShrink={0}>
+          {/* width=2 + flexShrink=0: see the checkpoint row above. */}
+          <Box width={2} flexShrink={0}>
             <Text dimColor>{queuedIcon}</Text>
           </Box>
           <Box marginLeft={1}>

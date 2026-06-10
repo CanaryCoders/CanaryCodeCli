@@ -78,7 +78,7 @@ import { tools as allTools } from "../tools.ts";
 import { applyUpdate, updateDisabledReason } from "../update.ts";
 import { webSearchTool } from "../websearch.ts";
 import type { AppProps } from "./app-types.ts";
-import { expandPastes } from "./input-helpers.ts";
+import { drainInputQuiet, expandPastes } from "./input-helpers.ts";
 import type { Item } from "./Message.tsx";
 import { stablePrefixLen } from "./message-helpers.ts";
 import type { Approvals } from "./use-approvals.ts";
@@ -229,6 +229,12 @@ export function useAgentSession(deps: {
       }
     } finally {
       props.store.close();
+      // Absorb the tail of an Esc/Ctrl+C spam before releasing the tty: while Ink
+      // is still mounted the terminal is raw and reads here drain the buffered
+      // keystrokes. Without this, the leftovers spill into the parent shell and
+      // corrupt its terminal handshake (fish's OSC 11 background probe renders
+      // its reply as literal `]11;rgb:…` at the prompt).
+      await drainInputQuiet(process.stdin);
       // Unmount Ink first so the terminal is restored to cooked mode immediately,
       // then tear down the rest of the process. `app.exit()` only unmounts the UI —
       // it does NOT end the process, and the live MCP clients (their child

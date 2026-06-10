@@ -139,8 +139,9 @@ function spanProps(span: Span): {
  * styled spans become nested `<Text>` runs. Streaming-safe —
  * `parseMarkdownWithFlags` re-parses the accumulated text on every render and
  * never throws on a partial marker, so the live region can grow delta-by-delta.
+ * Exported for the other markdown-bearing surfaces (the plan review box).
  */
-function Markdown({
+export function Markdown({
   text,
   dim,
 }: {

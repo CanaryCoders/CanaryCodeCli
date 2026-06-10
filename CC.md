@@ -44,8 +44,7 @@ There is no test suite. Validate changes with `bun run check`.
 ## Conventions
 
 - Biome formatting: 2-space indent, 80-col line width. Run `bun run format`.
-- Keep the core lean; justify any new dependency in `PROGRESS.md`.
+- Keep the core lean; justify any new dependency in the PR or commit message.
 - Every tool carries a `readOnly` flag — plan mode filters on it; preserve it
   when adding tools.
 - Config lives at `~/.cc/config.json`; `${VAR}` references interpolate from env.
-- Track notable progress/decisions in `PROGRESS.md`.

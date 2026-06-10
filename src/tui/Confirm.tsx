@@ -45,10 +45,10 @@ export function ConfirmView({
       </Text>
       {reason ? (
         <Box>
-          {/* flexShrink=0: a shrinkable fixed cell beside flexible text makes the
-              layout fractional and the wrapped reason spill a column past the
-              terminal edge (see Message.tsx RuleRow). */}
-          <Box flexShrink={0}>
+          {/* width=2 leaves room for two-cell Nerd Font glyphs so the icon can't
+              eat the following space; flexShrink=0 keeps the fixed cell from
+              going fractional beside flexible text (see Message.tsx RuleRow). */}
+          <Box width={2} flexShrink={0}>
             <Text color={tint("yellow")}>{warningIcon}</Text>
           </Box>
           <Box marginLeft={1}>

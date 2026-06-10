@@ -1,8 +1,10 @@
 // input-helpers.test.ts — pure prompt editing behavior.
 
 import { describe, expect, test } from "bun:test";
+import { EventEmitter } from "node:events";
 import {
   charWidth,
+  drainInputQuiet,
   EMPTY_PASTES,
   isRawEscapeInput,
   reduceInput,
@@ -58,5 +60,30 @@ describe("display width", () => {
     expect(rows.map((r) => r.text)).toEqual(["漢字", "漢字"]);
     expect(rows[0]).toMatchObject({ start: 0, end: 2 });
     expect(rows[1]).toMatchObject({ start: 2, end: 4 });
+  });
+});
+
+describe("drainInputQuiet", () => {
+  test("resolves once the stream has been quiet for quietMs", async () => {
+    const stdin = new EventEmitter();
+    const start = Date.now();
+    await drainInputQuiet(stdin, 20, 200);
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeGreaterThanOrEqual(15);
+    expect(elapsed).toBeLessThan(150);
+    // The listener must be removed — no leak into the parent shell's stdin.
+    expect(stdin.listenerCount("data")).toBe(0);
+  });
+
+  test("a steady key-spam stream is cut off at maxMs", async () => {
+    const stdin = new EventEmitter();
+    const spam = setInterval(() => stdin.emit("data", Buffer.from("\x1b")), 5);
+    const start = Date.now();
+    await drainInputQuiet(stdin, 50, 120);
+    clearInterval(spam);
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeGreaterThanOrEqual(100);
+    expect(elapsed).toBeLessThan(300);
+    expect(stdin.listenerCount("data")).toBe(0);
   });
 });

@@ -342,4 +342,8 @@ bun run check       # biome check ./src && tsc --noEmit
 bun test            # run the unit tests
 ```
 
-`cc` uses the Bun runtime and ESNext modules with no build step. `.ts` runs directly. The core targets under ~2000 LOC. New dependencies are justified in `PROGRESS.md`.
+`cc` uses the Bun runtime and ESNext modules with no build step. `.ts` runs directly. The core targets under ~2000 LOC; keep new dependencies minimal and intentional.
+
+## License
+
+This project is licensed under the PolyForm Noncommercial License 1.0.0. Noncommercial use and forks are permitted under the terms of `LICENSE`; commercial use requires a separate commercial license from Canary Coders.

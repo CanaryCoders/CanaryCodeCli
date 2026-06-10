@@ -1,5 +1,7 @@
 node_modules/
 .ralph-logs/
+docs/superpowers/plans/
+docs/superpowers/specs/
 *.log
 .DS_Store
 .cc/
