@@ -43,6 +43,7 @@ import {
   unsetRawConfigPath,
   validateConfigPathValue,
 } from "../config.ts";
+import { Semaphore, spawnAgentTool } from "../extensions/agents.ts";
 import { askUserTool } from "../extensions/askuser.ts";
 import { readSkillTool } from "../extensions/skills.ts";
 import { webSearchTool } from "../extensions/websearch.ts";
@@ -66,7 +67,6 @@ import {
 import type { ContentBlock, Message } from "../provider.ts";
 import { createProvider, type Provider } from "../provider.ts";
 import { hasPriceData } from "../session.ts";
-import { Semaphore, spawnAgentTool } from "../subagents.ts";
 import { type Task, updateTasksTool } from "../tasks.ts";
 import {
   budgetFor,

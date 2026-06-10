@@ -9,11 +9,6 @@
 // interactive TUI lands in Phase 4.
 
 import { type AgentMode, roleForMode, runAgent } from "./agent.ts";
-import {
-  composeAgentsPrompt,
-  describeAgents,
-  discoverAgents,
-} from "./agents.ts";
 import { assembleSession, SYSTEM_PROMPT } from "./assemble.ts";
 import {
   clearCredentials,
@@ -36,6 +31,11 @@ import {
   loadProjectContext,
 } from "./context.ts";
 import { diffStat, renderDiff } from "./diff.ts";
+import {
+  composeAgentsPrompt,
+  describeAgents,
+  discoverAgents,
+} from "./extensions/agents.ts";
 import { autoAnswer } from "./extensions/askuser.ts";
 import {
   composeSkillsPrompt,
