@@ -531,7 +531,9 @@ export async function* runAgent(
 
       // ── 5. PostToolUse hooks: observational, never block the loop ──
       if (opts.postToolUse) {
-        await opts.postToolUse(call, { content, isError }).catch(() => {});
+        await opts
+          .postToolUse(call, { content: resultText, isError })
+          .catch(() => {});
       }
     }
     results.push(...images);

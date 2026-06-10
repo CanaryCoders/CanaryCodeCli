@@ -214,6 +214,11 @@ export async function loadCredentials(
   try {
     return (await file.json()) as AuthCredentials;
   } catch {
+    // A corrupt file is not the same as "not signed in" — say so, but still
+    // treat it as signed-out so a fresh login can overwrite it.
+    console.error(
+      `cc: ${path} is corrupt — run \`cc login-codex\` to recreate it`,
+    );
     return undefined;
   }
 }

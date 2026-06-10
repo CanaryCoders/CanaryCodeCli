@@ -27,6 +27,11 @@ export interface SearchOptions {
 const DEFAULT_COUNT = 5;
 const MAX_COUNT = 10;
 
+/** Keep provider error bodies short — they can echo auth/subscription details. */
+function truncateBody(s: string, max = 200): string {
+  return s.length > max ? `${s.slice(0, max)}…` : s;
+}
+
 function clampCount(n: number | undefined): number {
   if (typeof n !== "number" || !Number.isFinite(n)) return DEFAULT_COUNT;
   return Math.min(MAX_COUNT, Math.max(1, Math.trunc(n)));
@@ -235,7 +240,7 @@ async function braveSearch(
   });
   if (!res.ok) {
     throw new Error(
-      `brave search failed: ${res.status} ${res.statusText} ${await res.text()}`.trim(),
+      `brave search failed: ${res.status} ${res.statusText} ${truncateBody(await res.text().catch(() => ""))}`.trim(),
     );
   }
   const data = (await res.json()) as { web?: { results?: BraveResult[] } };
@@ -274,7 +279,7 @@ async function tavilySearch(
   });
   if (!res.ok) {
     throw new Error(
-      `tavily search failed: ${res.status} ${res.statusText} ${await res.text()}`.trim(),
+      `tavily search failed: ${res.status} ${res.statusText} ${truncateBody(await res.text().catch(() => ""))}`.trim(),
     );
   }
   const data = (await res.json()) as { results?: TavilyResult[] };

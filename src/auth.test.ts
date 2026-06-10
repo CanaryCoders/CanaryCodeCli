@@ -1,7 +1,9 @@
 // auth.test.ts — account-id extraction from the id_token JWT.
 
-import { describe, expect, test } from "bun:test";
-import { accountIdFromIdToken } from "./auth.ts";
+import { describe, expect, spyOn, test } from "bun:test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { accountIdFromIdToken, loadCredentials } from "./auth.ts";
 
 /** Build a (signature-less, unverified) JWT carrying the given payload object. */
 function jwt(payload: Record<string, unknown>): string {
@@ -48,5 +50,21 @@ describe("accountIdFromIdToken", () => {
 
   test("returns undefined when no account claim is present", () => {
     expect(accountIdFromIdToken(jwt({ sub: "u1" }))).toBeUndefined();
+  });
+});
+
+describe("loadCredentials", () => {
+  test("a corrupt auth.json resolves undefined and warns instead of throwing", async () => {
+    const tmpPath = join(tmpdir(), `cc-auth-corrupt-${Date.now()}.json`);
+    await Bun.write(tmpPath, "{broken");
+    const errSpy = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await expect(loadCredentials(tmpPath)).resolves.toBeUndefined();
+      expect(errSpy).toHaveBeenCalledTimes(1);
+      expect(String(errSpy.mock.calls[0]?.[0])).toContain("corrupt");
+    } finally {
+      errSpy.mockRestore();
+      await Bun.file(tmpPath).delete();
+    }
   });
 });
