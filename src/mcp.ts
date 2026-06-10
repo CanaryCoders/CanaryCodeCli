@@ -286,8 +286,10 @@ async function readJsonLines(
   }
 }
 
-/** Vars safe to inherit by default — secrets must be passed via cfg.env explicitly
- *  (mirrors the official MCP SDK's default inherited env). */
+/** Vars safe to inherit by default — secrets must be passed via cfg.env explicitly.
+ *  Mirrors the official MCP SDK's Unix default (HOME LOGNAME PATH SHELL TERM USER)
+ *  plus TMPDIR/LANG/LC_ALL and non-secret proxy/TLS vars. If a server needs more
+ *  (NODE_OPTIONS, XDG_*, …), add them to that server's `env` in config.json. */
 const SAFE_ENV = [
   "HOME",
   "LOGNAME",
@@ -298,15 +300,23 @@ const SAFE_ENV = [
   "TMPDIR",
   "LANG",
   "LC_ALL",
+  "HTTPS_PROXY",
+  "HTTP_PROXY",
+  "NO_PROXY",
+  "SSL_CERT_FILE",
+  "NODE_EXTRA_CA_CERTS",
 ];
 
 /** Build the environment for a spawned MCP server: allowlisted parent vars plus
  *  the server's explicit `env` entries. Exported for tests. */
 export function childEnv(
   extra?: Record<string, string>,
-): Record<string, string | undefined> {
-  const env: Record<string, string | undefined> = {};
-  for (const k of SAFE_ENV) env[k] = process.env[k];
+): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const k of SAFE_ENV) {
+    const v = process.env[k];
+    if (v !== undefined) env[k] = v;
+  }
   return { ...env, ...extra };
 }
 
