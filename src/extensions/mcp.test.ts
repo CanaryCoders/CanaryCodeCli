@@ -208,4 +208,30 @@ describe("mcpExtension", () => {
     // dispose() with no connection should resolve without throwing.
     await expect(mcpExtension().dispose!()).resolves.toBeUndefined();
   });
+
+  test("tools() → dispose() closes the opened client", async () => {
+    // Track whether close() was called on the transport.
+    let closed = false;
+    const transport: Transport = {
+      ...fakeTransport(),
+      async close() {
+        closed = true;
+      },
+    };
+
+    // Inject our instrumented transport so no real process is spawned.
+    const ext = mcpExtension(() => transport);
+    const notes: string[] = [];
+    const tools = await ext.tools!({
+      config: { ...defaultConfig(), mcpServers: { srv: { command: "x" } } },
+      note: (n: string) => notes.push(n),
+    } as never);
+
+    // tools() should have returned the server's wrapped tool.
+    expect(tools.find((t) => t.name === "mcp__srv__screenshot")).toBeDefined();
+
+    // After dispose(), the transport must be closed.
+    await ext.dispose!();
+    expect(closed).toBe(true);
+  });
 });

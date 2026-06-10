@@ -579,7 +579,9 @@ export async function closeMcp(conn: McpConnection): Promise<void> {
 
 import type { Extension } from "../extension.ts";
 
-export function mcpExtension(): Extension {
+export function mcpExtension(
+  transportFor?: (cfg: McpServerConfig) => Transport,
+): Extension {
   let mcpConn: McpConnection | undefined;
   return {
     name: "mcp",
@@ -587,10 +589,10 @@ export function mcpExtension(): Extension {
       const configured = Object.keys(ctx.config.mcpServers).length;
       // No servers configured ⇒ don't connect at all (matches headless).
       if (configured === 0) return [];
-      const conn = await connectMcpServers(ctx.config.mcpServers);
+      const conn = await connectMcpServers(ctx.config.mcpServers, transportFor);
+      mcpConn = conn;
       const note = describeMcp(conn, configured);
       if (note) ctx.note(note);
-      mcpConn = conn;
       return conn.tools;
     },
     async dispose() {
