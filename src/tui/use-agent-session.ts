@@ -339,6 +339,15 @@ export function useAgentSession(deps: {
     persistedRef.current = msgs.length;
   }
 
+  // A turn rejecting *outside* runTurn's own try (e.g. while building tools) would
+  // otherwise vanish as an unhandled rejection and leave `busy` stuck true.
+  const reportTurnFailure = (err: unknown) => {
+    note(`cc: ${(err as Error).message}`, "error");
+    controllerRef.current = null;
+    setBusy(false);
+    setLive([]);
+  };
+
   // ── run one user prompt through the agent loop ──
   // `modeOverride` lets callers run in a mode other than the current state value,
   // which matters when accepting a plan: `setMode("normal")` hasn't flushed yet.
@@ -559,13 +568,32 @@ export function useAgentSession(deps: {
         tone: "error",
       });
     } finally {
-      if (props.config.hooks.Stop?.length) {
-        await runStopHooks(props.config.hooks, {
-          ...ctx,
-          reason: outcome,
+      // Persist first — Stop hooks and UI cleanup must not be able to lose the turn.
+      try {
+        flush(compacted);
+      } catch (err) {
+        local.push({
+          id: nextId(),
+          kind: "note",
+          text: `session save failed: ${(err as Error).message}`,
+          tone: "error",
         });
       }
-      flush(compacted);
+      if (props.config.hooks.Stop?.length) {
+        try {
+          await runStopHooks(props.config.hooks, {
+            ...ctx,
+            reason: outcome,
+          });
+        } catch (err) {
+          local.push({
+            id: nextId(),
+            kind: "note",
+            text: `Stop hook failed: ${(err as Error).message}`,
+            tone: "error",
+          });
+        }
+      }
       // Commit whatever `sync` hasn't already moved (the last, now-final item plus
       // anything appended after the loop) into the scrollback and clear the live region.
       const remaining = local.slice(committed);
@@ -590,7 +618,7 @@ export function useAgentSession(deps: {
       ) {
         queuedRef.current = null;
         setQueued(null);
-        void submitPrompt(next);
+        submitPrompt(next).catch(reportTurnFailure);
       }
     }
   }
@@ -829,7 +857,7 @@ export function useAgentSession(deps: {
       }
     }
     messagesRef.current.push({ role: "user", content });
-    void runTurn(modeOverride);
+    runTurn(modeOverride).catch(reportTurnFailure);
   }
 
   /** Ctrl+V: grab an image off the clipboard and queue it for the next prompt. */

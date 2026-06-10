@@ -150,8 +150,14 @@ function App(props: AppProps): React.ReactElement {
   // per-render identity without a stale closure.
   const startMcpRef = useRef(session.startMcp);
   startMcpRef.current = session.startMcp;
+  const noteRef = useRef(transcript.note);
+  noteRef.current = transcript.note;
   useEffect(() => {
-    void startMcpRef.current();
+    // Connection errors are reported per-server inside startMcp; this catch guards
+    // the unexpected throw so it cannot become an invisible unhandled rejection.
+    startMcpRef.current().catch((err: unknown) => {
+      noteRef.current(`mcp startup failed: ${(err as Error).message}`, "error");
+    });
   }, []);
 
   // Esc and Ctrl+C share handleCancel (cancel queue → clear prompt → abort →
