@@ -164,6 +164,10 @@ const INDENT_CODE = /^(?: {4}|\t)/;
  * `src.split("\n")` (each row consumes exactly one source line), so
  * `lines.length === code.length` always holds and renderers can index either
  * directly.
+ *
+ * The code flag matches what the line actually renders as: under the old
+ * mirrored loop an indented bullet/quote rendered as a list item but was still
+ * flagged as code, and the single pass fixes that inconsistency.
  */
 export function parseMarkdownWithFlags(src: string): {
   lines: MdLine[];

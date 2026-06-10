@@ -30,4 +30,13 @@ describe("parseMarkdownWithFlags", () => {
     expect(lines.length).toBe(1);
     expect(code).toEqual([false]);
   });
+
+  test("indented bullets/quotes render as lists, not code", () => {
+    const { lines, code } = parseMarkdownWithFlags(
+      "    - bullet\n    > quote\n    1. numbered\n    plain code",
+    );
+    expect(code).toEqual([false, false, false, true]);
+    // the bullet really is rendered as a bullet (not dim verbatim)
+    expect(lines[0]!.spans[0]!.text).toContain("•");
+  });
 });
