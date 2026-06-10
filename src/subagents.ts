@@ -12,7 +12,7 @@
 // nested spawn_agent while it is still under the depth cap) and `maxConcurrent`
 // caps how many child loops run at once via a shared semaphore.
 
-import { runAgent } from "./agent.ts";
+import { type AgentOptions, runAgent } from "./agent.ts";
 import type { AgentDef } from "./agents.ts";
 import { type Config, resolveModel } from "./config.ts";
 import {
@@ -67,6 +67,8 @@ export interface SpawnAgentEnv {
   limiter: Semaphore;
   /** Abort propagated from the parent run. */
   signal?: AbortSignal;
+  /** Approval gate inherited from the parent run (mutating tools only). Omitted ⇒ ungated, matching the parent. */
+  gate?: AgentOptions["gate"];
   /** Custom agent definitions the model may dispatch to by name (optional). */
   agents?: AgentDef[];
 }
@@ -212,6 +214,7 @@ async function runSubagent(
       mode: "normal",
       maxTurns: env.config.autoMaxTurns,
       signal: env.signal,
+      gate: env.gate,
       preToolUse,
       postToolUse,
     })) {

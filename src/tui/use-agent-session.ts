@@ -16,6 +16,7 @@ import { useApp } from "ink";
 import { useRef, useState } from "react";
 import {
   type AgentMode,
+  type AgentOptions,
   roleForMode,
   runAgent,
   systemForMode,
@@ -290,6 +291,7 @@ export function useAgentSession(deps: {
     signal: AbortSignal,
     turnProvider: Provider,
     turnModel: string,
+    gate: AgentOptions["gate"],
   ): Tool[] {
     if (props.noTools) return [];
     let tools: Tool[] = [
@@ -312,6 +314,7 @@ export function useAgentSession(deps: {
           limiter,
           signal,
           agents: props.agents,
+          gate,
         }),
       ];
     }
@@ -351,7 +354,11 @@ export function useAgentSession(deps: {
       supportsVision: turnSupportsVision,
     } = modelForTurn(runMode);
     const system = systemForMode(baseSystemRef.current, runMode);
-    let tools = buildTools(controller.signal, turnProvider, turnModel);
+    // One gate shared by the main loop and spawn_agent's children, so a sub-agent's
+    // mutating tools go through the same approval flow as the parent's.
+    const gate: AgentOptions["gate"] = (call) =>
+      approvals.requestGate(runMode, call);
+    let tools = buildTools(controller.signal, turnProvider, turnModel, gate);
     if (runMode === "plan") tools = tools.filter((t) => t.readOnly);
 
     const budget = supportsThinking(turnProvider.id) ? budgetFor(thinking) : 0;
@@ -449,7 +456,7 @@ export function useAgentSession(deps: {
         thinkingBudget: budget,
         compactAtTokens: props.config.compactAtTokens,
         signal: controller.signal,
-        gate: (call) => approvals.requestGate(runMode, call),
+        gate,
         preToolUse,
         postToolUse,
       })) {

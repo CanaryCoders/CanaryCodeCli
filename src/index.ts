@@ -404,6 +404,55 @@ async function runHeadless(args: Args): Promise<number> {
   // into sub-agent runs spawned by the spawn_agent tool below.
   const controller = new AbortController();
 
+  // ── AI permission gate ──
+  // The human confirm box is a TUI-only affordance, so headless has no one to
+  // escalate an "unsafe" verdict to: here an unsafe call is blocked outright and
+  // the model is told why. Auto/`--yolo` skips the gate entirely (run everything).
+  // Built before the tool set so spawn_agent can hand the same gate to its children.
+  let gate:
+    | ((call: { name: string; input: unknown }) => Promise<{
+        allow: boolean;
+        reason?: string;
+      }>)
+    | undefined;
+  if (mode !== "auto" && config.permission.mode === "ai") {
+    const permResolved = resolveModel(
+      config,
+      modelForRole(config, "permission"),
+    );
+    if (!permResolved) {
+      process.stderr.write(
+        `note: permission model "${modelForRole(config, "permission")}" not found; AI safety check disabled\n`,
+      );
+    } else {
+      try {
+        const checkerProvider = createProvider(permResolved.providerConfig);
+        const checkerModel = permResolved.model.name ?? permResolved.model.id;
+        process.stderr.write(`⛉ AI permission check (${checkerModel})\n`);
+        gate = async (call) => {
+          if (!inPermissionScope(config.permission.scope, call.name)) {
+            return { allow: true };
+          }
+          const v = await checkCommandSafety(
+            checkerProvider,
+            checkerModel,
+            call,
+            controller.signal,
+          );
+          if (v.safe) return { allow: true };
+          return {
+            allow: false,
+            reason: `blocked by AI safety check: ${v.reason}`,
+          };
+        };
+      } catch (err) {
+        process.stderr.write(
+          `note: AI safety check disabled: ${(err as Error).message}\n`,
+        );
+      }
+    }
+  }
+
   // Discover skills (global ~/.cc/skills + project ./.cc/skills). Only their
   // name+description go into the prompt; bodies load on demand via read_skill.
   const skills = await discoverSkills();
@@ -457,6 +506,7 @@ async function runHeadless(args: Args): Promise<number> {
         limiter,
         signal: controller.signal,
         agents,
+        gate,
       }),
     ];
   }
@@ -637,54 +687,6 @@ async function runHeadless(args: Args): Promise<number> {
         result: { content: string; isError: boolean },
       ) => runPostToolHooks(config.hooks, call, result, hookContext)
     : undefined;
-
-  // ── AI permission gate ──
-  // The human confirm box is a TUI-only affordance, so headless has no one to
-  // escalate an "unsafe" verdict to: here an unsafe call is blocked outright and
-  // the model is told why. Auto/`--yolo` skips the gate entirely (run everything).
-  let gate:
-    | ((call: { name: string; input: unknown }) => Promise<{
-        allow: boolean;
-        reason?: string;
-      }>)
-    | undefined;
-  if (mode !== "auto" && config.permission.mode === "ai") {
-    const permResolved = resolveModel(
-      config,
-      modelForRole(config, "permission"),
-    );
-    if (!permResolved) {
-      process.stderr.write(
-        `note: permission model "${modelForRole(config, "permission")}" not found; AI safety check disabled\n`,
-      );
-    } else {
-      try {
-        const checkerProvider = createProvider(permResolved.providerConfig);
-        const checkerModel = permResolved.model.name ?? permResolved.model.id;
-        process.stderr.write(`⛉ AI permission check (${checkerModel})\n`);
-        gate = async (call) => {
-          if (!inPermissionScope(config.permission.scope, call.name)) {
-            return { allow: true };
-          }
-          const v = await checkCommandSafety(
-            checkerProvider,
-            checkerModel,
-            call,
-            controller.signal,
-          );
-          if (v.safe) return { allow: true };
-          return {
-            allow: false,
-            reason: `blocked by AI safety check: ${v.reason}`,
-          };
-        };
-      } catch (err) {
-        process.stderr.write(
-          `note: AI safety check disabled: ${(err as Error).message}\n`,
-        );
-      }
-    }
-  }
 
   try {
     for await (const ev of runAgent({
