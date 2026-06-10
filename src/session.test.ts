@@ -45,4 +45,25 @@ describe("SessionStore.loadMessages", () => {
       }
     }
   });
+
+  test("returns all appended turns in order when nothing is corrupt", () => {
+    const store = SessionStore.open(":memory:");
+    try {
+      const id = store.createSession({ model: "test-model", cwd: "/tmp" });
+      const turns: Message[] = [
+        { role: "user", content: [{ type: "text", text: "hello" }] },
+        { role: "assistant", content: [{ type: "text", text: "hi there" }] },
+        { role: "user", content: [{ type: "text", text: "how are you?" }] },
+      ];
+      for (const turn of turns) {
+        store.appendTurn(id, turn);
+      }
+
+      const messages = store.loadMessages(id);
+
+      expect(messages).toEqual(turns);
+    } finally {
+      store.close();
+    }
+  });
 });

@@ -311,6 +311,7 @@ export class SessionStore {
       )
       .all(sessionId) as TurnDbRow[];
     const out: Message[] = [];
+    let skipped = 0;
     for (const r of rows) {
       // A corrupt row (partial write, manual edit) must not make the whole
       // session unloadable — skip it and keep the rest of the transcript.
@@ -320,8 +321,15 @@ export class SessionStore {
           content: JSON.parse(r.content) as Message["content"],
         });
       } catch {
-        // skip corrupt row
+        skipped++;
       }
+    }
+    // loadMessages runs at startup before the TUI mounts, so writing to
+    // stderr here is safe and makes silent data loss observable.
+    if (skipped > 0) {
+      process.stderr.write(
+        `cc: warning: skipped ${skipped} corrupt turn row(s) in session ${sessionId}\n`,
+      );
     }
     return out;
   }
