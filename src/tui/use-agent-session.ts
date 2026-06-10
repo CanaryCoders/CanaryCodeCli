@@ -45,6 +45,7 @@ import {
 } from "../config.ts";
 import { Semaphore, spawnAgentTool } from "../extensions/agents.ts";
 import { askUserTool } from "../extensions/askuser.ts";
+import { closeMcp, connectMcpServers, describeMcp } from "../extensions/mcp.ts";
 import { readSkillTool } from "../extensions/skills.ts";
 import { webSearchTool } from "../extensions/websearch.ts";
 import {
@@ -57,7 +58,6 @@ import {
 } from "../hooks.ts";
 import { iconFor } from "../icons.ts";
 import { extractImagePaths, type ImageData, readImageFile } from "../image.ts";
-import { closeMcp, connectMcpServers, describeMcp } from "../mcp.ts";
 import {
   describeCodex,
   gateCodexModels,

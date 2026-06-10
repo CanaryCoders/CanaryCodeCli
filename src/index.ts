@@ -37,6 +37,7 @@ import {
   discoverAgents,
 } from "./extensions/agents.ts";
 import { autoAnswer } from "./extensions/askuser.ts";
+import type { McpConnection } from "./extensions/mcp.ts";
 import {
   composeSkillsPrompt,
   describeSkills,
@@ -51,7 +52,6 @@ import {
 } from "./hooks.ts";
 import { extractImagePaths, readImageFile } from "./image.ts";
 import { renderAnsi } from "./markdown.ts";
-import type { McpConnection } from "./mcp.ts";
 import {
   cachedCodexModels,
   describeCodex,

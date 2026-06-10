@@ -22,15 +22,10 @@ import type {
 import { composeExtensions } from "./extension.ts";
 import { agentsExtension } from "./extensions/agents.ts";
 import { type AskUserFn, askUserExtension } from "./extensions/askuser.ts";
+import { mcpExtension } from "./extensions/mcp.ts";
 import { skillsExtension } from "./extensions/skills.ts";
 import { webSearchExtension } from "./extensions/websearch.ts";
 import { runPostToolHooks, runPreToolHooks } from "./hooks.ts";
-import {
-  closeMcp,
-  connectMcpServers,
-  describeMcp,
-  type McpConnection,
-} from "./mcp.ts";
 import { updateTasksTool } from "./tasks.ts";
 import { tools as allTools } from "./tools.ts";
 
@@ -78,9 +73,6 @@ export async function assembleSession(
   opts: AssembleOptions,
 ): Promise<AssembledSession> {
   const { mode } = opts;
-  // The MCP extension records its live connection here so dispose() closes exactly
-  // what it opened (the connection isn't known until tools() runs).
-  let mcpConn: McpConnection | undefined;
 
   const extensions: Extension[] = opts.noTools
     ? []
@@ -89,22 +81,7 @@ export async function assembleSession(
         webSearchExtension(),
         skillsExtension(),
         askUserExtension(opts.askUser),
-        {
-          name: "mcp",
-          async tools(ctx) {
-            const configured = Object.keys(ctx.config.mcpServers).length;
-            // No servers configured ⇒ don't connect at all (matches headless).
-            if (configured === 0) return [];
-            const conn = await connectMcpServers(ctx.config.mcpServers);
-            const note = describeMcp(conn, configured);
-            if (note) ctx.note(note);
-            mcpConn = conn;
-            return conn.tools;
-          },
-          dispose: async () => {
-            if (mcpConn) await closeMcp(mcpConn);
-          },
-        },
+        mcpExtension(),
         agentsExtension(),
         {
           name: "hooks",

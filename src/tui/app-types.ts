@@ -7,8 +7,8 @@
 import type { AgentMode } from "../agent.ts";
 import type { Config } from "../config.ts";
 import type { AgentDef } from "../extensions/agents.ts";
+import type { McpConnection } from "../extensions/mcp.ts";
 import type { Skill } from "../extensions/skills.ts";
-import type { McpConnection } from "../mcp.ts";
 import type { Message, Provider } from "../provider.ts";
 import type { SessionStore } from "../session.ts";
 import type { ThinkingLevel } from "../thinking.ts";

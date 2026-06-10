@@ -183,3 +183,29 @@ describe("wrapped MCP tool with image result", () => {
     await Promise.all(conn.clients.map((c) => c.close()));
   });
 });
+
+// ── mcpExtension factory ────────────────────────────────────────────────────
+
+import { defaultConfig } from "../config.ts";
+import { mcpExtension } from "./mcp.ts";
+
+describe("mcpExtension", () => {
+  test("with zero servers contributes nothing and never connects", async () => {
+    const cfg = defaultConfig();
+    // defaultConfig().mcpServers is {} — verify no note was emitted (proving
+    // no connect attempt, since describeMcp always emits a note for attempted servers).
+    const notes: string[] = [];
+    const ext = mcpExtension();
+    const tools = await ext.tools!({
+      config: cfg,
+      note: (n: string) => notes.push(n),
+    } as never);
+    expect(tools).toEqual([]);
+    expect(notes).toHaveLength(0);
+  });
+
+  test("dispose is safe before tools() is called", async () => {
+    // dispose() with no connection should resolve without throwing.
+    await expect(mcpExtension().dispose!()).resolves.toBeUndefined();
+  });
+});

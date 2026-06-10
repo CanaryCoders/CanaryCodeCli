@@ -12,9 +12,9 @@
 // annotation, defaulting to false (mutating) when unknown. A server that fails to
 // connect is reported once and skipped — the agent runs without it.
 
-import type { McpServerConfig } from "./config.ts";
-import type { ImageData } from "./image.ts";
-import type { Tool, ToolRunResult } from "./tools.ts";
+import type { McpServerConfig } from "../config.ts";
+import type { ImageData } from "../image.ts";
+import type { Tool, ToolRunResult } from "../tools.ts";
 
 /** MCP protocol revision we advertise in the handshake. */
 const PROTOCOL_VERSION = "2024-11-05";
@@ -573,4 +573,28 @@ export function describeMcp(
 /** Close every live MCP client (call after the run). */
 export async function closeMcp(conn: McpConnection): Promise<void> {
   await Promise.all(conn.clients.map((c) => c.close().catch(() => {})));
+}
+
+// ── extension factory ─────────────────────────────────────────────────────────
+
+import type { Extension } from "../extension.ts";
+
+export function mcpExtension(): Extension {
+  let mcpConn: McpConnection | undefined;
+  return {
+    name: "mcp",
+    async tools(ctx) {
+      const configured = Object.keys(ctx.config.mcpServers).length;
+      // No servers configured ⇒ don't connect at all (matches headless).
+      if (configured === 0) return [];
+      const conn = await connectMcpServers(ctx.config.mcpServers);
+      const note = describeMcp(conn, configured);
+      if (note) ctx.note(note);
+      mcpConn = conn;
+      return conn.tools;
+    },
+    async dispose() {
+      if (mcpConn) await closeMcp(mcpConn);
+    },
+  };
 }
