@@ -346,6 +346,7 @@ export function useAgentSession(deps: {
     // queue is stale; the user can resubmit.
     queuedRef.current = [];
     setQueued([]);
+    flushOnAbortRef.current = false;
   };
 
   // ── run one user prompt through the agent loop ──
@@ -1264,11 +1265,12 @@ export function useAgentSession(deps: {
       if (flushOnAbortRef.current) {
         // Second press: hard stop. Discard queued items and don't re-launch them.
         flushOnAbortRef.current = false;
+        const hadQueue = queuedRef.current.length > 0;
         queuedRef.current = [];
         setQueued([]);
         controllerRef.current.abort();
         approvals.declineAllPending();
-        note("stopped — queue cleared");
+        note(hadQueue ? "stopped — queue cleared" : "stopped");
       } else {
         // First press: abort the current turn but flush the queue afterward.
         flushOnAbortRef.current = true;
