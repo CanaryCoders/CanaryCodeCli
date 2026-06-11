@@ -350,20 +350,11 @@ bun test            # run the unit tests
 
 `cc` uses the Bun runtime and ESNext modules with no build step. `.ts` runs directly. The core targets under ~2000 LOC; keep new dependencies minimal and intentional.
 
-### Architecture & extending
+## Architecture & extending
 
-`cc` follows a small-core design (inspired by
-[Pi](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/)): the core is
-the agent loop (`src/agent.ts`), the provider layer (`src/provider.ts`), six
-file/shell tools (`src/tools.ts`), and session storage. Everything else — web
-search, skills, sub-agents, MCP, hooks, the AI permission engine, the task
-list — is an `Extension` (`src/extension.ts`): a named bundle of tools, an
-optional system-prompt section, and pre/post tool hooks.
+`cc` follows a small-core design (inspired by [Pi](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/)): the core is the agent loop (`src/agent.ts`), the provider layer (`src/provider.ts`), the core tool set (`src/tools.ts`, frozen), and session storage. Everything else — web search, skills, sub-agents, MCP, hooks, the AI permission engine, the task list — is an `Extension` (`src/extension.ts`): a named bundle of tools, an optional system-prompt section, and pre/post tool hooks.
 
-To add a feature: write a factory returning an `Extension` in
-`src/extensions/<name>.ts` and register it in `src/assemble.ts`. To remove
-one: delete its file and its registration line. Extensions that aren't
-configured contribute nothing — no tokens, no startup work, no prompt text.
+To add a feature: write a factory returning an `Extension` in `src/extensions/<name>.ts` and register it in `src/assemble.ts`. To remove one: delete its file and its registration line. Extensions that aren't configured contribute nothing — no tokens, no startup work, no prompt text.
 
 ## License
 
