@@ -181,6 +181,9 @@ export function useAgentSession(deps: {
     ExtensionToggle[] | null
   >(null);
   const extensionsOpenRef = useRef(false);
+  // An applyToggles run still persisting/reloading; a reopened picker awaits it
+  // so it never snapshots half-applied state.
+  const togglesInFlightRef = useRef<Promise<void> | null>(null);
 
   const [busy, setBusy] = useState(false);
   const [mode, setModeState] = useState<AgentMode>(
@@ -962,7 +965,9 @@ export function useAgentSession(deps: {
         void runBuiltin(action.name, action.args);
         break;
       case "extensions":
-        void handleExtensions(action);
+        handleExtensions(action).catch((err) =>
+          note(`/extensions failed: ${(err as Error).message}`, "error"),
+        );
         break;
       case "update":
         void doUpdate();
@@ -1019,13 +1024,21 @@ export function useAgentSession(deps: {
   async function handleExtensions(
     action: Extract<ReturnType<typeof dispatchCommand>, { kind: "extensions" }>,
   ): Promise<void> {
+    // A prior toggle may still be applying (config reload + reassembly take
+    // seconds) — wait it out so this command never reads mid-apply state.
+    if (togglesInFlightRef.current) await togglesInFlightRef.current;
     const known = toggleableExtensions();
     if (action.op === "list") {
+      // Read the persisted toggles straight from disk so the picker reflects
+      // saved truth even if some in-memory reload is lagging.
+      const raw = (await getRawConfigPath("extensions").catch(
+        () => undefined,
+      )) as Record<string, boolean> | undefined;
       extensionsOpenRef.current = true;
       setExtensionsPicker(
         known.map((e) => ({
           ...e,
-          enabled: extensionEnabled(props.config, e.name),
+          enabled: raw?.[e.name] ?? extensionEnabled(props.config, e.name),
         })),
       );
       return;
@@ -1046,9 +1059,9 @@ export function useAgentSession(deps: {
     await applyToggles([{ name, description: "", enabled: enable }]);
   }
 
-  /** Persist + apply toggle changes (only the ones that differ), with ONE
-   * config reload and ONE session reassembly for the whole batch. */
-  async function applyToggles(next: ExtensionToggle[]): Promise<void> {
+  /** The applyToggles work: persist the changed toggles, then ONE config
+   * reload and ONE session reassembly for the whole batch. */
+  async function doApplyToggles(next: ExtensionToggle[]): Promise<void> {
     const changed = next.filter(
       (e) => e.enabled !== extensionEnabled(props.config, e.name),
     );
@@ -1072,6 +1085,16 @@ export function useAgentSession(deps: {
     } catch (err) {
       note(`/extensions failed: ${(err as Error).message}`, "error");
     }
+  }
+
+  /** Run doApplyToggles, tracked in togglesInFlightRef so a reopened picker
+   * (or a follow-up enable/disable) waits for the apply to land first. */
+  function applyToggles(next: ExtensionToggle[]): Promise<void> {
+    const run: Promise<void> = doApplyToggles(next).finally(() => {
+      if (togglesInFlightRef.current === run) togglesInFlightRef.current = null;
+    });
+    togglesInFlightRef.current = run;
+    return run;
   }
 
   // Enter in the picker: close it, then apply whatever changed.
