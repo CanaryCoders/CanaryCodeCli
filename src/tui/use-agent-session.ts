@@ -18,16 +18,14 @@ import { type AgentMode, roleForMode, runAgent } from "../agent.ts";
 import {
   type AssembledSession,
   assembleSession,
+  extensionEnabled,
   type FrontendGate,
+  runBuiltinCommand,
   sessionForMode,
+  startupBuiltins,
   type Task,
+  toggleableExtensions,
 } from "../assemble.ts";
-import {
-  clearCredentials,
-  hasCredentials,
-  loginWithBrowser,
-  openBrowser,
-} from "../auth.ts";
 import { readClipboardImage } from "../clipboard.ts";
 import { dispatchCommand } from "../commands.ts";
 import {
@@ -52,12 +50,6 @@ import {
 } from "../extensions/hooks.ts";
 import { iconFor } from "../icons.ts";
 import { extractImagePaths, type ImageData, readImageFile } from "../image.ts";
-import {
-  describeCodex,
-  gateCodexModels,
-  OPENAI_PROVIDER,
-  populateCodexModels,
-} from "../openai-codex.ts";
 import type { ContentBlock, Message } from "../provider.ts";
 import { createProvider, type Provider } from "../provider.ts";
 import { hasPriceData } from "../session.ts";
@@ -69,6 +61,7 @@ import {
 } from "../thinking.ts";
 import { applyUpdate, updateDisabledReason } from "../update.ts";
 import type { AppProps } from "./app-types.ts";
+import type { ExtensionToggle } from "./Extensions.tsx";
 import { drainInputQuiet, expandPastes } from "./input-helpers.ts";
 import type { Item } from "./Message.tsx";
 import { stablePrefixLen } from "./message-helpers.ts";
@@ -119,6 +112,14 @@ export interface AgentSession {
   /** Assemble the session once, on mount (deferred so a slow MCP server doesn't
    * block first paint). Turns dispatched before this resolves queue behind it. */
   startSession: () => Promise<void>;
+  /** The `/extensions` checkbox picker's rows, or null when closed. */
+  extensionsPicker: ExtensionToggle[] | null;
+  /** Live mirror of `extensionsPicker !== null` for App's key handler. */
+  extensionsOpenRef: React.MutableRefObject<boolean>;
+  /** Enter in the picker — persist + apply the pending toggle states. */
+  applyExtensions: (next: ExtensionToggle[]) => void;
+  /** Esc in the picker — close without applying. */
+  cancelExtensions: () => void;
 }
 
 export function useAgentSession(deps: {
@@ -174,6 +175,12 @@ export function useAgentSession(deps: {
   const queuedRef = useRef<string | null>(null);
   // Images pasted from the clipboard (Ctrl+V), attached to the next prompt sent.
   const pendingImagesRef = useRef<ImageData[]>([]);
+  // The `/extensions` checkbox picker (null = closed). The ref mirrors openness
+  // for App's `useInput` closure, like the approvals' pending refs.
+  const [extensionsPicker, setExtensionsPicker] = useState<
+    ExtensionToggle[] | null
+  >(null);
+  const extensionsOpenRef = useRef(false);
 
   const [busy, setBusy] = useState(false);
   const [mode, setModeState] = useState<AgentMode>(
@@ -664,8 +671,10 @@ export function useAgentSession(deps: {
 
   async function reloadConfig(): Promise<void> {
     const next = await loadConfig();
-    if (await hasCredentials()) await populateCodexModels(next);
-    else gateCodexModels(next, false);
+    // Re-run built-in startup discovery/gating against the fresh config (live —
+    // a reload should reflect current credentials). Notes are dropped: a reload
+    // is not a launch.
+    await startupBuiltins(next, "live");
     replaceConfigInPlace(props.config, next);
   }
 
@@ -949,11 +958,11 @@ export function useAgentSession(deps: {
       case "init":
         doInit();
         break;
-      case "login-codex":
-        loginCodex();
+      case "builtin-command":
+        void runBuiltin(action.name, action.args);
         break;
-      case "logout-codex":
-        void logoutCodex();
+      case "extensions":
+        void handleExtensions(action);
         break;
       case "update":
         void doUpdate();
@@ -988,39 +997,94 @@ export function useAgentSession(deps: {
     submitPrompt("/init", INIT_PROMPT, "normal").catch(reportTurnFailure);
   }
 
-  // `/login-codex` — sign in with the ChatGPT subscription via the browser OAuth
-  // flow (a background callback server on 127.0.0.1:1455). The URL is also printed
-  // so a remote user can copy it. On success the Codex models are discovered live;
-  // switch with `/model <a listed model>` (e.g. `/model gpt-5.5 high`).
-  function loginCodex(): void {
-    note("opening your browser to sign in with ChatGPT…");
-    void loginWithBrowser({
-      open: openBrowser,
-      onUrl: (url) => note(`if your browser didn't open, visit:\n${url}`),
-    })
-      .then(async ({ account_id }) => {
-        const result = await populateCodexModels(props.config);
-        const ids = (props.config.providers[OPENAI_PROVIDER]?.models ?? []).map(
-          (m) => m.id,
-        );
-        const codexNote = describeCodex(result);
-        if (codexNote) note(codexNote);
-        note(
-          `signed in to ChatGPT${account_id ? ` (account ${account_id})` : ""}${ids.length ? ` — switch with e.g. /model ${ids[0]}` : ""}`,
-        );
-      })
-      .catch((err) => note(`login failed: ${(err as Error).message}`, "error"));
+  // A command contributed by a built-in extension (`/login-codex`,
+  // `/login-opencode`, …) — the handler lives with its extension; the TUI only
+  // routes notes into the scrollback and formats failures.
+  async function runBuiltin(name: string, args: string[]): Promise<void> {
+    try {
+      await runBuiltinCommand(
+        name,
+        { config: props.config, note: (text) => note(text) },
+        args,
+      );
+    } catch (err) {
+      note(`/${name} failed: ${(err as Error).message}`, "error");
+    }
   }
 
-  // `/logout-codex` — drop the stored ChatGPT credentials and hide the Codex models.
-  async function logoutCodex(): Promise<void> {
-    try {
-      await clearCredentials();
-      gateCodexModels(props.config, false);
-      note("signed out of ChatGPT — Codex models hidden");
-    } catch (err) {
-      note(`logout failed: ${(err as Error).message}`, "error");
+  // `/extensions` — bare opens the interactive checkbox picker; an explicit
+  // `enable|disable <name>` flips one directly. Either way a change persists to
+  // ~/.cc/config.json (`extensions.<name>`), re-runs the built-in startup
+  // gating, and reassembles the session so tool/prompt changes apply at once.
+  async function handleExtensions(
+    action: Extract<ReturnType<typeof dispatchCommand>, { kind: "extensions" }>,
+  ): Promise<void> {
+    const known = toggleableExtensions();
+    if (action.op === "list") {
+      extensionsOpenRef.current = true;
+      setExtensionsPicker(
+        known.map((e) => ({
+          ...e,
+          enabled: extensionEnabled(props.config, e.name),
+        })),
+      );
+      return;
     }
+    const name = action.name ?? "";
+    if (!known.some((e) => e.name === name)) {
+      note(
+        `unknown extension: "${name}" (known: ${known.map((e) => e.name).join(", ")})`,
+        "error",
+      );
+      return;
+    }
+    const enable = action.op === "enable";
+    if (extensionEnabled(props.config, name) === enable) {
+      note(`extension ${name} is already ${enable ? "enabled" : "disabled"}`);
+      return;
+    }
+    await applyToggles([{ name, description: "", enabled: enable }]);
+  }
+
+  /** Persist + apply toggle changes (only the ones that differ), with ONE
+   * config reload and ONE session reassembly for the whole batch. */
+  async function applyToggles(next: ExtensionToggle[]): Promise<void> {
+    const changed = next.filter(
+      (e) => e.enabled !== extensionEnabled(props.config, e.name),
+    );
+    if (changed.length === 0) return;
+    try {
+      for (const e of changed) {
+        await setRawConfigPath(`extensions.${e.name}`, e.enabled);
+      }
+      await reloadConfig();
+      await reloadSession();
+      const enabled = changed.filter((e) => e.enabled).map((e) => e.name);
+      const disabled = changed.filter((e) => !e.enabled).map((e) => e.name);
+      note(
+        [
+          enabled.length ? `enabled: ${enabled.join(", ")}` : "",
+          disabled.length ? `disabled: ${disabled.join(", ")}` : "",
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      );
+    } catch (err) {
+      note(`/extensions failed: ${(err as Error).message}`, "error");
+    }
+  }
+
+  // Enter in the picker: close it, then apply whatever changed.
+  function applyExtensions(next: ExtensionToggle[]): void {
+    extensionsOpenRef.current = false;
+    setExtensionsPicker(null);
+    void applyToggles(next);
+  }
+
+  // Esc in the picker: close without applying.
+  function cancelExtensions(): void {
+    extensionsOpenRef.current = false;
+    setExtensionsPicker(null);
   }
 
   // `/update` — download, verify, and swap in the latest release binary. Each
@@ -1119,5 +1183,9 @@ export function useAgentSession(deps: {
     rejectPlan,
     handleCancel,
     startSession,
+    extensionsPicker,
+    extensionsOpenRef,
+    applyExtensions,
+    cancelExtensions,
   };
 }

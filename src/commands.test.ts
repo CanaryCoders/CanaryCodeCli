@@ -117,3 +117,65 @@ describe("completions /config", () => {
     ]);
   });
 });
+
+describe("dispatchCommand /extensions", () => {
+  test("bare /extensions lists", () => {
+    expect(dispatchCommand("/extensions")).toEqual({
+      kind: "extensions",
+      op: "list",
+    });
+  });
+
+  test("enable/disable carry the extension name", () => {
+    expect(dispatchCommand("/extensions enable opencode")).toEqual({
+      kind: "extensions",
+      op: "enable",
+      name: "opencode",
+    });
+    expect(dispatchCommand("/extensions disable websearch")).toEqual({
+      kind: "extensions",
+      op: "disable",
+      name: "websearch",
+    });
+  });
+
+  test("a missing name is a usage error", () => {
+    expect(dispatchCommand("/extensions enable").kind).toBe("error");
+    expect(dispatchCommand("/extensions bogus opencode").kind).toBe("error");
+  });
+});
+
+describe("dispatchCommand built-in extension commands", () => {
+  test("login/logout commands dispatch generically with args", () => {
+    expect(dispatchCommand("/login-codex --manual")).toEqual({
+      kind: "builtin-command",
+      name: "login-codex",
+      args: ["--manual"],
+    });
+    expect(dispatchCommand("/login-opencode")).toEqual({
+      kind: "builtin-command",
+      name: "login-opencode",
+      args: [],
+    });
+    expect(dispatchCommand("/logout-opencode")).toEqual({
+      kind: "builtin-command",
+      name: "logout-opencode",
+      args: [],
+    });
+  });
+});
+
+describe("completions /extensions", () => {
+  test("bare arg suggests nothing so Enter submits the picker", () => {
+    expect(completions("/extensions ", ctx)).toEqual([]);
+  });
+
+  test("completes the op once typed, then extension names", () => {
+    const ops = completions("/extensions en", ctx).map((c) => c.label);
+    expect(ops).toContain("enable");
+    const names = completions("/extensions disable ", ctx).map((c) => c.label);
+    expect(names).toContain("opencode");
+    expect(names).toContain("codex");
+    expect(names).toContain("websearch");
+  });
+});

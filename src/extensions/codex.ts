@@ -1,11 +1,12 @@
-// openai-codex.ts — "OpenAI Codex (ChatGPT subscription)" provider preset + model
-// discovery.
+// codex.ts — the "OpenAI Codex (ChatGPT subscription)" built-in extension:
+// provider preset, model discovery, and the login/logout-codex commands.
 //
 // Mirrors the canary.ts preset pattern. This provider carries no API key or
 // baseUrl: it authenticates with the ChatGPT-subscription OAuth tokens in
 // ~/.cc/auth.json (see auth.ts) and talks the Responses-API path
 // (chatgpt.com/backend-api/codex/responses) via the `openai-responses` provider
-// impl in provider.ts.
+// impl in provider.ts (which also owns the wire-level model-handle parsing,
+// `parseCodexModel`).
 //
 // Models are NOT hardcoded — the set a ChatGPT account may use is curated
 // server-side and changes over time (e.g. gpt-5.2-codex was dropped, gpt-5.5
@@ -20,8 +21,18 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { makeTokenGetter, type TokenGetter } from "./auth.ts";
-import type { Config, ModelConfig, ProviderConfig } from "./config.ts";
+import {
+  clearCredentials,
+  hasCredentials,
+  loginManual,
+  loginWithBrowser,
+  makeTokenGetter,
+  openBrowser,
+  type TokenGetter,
+} from "../auth.ts";
+import type { Config, ModelConfig, ProviderConfig } from "../config.ts";
+import type { BuiltinCommandContext, BuiltinExtension } from "../extension.ts";
+import { extensionEnabled } from "../extension.ts";
 
 /** The provider key used for the baked-in Codex preset. */
 export const OPENAI_PROVIDER = "openai";
@@ -74,17 +85,6 @@ const CODEX_MODELS_URL = "https://chatgpt.com/backend-api/codex/models";
  */
 const CODEX_CLIENT_VERSION = "9.99.0";
 
-/** Reasoning effort levels, weakest → strongest (the Codex `ReasoningEffort` enum). */
-export const CODEX_EFFORTS = [
-  "none",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-] as const;
-export type CodexEffort = (typeof CODEX_EFFORTS)[number];
-
 /**
  * Static fallback used only when the catalog fetch fails (offline, transient
  * error). The current ChatGPT-account set as of mid-2026 — deliberately NOT the
@@ -107,25 +107,6 @@ export function openaiCodexProviderConfig(): ProviderConfig {
 /** Whether a provider config is the Codex preset (the only `openai-responses`). */
 function isCodexProvider(pc: ProviderConfig): boolean {
   return pc.api === "openai-responses";
-}
-
-/**
- * Split a Codex model handle into its wire slug and optional reasoning effort.
- * Catalog handles look like "gpt-5.5 xhigh" — the trailing token is an effort
- * level. A bare slug (no recognised effort suffix) returns `effort: undefined`.
- */
-export function parseCodexModel(model: string): {
-  slug: string;
-  effort?: CodexEffort;
-} {
-  const at = model.lastIndexOf(" ");
-  if (at > 0) {
-    const tail = model.slice(at + 1) as CodexEffort;
-    if ((CODEX_EFFORTS as readonly string[]).includes(tail)) {
-      return { slug: model.slice(0, at), effort: tail };
-    }
-  }
-  return { slug: model };
 }
 
 // ── catalog fetch ────────────────────────────────────────────────────────────
@@ -291,3 +272,85 @@ export function describeCodex(
   if (result.count === 0) return undefined;
   return `note: OpenAI Codex — ${result.count} model${result.count === 1 ? "" : "s"} available`;
 }
+
+// ── built-in extension ───────────────────────────────────────────────────────
+
+/** Sign in (browser OAuth, or --manual paste flow when a readLine is available),
+ * then discover the account's models so `/model` can offer them immediately. */
+async function runLoginCodex(
+  ctx: BuiltinCommandContext,
+  args: string[],
+): Promise<void> {
+  // A disabled extension stays disabled — login must not resurrect it.
+  if (!extensionEnabled(ctx.config, "codex")) {
+    ctx.note(
+      "the codex extension is disabled — enable it first with /extensions enable codex",
+    );
+    return;
+  }
+  const manual = args.includes("--manual");
+  if (manual && !ctx.readLine) {
+    throw new Error("--manual sign-in needs a terminal (use `cc login-codex`)");
+  }
+  const { account_id } =
+    manual && ctx.readLine
+      ? await loginManual({
+          onUrl: (url) =>
+            ctx.note(
+              `Open this URL in a browser, sign in, then paste the URL you are redirected to:\n\n${url}\n`,
+            ),
+          readLine: ctx.readLine,
+        })
+      : await loginWithBrowser({
+          open: openBrowser,
+          onUrl: (url) =>
+            ctx.note(`if your browser didn't open, visit:\n${url}`),
+        });
+  const result = await populateCodexModels(ctx.config);
+  const note = describeCodex(result);
+  if (note) ctx.note(note);
+  const ids = (ctx.config.providers[OPENAI_PROVIDER]?.models ?? []).map(
+    (m) => m.id,
+  );
+  ctx.note(
+    `signed in to ChatGPT${account_id ? ` (account ${account_id})` : ""}${
+      ids.length ? ` — switch with e.g. /model ${ids[0]}` : ""
+    }`,
+  );
+}
+
+export const codexBuiltin: BuiltinExtension = {
+  name: "codex",
+  description: "OpenAI Codex models via your ChatGPT subscription",
+  providerPresets: () => ({ [OPENAI_PROVIDER]: openaiCodexProviderConfig() }),
+  async startup(config, mode) {
+    if (!extensionEnabled(config, "codex") || !(await hasCredentials())) {
+      gateCodexModels(config, false);
+      return undefined;
+    }
+    if (mode === "live")
+      return describeCodex(await populateCodexModels(config));
+    const note = describeCodex(await cachedCodexModels(config));
+    void refreshCodexModels(config);
+    return note;
+  },
+  commands: [
+    {
+      name: "login-codex",
+      usage: "[--manual]",
+      description: "sign in with your ChatGPT (OpenAI Codex) subscription",
+      run: runLoginCodex,
+    },
+    {
+      name: "logout-codex",
+      description: "sign out of your ChatGPT (OpenAI Codex) subscription",
+      async run(ctx) {
+        await clearCredentials();
+        gateCodexModels(ctx.config, false);
+        ctx.note(
+          "signed out of ChatGPT (removed ~/.cc/auth.json) — Codex models hidden",
+        );
+      },
+    },
+  ],
+};

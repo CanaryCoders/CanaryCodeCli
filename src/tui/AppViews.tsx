@@ -10,6 +10,7 @@ import Spinner from "ink-spinner";
 import { AskUserView } from "./AskUser.tsx";
 import { Complete } from "./Complete.tsx";
 import { ConfirmView } from "./Confirm.tsx";
+import { ExtensionsView } from "./Extensions.tsx";
 import { useIcon } from "./Icon.tsx";
 import { MultilineInput } from "./Input.tsx";
 import { type Item, ItemView } from "./Message.tsx";
@@ -172,6 +173,14 @@ export function PromptArea({
   }
   if (approvals.pendingPlan) {
     return <PlanView plan={approvals.pendingPlan} mode={session.mode} />;
+  }
+  if (session.extensionsPicker) {
+    return (
+      <ExtensionsView
+        items={session.extensionsPicker}
+        onSubmit={session.applyExtensions}
+      />
+    );
   }
   return (
     <Box flexDirection="column" marginTop={SPACING.inputGap}>

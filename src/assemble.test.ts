@@ -53,6 +53,18 @@ describe("assembleSession", () => {
     await session.dispose();
   });
 
+  test("a disabled extension drops out whole; plumbing is untouchable", async () => {
+    const config = defaultConfig();
+    config.extensions = { websearch: false, agents: false, tasks: false };
+    const session = await assembleSession({ ...opts(), config });
+    const names = session.tools.map((t) => t.name);
+    expect(names).not.toContain("web_search");
+    expect(names).not.toContain("spawn_agent");
+    // tasks is not toggleable — the flag is ignored and the tool stays last.
+    expect(names[names.length - 1]).toBe("update_tasks");
+    await session.dispose();
+  });
+
   test("AI permission (failClosed, unresolvable model) composes a denying gate", async () => {
     const config = defaultConfig();
     // No providers → the permission checker model can't resolve, so failClosed

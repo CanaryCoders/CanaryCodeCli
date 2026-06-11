@@ -12,6 +12,7 @@
 
 import type { AgentMode } from "./agent.ts";
 import { CONFIG_PATHS } from "./config.ts";
+import { builtinCommands, toggleableExtensions } from "./extensions/builtin.ts";
 import { fuzzyRank, fuzzyScore } from "./fuzzy.ts";
 import { parseLevel, type ThinkingLevel } from "./thinking.ts";
 
@@ -38,8 +39,9 @@ export type CommandAction =
   | { kind: "resume"; id?: string }
   | { kind: "cost" }
   | { kind: "init" }
-  | { kind: "login-codex" }
-  | { kind: "logout-codex" }
+  /** A command contributed by a built-in extension (login-codex, login-opencode, …). */
+  | { kind: "builtin-command"; name: string; args: string[] }
+  | { kind: "extensions"; op: "list" | "enable" | "disable"; name?: string }
   | { kind: "update" }
   | {
       kind: "config";
@@ -94,13 +96,16 @@ export const COMMANDS: CommandSpec[] = [
     description: "generate a starter CC.md project-context file",
   },
   {
-    name: "login-codex",
-    description: "sign in with your ChatGPT (OpenAI Codex) subscription",
+    name: "extensions",
+    usage: "[enable|disable <name>]",
+    description: "toggle extensions (bare: interactive checkbox picker)",
   },
-  {
-    name: "logout-codex",
-    description: "sign out of your ChatGPT (OpenAI Codex) subscription",
-  },
+  // Login-style commands contributed by built-in extensions (extensions/builtin.ts).
+  ...builtinCommands().map((c) => ({
+    name: c.name,
+    usage: c.usage,
+    description: c.description,
+  })),
   { name: "update", description: "update cc to the latest release" },
   { name: "help", aliases: ["?"], description: "show this command list" },
   { name: "exit", aliases: ["quit", "q"], description: "exit cc" },
@@ -112,6 +117,9 @@ for (const spec of COMMANDS) {
   BY_NAME.set(spec.name, spec);
   for (const alias of spec.aliases ?? []) BY_NAME.set(alias, spec);
 }
+
+/** Command words owned by built-in extensions (dispatched generically). */
+const BUILTIN_COMMAND_NAMES = new Set(builtinCommands().map((c) => c.name));
 
 /** Whether a raw input line is a slash command (vs. an ordinary prompt). */
 function isCommand(input: string): boolean {
@@ -130,6 +138,21 @@ function parseCommand(input: string): ParsedCommand | null {
   return {
     name: t.slice(0, space).toLowerCase(),
     arg: t.slice(space + 1).trim(),
+  };
+}
+
+/** Parse the `/extensions [enable|disable <name>]` argument. */
+function parseExtensionsAction(arg: string): CommandAction {
+  if (!arg) return { kind: "extensions", op: "list" };
+  const match = arg.match(/^(\S+)(?:\s+(\S+))?\s*$/);
+  const op = match?.[1]?.toLowerCase() ?? "";
+  const name = match?.[2];
+  if ((op === "enable" || op === "disable") && name) {
+    return { kind: "extensions", op, name };
+  }
+  return {
+    kind: "error",
+    message: "usage: /extensions [enable|disable <name>]",
   };
 }
 
@@ -196,6 +219,16 @@ export function dispatchCommand(input: string): CommandAction {
     };
   }
 
+  // Built-in extension commands dispatch generically — the host looks the
+  // handler up in the registry, so new built-ins never grow this switch.
+  if (BUILTIN_COMMAND_NAMES.has(spec.name)) {
+    return {
+      kind: "builtin-command",
+      name: spec.name,
+      args: parsed.arg ? parsed.arg.split(/\s+/) : [],
+    };
+  }
+
   switch (spec.name) {
     case "model":
       return parsed.arg
@@ -230,10 +263,8 @@ export function dispatchCommand(input: string): CommandAction {
       return parseConfigAction(parsed.arg);
     case "init":
       return { kind: "init" };
-    case "login-codex":
-      return { kind: "login-codex" };
-    case "logout-codex":
-      return { kind: "logout-codex" };
+    case "extensions":
+      return parseExtensionsAction(parsed.arg);
     case "update":
       return { kind: "update" };
     case "help":
@@ -370,6 +401,25 @@ function paramValues(
       }));
     case "config":
       return configParamValues(arg, ctx);
+    case "extensions": {
+      const tokens = arg.trimStart().split(/\s+/).filter(Boolean);
+      // Bare `/extensions` is the interactive picker — suggest nothing so a
+      // plain Enter submits it instead of accepting an op completion.
+      if (tokens.length === 0) return [];
+      const op = tokens[0]?.toLowerCase();
+      const opComplete = tokens.length >= 2 || /\s$/.test(arg);
+      if ((op === "enable" || op === "disable") && opComplete) {
+        return toggleableExtensions().map((e) => ({
+          value: `/extensions ${op} ${e.name}`,
+          label: e.name,
+          description: e.description,
+        }));
+      }
+      return ["enable", "disable"].map((o) => ({
+        value: `/extensions ${o} `,
+        label: o,
+      }));
+    }
     default:
       return [];
   }
@@ -420,7 +470,7 @@ export function completions(
   const rawArg = rest.slice(space + 1);
   const values = paramValues(spec.name, ctx, rawArg);
   const query =
-    spec.name === "config"
+    spec.name === "config" || spec.name === "extensions"
       ? (rawArg.trimStart().split(/\s+/).at(-1) ?? "")
       : argQuery;
   return fuzzyRank(query, values, (v) => v.label).map((r) => r.item);

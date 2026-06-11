@@ -7,9 +7,69 @@
 // core loop stays a pure engine that knows nothing about features.
 
 import type { AgentOptions } from "./agent.ts";
-import type { Config } from "./config.ts";
+import type { Config, ProviderConfig } from "./config.ts";
 import type { Provider } from "./provider.ts";
 import type { Tool } from "./tools.ts";
+
+// ── Built-in extensions ──────────────────────────────────────────────────────
+//
+// A session Extension (below) covers what a feature contributes to one agent
+// session: tools, a prompt section, tool hooks. Some features also have a life
+// OUTSIDE the session — a provider preset baked into the default config, model
+// discovery/gating at startup, and login-style commands (CLI subcommands + TUI
+// slash commands). A BuiltinExtension describes that outer lifecycle; the
+// registry in extensions/builtin.ts lists them so the frontends iterate instead
+// of hardcoding each feature.
+
+/** What a built-in extension command receives from its host (CLI or TUI). */
+export interface BuiltinCommandContext {
+  config: Config;
+  /** Status/result line for the human (console.log in CLI, note() in TUI). */
+  note(text: string): void;
+  /** Read one line of user input (CLI manual flows only; absent in the TUI). */
+  readLine?: () => Promise<string>;
+}
+
+/** A login-style command surfaced as `cc <name>` and `/<name>`. */
+export interface BuiltinCommand {
+  /** Command word, e.g. "login-codex". */
+  name: string;
+  /** Argument hint shown in help, e.g. "[--manual]". */
+  usage?: string;
+  /** One-line description for help/autocomplete. */
+  description: string;
+  /** Run the command. Throw to report failure (the host formats the error). */
+  run(ctx: BuiltinCommandContext, args: string[]): Promise<void>;
+}
+
+export interface BuiltinExtension {
+  name: string;
+  /** One-line description shown by `/extensions`. */
+  description: string;
+  /** Provider presets folded into the default config (inert until signed in). */
+  providerPresets?(): Record<string, ProviderConfig>;
+  /**
+   * Startup discovery/gating, mutating `config` in place — populate provider
+   * models when authenticated, empty them when not (or when disabled). "fast"
+   * favors caches + background refresh (the TUI's first paint); "live" blocks
+   * on the network (headless, reloads). Returns an optional one-line note.
+   */
+  startup?(config: Config, mode: "fast" | "live"): Promise<string | undefined>;
+  /** Login-style commands this extension contributes. */
+  commands?: BuiltinCommand[];
+}
+
+/**
+ * Whether an extension is enabled: the `extensions.<name>` config toggle, else
+ * the given default. Applies to built-ins and to toggleable session extensions.
+ */
+export function extensionEnabled(
+  config: Config,
+  name: string,
+  defaultEnabled = true,
+): boolean {
+  return config.extensions[name] ?? defaultEnabled;
+}
 
 export interface ToolCall {
   id: string;

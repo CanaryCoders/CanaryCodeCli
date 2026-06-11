@@ -34,6 +34,7 @@ function baseConfig(overrides: Partial<Config> = {}): Config {
     model: "opus",
     providers: {},
     webSearch: {},
+    extensions: {},
     mcpServers: {},
     ui: { nerdFont: false },
     autoMaxTurns: 25,

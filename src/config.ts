@@ -8,7 +8,14 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { CANARY_PROVIDER, canaryProviderConfig } from "./canary.ts";
-import { OPENAI_PROVIDER, openaiCodexProviderConfig } from "./openai-codex.ts";
+import {
+  OPENAI_PROVIDER,
+  openaiCodexProviderConfig,
+} from "./extensions/codex.ts";
+import {
+  OPENCODE_PROVIDER,
+  opencodeZenProviderConfig,
+} from "./extensions/opencode.ts";
 import type { ThinkingLevel } from "./thinking.ts";
 
 export type ProviderApi = "anthropic" | "openai-compat" | "openai-responses";
@@ -138,6 +145,9 @@ export interface Config {
   models?: Partial<Record<ModelRole, string>>;
   providers: Record<string, ProviderConfig>;
   webSearch: WebSearchConfig;
+  /** Per-extension enable/disable overrides (`/extensions`). Unlisted
+   * extensions use their default (enabled). */
+  extensions: Record<string, boolean>;
   mcpServers: Record<string, McpServerConfig>;
   /** TUI display preferences. */
   ui: UiConfig;
@@ -204,10 +214,14 @@ export function defaultConfig(): Config {
       [CANARY_PROVIDER]: canaryProviderConfig(),
       // OpenAI Codex (ChatGPT subscription) preset. Inert until the user signs in
       // with `cc login-codex`; its models are gated on ~/.cc/auth.json at startup
-      // (see openai-codex.ts / gateCodexModels).
+      // (see extensions/codex.ts / gateCodexModels).
       [OPENAI_PROVIDER]: openaiCodexProviderConfig(),
+      // OpenCode Zen preset. Inert until opencode credentials (or
+      // OPENCODE_API_KEY) are found at startup (see extensions/opencode.ts).
+      [OPENCODE_PROVIDER]: opencodeZenProviderConfig(),
     },
     webSearch: {},
+    extensions: {},
     mcpServers: {},
     ui: { nerdFont: false },
     autoMaxTurns: 25,
@@ -257,6 +271,7 @@ function mergeConfig(base: Config, user: Partial<Config>): Config {
     models: user.models ?? base.models,
     providers: { ...base.providers, ...(user.providers ?? {}) },
     webSearch: { ...base.webSearch, ...(user.webSearch ?? {}) },
+    extensions: { ...base.extensions, ...(user.extensions ?? {}) },
     mcpServers: { ...base.mcpServers, ...(user.mcpServers ?? {}) },
     ui: { ...base.ui, ...(user.ui ?? {}) },
     autoMaxTurns: user.autoMaxTurns ?? base.autoMaxTurns,
@@ -365,6 +380,7 @@ export const CONFIG_PATHS = [
   "providers.<name>.models",
   "webSearch.provider",
   "webSearch.apiKey",
+  "extensions.<name>",
   "mcpServers.<name>",
   "ui.nerdFont",
   "autoMaxTurns",
@@ -387,6 +403,7 @@ const ROOT_CONFIG_KEYS = new Set([
   "models",
   "providers",
   "webSearch",
+  "extensions",
   "mcpServers",
   "ui",
   "autoMaxTurns",
@@ -487,6 +504,10 @@ export function validateConfigPathValue(path: string, value: unknown): void {
     "webSearch.provider",
   ]);
   if (parts[0] === "webSearch" && !stringPaths.has(path)) return;
+  if (parts[0] === "extensions" && parts.length === 2) {
+    if (typeof value !== "boolean") fail("expected boolean");
+    return;
+  }
   if (stringPaths.has(path) || parts[0] === "models") {
     if (typeof value !== "string") fail("expected string");
     return;

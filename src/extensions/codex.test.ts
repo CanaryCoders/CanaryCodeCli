@@ -1,14 +1,15 @@
-// openai-codex.test.ts — model-handle parsing and catalog discovery.
+// codex.test.ts — model-handle parsing and catalog discovery.
 
 import { describe, expect, test } from "bun:test";
-import type { Config } from "./config.ts";
+import type { Config } from "../config.ts";
+import { parseCodexModel } from "../provider.ts";
 import {
   type CodexPopulateResult,
+  codexBuiltin,
   OPENAI_PROVIDER,
   openaiCodexProviderConfig,
-  parseCodexModel,
   populateCodexModels,
-} from "./openai-codex.ts";
+} from "./codex.ts";
 
 describe("parseCodexModel", () => {
   test("splits a trailing effort token off the slug", () => {
@@ -36,6 +37,7 @@ function configWithCodex(): Config {
     model: "opus",
     providers: { [OPENAI_PROVIDER]: openaiCodexProviderConfig() },
     webSearch: {},
+    extensions: {},
     mcpServers: {},
     ui: { nerdFont: false },
     autoMaxTurns: 25,
@@ -98,4 +100,13 @@ describe("populateCodexModels", () => {
     expect(ids.some((id) => id.startsWith("gpt-5.5"))).toBe(true);
     expect(ids).not.toContain("gpt-5.2-codex");
   });
+});
+
+test("login-codex refuses while the extension is disabled", async () => {
+  const config = configWithCodex();
+  config.extensions = { codex: false };
+  const notes: string[] = [];
+  const login = codexBuiltin.commands!.find((c) => c.name === "login-codex")!;
+  await login.run({ config, note: (t) => notes.push(t) }, []);
+  expect(notes.join("\n")).toContain("disabled");
 });

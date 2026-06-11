@@ -9,15 +9,14 @@
 // interactive TUI lands in Phase 4.
 
 import { type AgentMode, roleForMode, runAgent } from "./agent.ts";
-import { assembleSession, sessionForMode } from "./assemble.ts";
 import {
-  clearCredentials,
-  hasCredentials,
-  loginManual,
-  loginWithBrowser,
-  openBrowser,
-} from "./auth.ts";
-import { describeCanary, populateCanaryModels } from "./canary.ts";
+  assembleSession,
+  type BuiltinCommand,
+  builtinCommands,
+  findBuiltinCommand,
+  sessionForMode,
+  startupBuiltins,
+} from "./assemble.ts";
 import {
   type Config,
   loadConfig,
@@ -37,13 +36,6 @@ import {
 import { statusMark } from "./extensions/tasks.ts";
 import { extractImagePaths, readImageFile } from "./image.ts";
 import { renderAnsi } from "./markdown.ts";
-import {
-  cachedCodexModels,
-  describeCodex,
-  gateCodexModels,
-  populateCodexModels,
-  refreshCodexModels,
-} from "./openai-codex.ts";
 import type { ContentBlock, Message, Provider } from "./provider.ts";
 import { createProvider } from "./provider.ts";
 import { hasPriceData, type SessionRow, SessionStore } from "./session.ts";
@@ -163,6 +155,11 @@ function parseArgs(argv: string[]): Args {
 }
 
 function printUsage(): void {
+  // Subcommand lines for built-in extension commands, aligned like the rest.
+  const builtin = builtinCommands().map((c) => {
+    const left = `cc ${c.name}${c.usage ? ` ${c.usage}` : ""}`;
+    return `  ${left.padEnd(25)}  ${c.description}`;
+  });
   console.log(
     [
       "cc — minimal AI coding CLI",
@@ -172,9 +169,7 @@ function printUsage(): void {
       "  cc                 interactive TUI (Ink)",
       "",
       "Subcommands:",
-      "  cc login-codex [--manual]  sign in with your ChatGPT (OpenAI Codex)",
-      "                             subscription (--manual for SSH/headless paste)",
-      "  cc logout-codex            sign out and remove ~/.cc/auth.json",
+      ...builtin,
       "  cc update                  update cc to the latest release (binary installs)",
       "",
       "Flags:",
@@ -295,20 +290,12 @@ async function runHeadless(args: Args): Promise<number> {
   // must stay clean for scripting / --json; the TUI surfaces the notice).
   void refreshUpdateCache(config);
 
-  // Discover CanaryLLM models when the preset is active (CANARYLLM_API_KEY set),
-  // so `--model <id>` resolves. Best-effort: failures leave it inert.
-  const canaryNote = describeCanary(await populateCanaryModels(config));
-  if (canaryNote) process.stderr.write(`${canaryNote}\n`);
-
-  // When signed in (`cc login-codex`), discover the Codex models the ChatGPT
-  // account may use (fetched live — the set is curated server-side and changes);
-  // otherwise hide the preset so an unauthenticated launch never offers — or falls
-  // back onto — a model that would just error with "not signed in".
-  if (await hasCredentials()) {
-    const codexNote = describeCodex(await populateCodexModels(config));
-    if (codexNote) process.stderr.write(`${codexNote}\n`);
-  } else {
-    gateCodexModels(config, false);
+  // Built-in extension startup: each one discovers its provider's models when
+  // authenticated (CanaryLLM key, Codex sign-in, opencode credentials) and gates
+  // the preset when not, so an unauthenticated launch never offers — or falls
+  // back onto — a model that would just error. "live" blocks on the network.
+  for (const note of await startupBuiltins(config, "live")) {
+    process.stderr.write(`${note}\n`);
   }
 
   // Plan mode runs read-only (investigate, emit a plan, stop); auto mode runs
@@ -741,20 +728,11 @@ async function runTui(args: Args): Promise<number> {
     return 1;
   }
 
-  const canaryNote = describeCanary(await populateCanaryModels(config));
-
-  // Discover Codex models when signed in; otherwise hide the preset (see
-  // runHeadless). Use the cached catalog (a fast file read) so the TUI paints
-  // without waiting on the ~1.5s network fetch, then refresh in the background so
-  // the cache (and this session's `/model` list) is current. A successful in-session
-  // `/login-codex` re-discovers them.
-  let codexNote: string | undefined;
-  if (await hasCredentials()) {
-    codexNote = describeCodex(await cachedCodexModels(config));
-    void refreshCodexModels(config);
-  } else {
-    gateCodexModels(config, false);
-  }
+  // Built-in extension startup (see runHeadless). "fast" favors cached catalogs
+  // (a file read) so the TUI paints without waiting on network fetches; stale
+  // caches refresh in the background. A successful in-session `/login-<ext>`
+  // re-discovers the models live.
+  const builtinNotes = await startupBuiltins(config, "fast");
 
   const resolved = resolveModel(config, args.model);
   if (!resolved) {
@@ -778,8 +756,7 @@ async function runTui(args: Args): Promise<number> {
   const updateNotice = await cachedUpdateNotice(config);
   if (updateNotice) startupNotes.push(updateNotice);
   void refreshUpdateCache(config);
-  if (canaryNote) startupNotes.push(canaryNote);
-  if (codexNote) startupNotes.push(codexNote);
+  startupNotes.push(...builtinNotes);
 
   // Tools, system prompt (project memory + skills/agents/feature sections), the
   // approval gate, lifecycle hooks, and the MCP lifecycle are all assembled
@@ -837,38 +814,33 @@ async function runTui(args: Args): Promise<number> {
   return 0;
 }
 
-/** `cc login-codex [--manual]` — sign in with the ChatGPT (Codex) subscription. */
-async function runLoginCodex(rest: string[]): Promise<number> {
-  const manual = rest.includes("--manual");
+/** Run a built-in extension command (`cc login-codex`, `cc login-opencode`, …)
+ * as a CLI subcommand: console output, prompt() for manual paste flows. */
+async function runBuiltinCli(
+  cmd: BuiltinCommand,
+  rest: string[],
+): Promise<number> {
+  let config: Config;
   try {
-    const { account_id } = manual
-      ? await loginManual({
-          onUrl: (url) =>
-            console.log(
-              `Open this URL in a browser, sign in, then paste the URL you are redirected to:\n\n${url}\n`,
-            ),
-          readLine: async () => prompt("Paste the redirected URL here: ") ?? "",
-        })
-      : await loginWithBrowser({
-          open: openBrowser,
-          onUrl: (url) =>
-            console.log(`Opening your browser to sign in:\n${url}\n`),
-        });
-    console.log(
-      `✓ Signed in to ChatGPT${account_id ? ` (account ${account_id})` : ""}. Your models are listed on next launch; pick one with --model (e.g. --model gpt-5.5) and set reasoning effort with --think (off→low … ultrathink→xhigh).`,
+    config = await loadConfig();
+  } catch (err) {
+    console.error((err as Error).message);
+    return 1;
+  }
+  try {
+    await cmd.run(
+      {
+        config,
+        note: (text) => console.log(text),
+        readLine: async () => prompt("> ") ?? "",
+      },
+      rest,
     );
     return 0;
   } catch (err) {
-    console.error(`cc login-codex failed: ${(err as Error).message}`);
+    console.error(`cc ${cmd.name} failed: ${(err as Error).message}`);
     return 1;
   }
-}
-
-/** `cc logout-codex` — remove the stored ChatGPT credentials. */
-async function runLogoutCodex(): Promise<number> {
-  await clearCredentials();
-  console.log("Signed out of ChatGPT (removed ~/.cc/auth.json).");
-  return 0;
 }
 
 /**
@@ -896,12 +868,11 @@ async function runUpdate(): Promise<number> {
 
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
-  // Subcommands handled before flag parsing (the only ones today are auth).
-  if (argv[0] === "login-codex") {
-    process.exit(await runLoginCodex(argv.slice(1)));
-  }
-  if (argv[0] === "logout-codex") {
-    process.exit(await runLogoutCodex());
+  // Subcommands handled before flag parsing: built-in extension commands
+  // (login-codex, login-opencode, …) and update.
+  const builtinCmd = argv[0] ? findBuiltinCommand(argv[0]) : undefined;
+  if (builtinCmd) {
+    process.exit(await runBuiltinCli(builtinCmd, argv.slice(1)));
   }
   if (argv[0] === "update") {
     process.exit(await runUpdate());

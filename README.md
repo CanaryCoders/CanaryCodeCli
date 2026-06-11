@@ -121,6 +121,8 @@ Each line is a JSON `AgentEvent`: `text`, `thinking`, `tool_start {id,name,input
 - Thinking modes. They map to Anthropic extended-thinking budgets: `off`, `think` at 4k, `think-hard` at 10k, `ultrathink` at 32k. Non-Anthropic providers degrade gracefully. Setting a level with `/think` writes it to `~/.cc/config.json` under the `thinking` key, so it becomes the default on the next launch. `--think` overrides it for one run without changing the saved default.
 - Web search. A read-only `web_search` tool works with no key by default through a free DuckDuckGo backend. You can configure Brave or Tavily backends under `webSearch`.
 - Sub-agents. A `spawn_agent` tool delegates focused work to a child agent with its own fresh context, bounded by `maxConcurrent` and `maxDepth`.
+- OpenCode Zen. Use [opencode](https://opencode.ai)'s model gateway inside cc: sign in once with `opencode auth login` (or set `OPENCODE_API_KEY`) and `/login-opencode` makes the whole Zen catalog (Claude, GPT, Qwen, Kimi, GLM, the free stealth models, …) available to `/model`.
+- Extension toggles. `/extensions` lists every toggleable feature — `canaryllm`, `codex`, `opencode`, `websearch`, `skills`, `agents`, `mcp`, `hooks` — and `/extensions enable|disable <name>` flips one, persisted to `~/.cc/config.json` under `extensions.<name>`. A disabled extension contributes nothing: no tools, no prompt text, no startup work.
 - Custom agents. You define personas as files in `~/.cc/agents/` and `./.cc/agents/`. Frontmatter sets `name`, `description`, an optional `model`, and an optional `tools` allowlist. The body is the system prompt. Each name and description loads into the prompt. `spawn_agent` dispatches to one by `agent` name and applies its persona, model, and tool restrictions.
 - AI permission engine. Opt in with `permission.mode: "ai"`. A separate cheap model classifies each gated mutating tool call as safe or unsafe before it runs. Safe calls run silently. Unsafe calls escalate to the human y/n/a box in the TUI with the reason, or block the call when headless. Auto and `--yolo` skip it.
 - Hooks. Shell commands fire on lifecycle events: `PreToolUse`, `PostToolUse`, and `Stop`. A regex on the tool name matches them. A non-zero `PreToolUse` exit blocks the call and its output becomes the reason the model sees. The rest observe only. Hooks run in every mode.
@@ -162,6 +164,7 @@ Common examples:
 ```text
 /config set webSearch.provider brave
 /config set webSearch.apiKey "${BRAVE_API_KEY}"
+/config set extensions.opencode false
 /config set mcpServers.fs {"command":"mcp-server-filesystem","args":["/path"]}
 /config set providers.mycorp {"api":"openai-compat","baseUrl":"https://llm.mycorp.internal/v1","apiKey":"${MYCORP_KEY}","models":[{"id":"company-default"}]}
 /config set permission.mode ai
@@ -239,6 +242,19 @@ Web search works with no API key. It defaults to a free DuckDuckGo backend that 
 ```
 
 `provider` accepts `"duckduckgo"` (default, keyless), `"brave"`, or `"tavily"`. When DuckDuckGo returns a challenge page from a rate limit, retry shortly or switch to a keyed provider.
+
+### OpenCode Zen
+
+[Zen](https://opencode.ai/docs/zen) is opencode's OpenAI-compatible model gateway (`https://opencode.ai/zen/v1`). cc ships a baked-in preset that stays inert until credentials appear; nothing is written to `config.json`:
+
+1. Sign in once: `opencode auth login` → pick "opencode" (or set `OPENCODE_API_KEY` in your environment).
+2. `cc login-opencode` (or `/login-opencode` in the TUI) picks the key up from opencode's credential store (`~/.local/share/opencode/auth.json`) and lists the Zen catalog; switch with `/model <id>`.
+
+The model list mirrors opencode's local models.dev cache (with a static fallback), so it tracks Zen's catalog without a network call. `logout-opencode` hides the models for the session; the credentials themselves belong to opencode (`opencode auth logout` removes them). Note: cc only reads Zen API keys from opencode's store — it never touches the Anthropic/OpenAI subscription OAuth tokens opencode may also hold, since refreshing those from a second client would invalidate opencode's own sign-in.
+
+### Extension toggles
+
+Bare `/extensions` opens an interactive checkbox picker: ↑/↓ move, Space flips a checkbox, Enter applies every change at once (one session reassembly), Esc cancels. `/extensions enable|disable <name>` flips one directly. Either way a change persists as `extensions.<name>` in `~/.cc/config.json` and applies immediately. Built-in provider extensions (`canaryllm`, `codex`, `opencode`) gate their models when disabled; session extensions (`websearch`, `skills`, `agents`, `mcp`, `hooks`) drop their tools and prompt sections whole. Core plumbing (the six core tools, `ask_user`, `update_tasks`, the permission engine) is not toggleable.
 
 ### MCP servers
 
@@ -334,7 +350,7 @@ Auto mode and `--yolo` bypass the gate. Plan mode never reaches mutating tools. 
 
 ## Slash commands (TUI)
 
-`/model`, `/think`, `/plan`, `/auto`, `/normal`, `/config`, `/clear`, `/resume`, `/cost`, `/init`, `/help`, `/exit`.
+`/model`, `/think`, `/plan`, `/auto`, `/normal`, `/config`, `/extensions`, `/login-codex`, `/logout-codex`, `/login-opencode`, `/logout-opencode`, `/clear`, `/resume`, `/cost`, `/init`, `/update`, `/help`, `/exit`.
 
 `/config` supports `/config` (show effective config), `/config get <path>`, `/config set <path> <value>`, `/config unset <path>`, `/config reload`, and `/config reload mcp` (reload config and reconnect MCP servers).
 

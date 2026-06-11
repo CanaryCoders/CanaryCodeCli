@@ -174,17 +174,21 @@ function App(props: AppProps): React.ReactElement {
       return;
     }
     if (key.escape || isRawEscapeInput(_input)) {
-      // Esc dismisses the autocomplete popover first; otherwise it escalates the
-      // same way as Ctrl+C: cancel queued prompt → clear prompt → abort → quit.
-      // A rapid Esc repeat can arrive as raw "\x1b" bytes without key.escape set;
-      // handle that here so the prompt input never inserts visible ^[ text.
+      // Esc dismisses the autocomplete popover first, then an open extensions
+      // picker; otherwise it escalates the same way as Ctrl+C: cancel queued
+      // prompt → clear prompt → abort → quit. A rapid Esc repeat can arrive as
+      // raw "\x1b" bytes without key.escape set; handle that here so the prompt
+      // input never inserts visible ^[ text.
       if (autocomplete.completeOpenRef.current) autocomplete.dismissComplete();
+      else if (session.extensionsOpenRef.current) session.cancelExtensions();
       else session.handleCancel("Esc");
       return;
     }
     // A pending ask owns the keyboard — AskUserView's own useInput drives the
     // wizard (↑/↓/space/enter); bow out so mode-cycle/verbose don't also fire.
     if (approvals.pendingAskRef.current) return;
+    // Same for the `/extensions` picker — ExtensionsView owns ↑/↓/space/enter.
+    if (session.extensionsOpenRef.current) return;
     // A pending confirm owns y/n/a (and swallows other keys) until answered.
     if (approvals.pendingConfirmRef.current) {
       const choice = confirmChoiceForKey(_input);

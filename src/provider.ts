@@ -8,7 +8,6 @@
 
 import { makeTokenGetter, type TokenGetter } from "./auth.ts";
 import type { ProviderConfig } from "./config.ts";
-import { type CodexEffort, parseCodexModel } from "./openai-codex.ts";
 
 /** Sentinel string carried on `StreamEvent.tool_use.inputError` when the
  *  accumulated argument JSON failed to parse (typically a truncated stream). */
@@ -576,6 +575,36 @@ function openaiCompatProvider(opts: OpenAICompatOptions): Provider {
 
 /** Where the ChatGPT-subscription Responses endpoint lives. */
 const CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses";
+
+/** Reasoning effort levels, weakest → strongest (the Codex `ReasoningEffort` enum). */
+export const CODEX_EFFORTS = [
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+] as const;
+export type CodexEffort = (typeof CODEX_EFFORTS)[number];
+
+/**
+ * Split a Codex model handle into its wire slug and optional reasoning effort.
+ * Catalog handles look like "gpt-5.5 xhigh" — the trailing token is an effort
+ * level. A bare slug (no recognised effort suffix) returns `effort: undefined`.
+ */
+export function parseCodexModel(model: string): {
+  slug: string;
+  effort?: CodexEffort;
+} {
+  const at = model.lastIndexOf(" ");
+  if (at > 0) {
+    const tail = model.slice(at + 1) as CodexEffort;
+    if ((CODEX_EFFORTS as readonly string[]).includes(tail)) {
+      return { slug: model.slice(0, at), effort: tail };
+    }
+  }
+  return { slug: model };
+}
 
 type ResponsesContentPart =
   | { type: "input_text"; text: string }

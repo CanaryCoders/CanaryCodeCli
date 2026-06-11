@@ -20,7 +20,7 @@ import type {
   Extension,
   ExtensionHost,
 } from "./extension.ts";
-import { composeExtensions } from "./extension.ts";
+import { composeExtensions, extensionEnabled } from "./extension.ts";
 import { agentsExtension } from "./extensions/agents.ts";
 import {
   type AskAnswer,
@@ -28,6 +28,7 @@ import {
   type AskUserFn,
   askUserExtension,
 } from "./extensions/askuser.ts";
+import { TOGGLEABLE_SESSION_EXTENSIONS } from "./extensions/builtin.ts";
 import { hooksExtension } from "./extensions/hooks.ts";
 import { mcpExtension } from "./extensions/mcp.ts";
 import {
@@ -46,6 +47,18 @@ import { webSearchExtension } from "./extensions/websearch.ts";
 import type { Tool } from "./tools.ts";
 import { tools as allTools } from "./tools.ts";
 
+export type { BuiltinCommand, BuiltinCommandContext } from "./extension.ts";
+export { extensionEnabled } from "./extension.ts";
+// The built-in extension registry, re-exported so frontends drive provider
+// startup discovery, login-style commands, and `/extensions` toggles through
+// the assembly boundary instead of importing feature modules directly.
+export {
+  builtinCommands,
+  findBuiltinCommand,
+  runBuiltinCommand,
+  startupBuiltins,
+  toggleableExtensions,
+} from "./extensions/builtin.ts";
 // Frontend-facing feature types re-exported through the assembly boundary, so a
 // frontend (TUI component / headless formatter) never has to reach into a feature
 // module just to name a type. These are the only feature surfaces the frontends
@@ -119,6 +132,10 @@ export async function assembleSession(
       : undefined;
   const gate = composeGates(aiGate, opts.gate);
 
+  // `/extensions disable <name>` drops a toggleable feature here, whole: no
+  // tools, no prompt section, no startup work. Non-toggleable plumbing (core
+  // tools, ask_user, tasks; permission via permission.mode) always assembles.
+  const toggleable = new Set<string>(TOGGLEABLE_SESSION_EXTENSIONS);
   const extensions: Extension[] = opts.noTools
     ? []
     : [
@@ -131,7 +148,9 @@ export async function assembleSession(
         hooksExtension(),
         // MUST be last: update_tasks always sits at the end of the tool set.
         tasksExtension(opts.onTasks),
-      ];
+      ].filter(
+        (e) => !toggleable.has(e.name) || extensionEnabled(opts.config, e.name),
+      );
 
   const composed = await composeExtensions(extensions, { ...opts, gate });
 
