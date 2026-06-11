@@ -146,21 +146,74 @@ test("buildPermissionGate: unresolvable model, failClosed=true → denies in-sco
 
 const allowGate = async () => ({ allow: true });
 
-test("composeGates: aiGate deny short-circuits the frontend gate", async () => {
-  let frontendCalled = false;
+test("composeGates: ai deny + NO frontend → hard deny (headless block)", async () => {
   const denying = async () => ({ allow: false, reason: "no" });
-  const frontend = async () => {
-    frontendCalled = true;
-    return { allow: true };
+  const gate = composeGates(denying, undefined);
+  const v = await gate!({ id: "1", name: "bash", input: {} });
+  expect(v.allow).toBe(false);
+  expect(v.reason).toBe("no");
+});
+
+test("composeGates: ai deny + frontend → escalates to frontend WITH the reason; frontend allow overrides", async () => {
+  let seenFlag: { reason: string } | undefined;
+  const denying = async () => ({ allow: false, reason: "looks risky" });
+  const frontend = async (
+    _call: { id: string; name: string; input: unknown },
+    aiFlag?: { reason: string },
+  ) => {
+    seenFlag = aiFlag;
+    return { allow: true }; // human overrides the AI flag
   };
   const gate = composeGates(denying, frontend);
   const v = await gate!({ id: "1", name: "bash", input: {} });
-  expect(v.allow).toBe(false);
-  expect(frontendCalled).toBe(false);
+  expect(v.allow).toBe(true);
+  expect(seenFlag).toEqual({ reason: "looks risky" });
 });
 
-test("composeGates: both allow → allow", async () => {
-  const gate = composeGates(allowGate, allowGate);
+test("composeGates: ai deny + frontend deny → deny", async () => {
+  const denying = async () => ({ allow: false, reason: "looks risky" });
+  const frontend = async () => ({ allow: false, reason: "user declined" });
+  const gate = composeGates(denying, frontend);
+  const v = await gate!({ id: "1", name: "bash", input: {} });
+  expect(v.allow).toBe(false);
+  expect(v.reason).toBe("user declined");
+});
+
+test("composeGates: ai allow + frontend → frontend called WITHOUT an aiFlag", async () => {
+  let seenFlag: { reason: string } | undefined;
+  let frontendCalled = false;
+  const frontend = async (
+    _call: { id: string; name: string; input: unknown },
+    aiFlag?: { reason: string },
+  ) => {
+    frontendCalled = true;
+    seenFlag = aiFlag;
+    return { allow: true };
+  };
+  const gate = composeGates(allowGate, frontend);
+  const v = await gate!({ id: "1", name: "bash", input: {} });
+  expect(v.allow).toBe(true);
+  expect(frontendCalled).toBe(true);
+  expect(seenFlag).toBeUndefined();
+});
+
+test("composeGates: ai deny + frontend with no reason on verdict → default advisory", async () => {
+  let seenFlag: { reason: string } | undefined;
+  const denying = async () => ({ allow: false });
+  const frontend = async (
+    _call: { id: string; name: string; input: unknown },
+    aiFlag?: { reason: string },
+  ) => {
+    seenFlag = aiFlag;
+    return { allow: true };
+  };
+  const gate = composeGates(denying, frontend);
+  await gate!({ id: "1", name: "bash", input: {} });
+  expect(seenFlag).toEqual({ reason: "flagged by AI safety check" });
+});
+
+test("composeGates: only frontend → frontend used directly", async () => {
+  const gate = composeGates(undefined, allowGate);
   const v = await gate!({ id: "1", name: "bash", input: {} });
   expect(v.allow).toBe(true);
 });

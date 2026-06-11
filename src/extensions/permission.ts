@@ -130,6 +130,15 @@ export async function checkCommandSafety(
  * `runAgent` and through spawn_agent to children. */
 export type Gate = NonNullable<AgentOptions["gate"]>;
 
+/** A frontend gate may receive an optional AI advisory when the AI checker
+ * flagged the call; the human's verdict is then final. The extra `aiFlag`
+ * parameter is optional, so a `FrontendGate` is assignable to `Gate` (callers
+ * that don't pass an advisory still typecheck). */
+export type FrontendGate = (
+  call: Parameters<Gate>[0],
+  aiFlag?: { reason: string },
+) => ReturnType<Gate>;
+
 export interface PermissionGateOptions {
   config: Config;
   signal: AbortSignal;
@@ -205,20 +214,28 @@ export function buildPermissionGate(
 }
 
 /**
- * Compose two gates into one. The AI gate runs first — a deny short-circuits and
- * the frontend gate is never consulted. An allow falls through to the frontend
- * gate (e.g. the TUI confirm box). Undefined pieces are skipped; if both are
- * undefined the result is undefined (no gate at all).
+ * Compose the AI gate and the frontend gate into one. The AI gate runs first:
+ *   • allow → the frontend gate is consulted with NO advisory (silent pass when
+ *     the frontend allows, e.g. permission "ai" with the TUI's allow-through).
+ *   • deny  → the call is ESCALATED to the frontend gate WITH the AI's reason as
+ *     an advisory; the human's verdict is final (they can still approve). When
+ *     there is no frontend gate (headless), the AI deny stands as a hard block.
+ * Undefined pieces are skipped; if both are undefined the result is undefined
+ * (no gate at all).
  */
 export function composeGates(
   aiGate: Gate | undefined,
-  frontendGate: Gate | undefined,
+  frontendGate: FrontendGate | undefined,
 ): Gate | undefined {
-  if (!aiGate) return frontendGate;
+  if (!aiGate && !frontendGate) return undefined;
+  if (!aiGate) return frontendGate as Gate;
   if (!frontendGate) return aiGate;
   return async (call) => {
-    const verdict = await aiGate(call);
-    if (!verdict.allow) return verdict;
-    return frontendGate(call);
+    const ai = await aiGate(call);
+    if (ai.allow) return frontendGate(call);
+    // AI flagged it: escalate to the human with the reason; their verdict is final.
+    return frontendGate(call, {
+      reason: ai.reason ?? "flagged by AI safety check",
+    });
   };
 }

@@ -30,7 +30,11 @@ import {
 } from "./extensions/askuser.ts";
 import { hooksExtension } from "./extensions/hooks.ts";
 import { mcpExtension } from "./extensions/mcp.ts";
-import { buildPermissionGate, composeGates } from "./extensions/permission.ts";
+import {
+  buildPermissionGate,
+  composeGates,
+  type FrontendGate,
+} from "./extensions/permission.ts";
 import { skillsExtension } from "./extensions/skills.ts";
 import {
   type Task,
@@ -71,7 +75,11 @@ export const SYSTEM_PROMPT = [
 ].join("\n");
 
 export interface AssembleOptions extends Omit<ExtensionHost, "gate"> {
-  gate?: ExtensionHost["gate"];
+  /** The frontend's own approval gate (the TUI confirm box; absent in headless).
+   * It flows into composeGates as the frontend side, so it may receive an AI
+   * advisory when the AI checker flags a call. The COMPOSED gate handed to
+   * runAgent and threaded to spawn_agent children stays a plain `Gate`. */
+  gate?: FrontendGate;
   /** Answer ask_user questions (interactive in TUI, autoAnswer in headless). */
   askUser: AskUserFn;
   /** Render the agent's task list (stderr checklist / TUI component). */

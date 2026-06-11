@@ -46,6 +46,7 @@ export interface Approvals {
   requestGate: (
     runMode: AgentMode,
     call: { id: string; name: string; input: unknown },
+    aiFlag?: { reason: string },
   ) => Promise<{ allow: boolean; reason?: string }>;
   /** Decline every open gate (used by the cancel escalation so an abort can
    *  propagate instead of deadlocking on an unresolved promise). */
@@ -119,19 +120,29 @@ export function useApprovals(opts: { config: Config }): Approvals {
 
   // ── the HUMAN approval gate the agent loop calls before a mutating tool runs ──
   // The AI permission check (permission.mode === "ai") is composed IN FRONT of
-  // this gate by assembleSession (buildPermissionGate + composeGates): an unsafe
-  // verdict denies and short-circuits, so this gate only ever sees AI-allowed
-  // calls. In "ai" mode there is no further human confirmation, so this gate
-  // simply allows. Auto mode and the session "always" override run everything
+  // this gate by assembleSession (buildPermissionGate + composeGates). When the
+  // AI check flags a call it does NOT hard-block: it ESCALATES here with an
+  // `aiFlag` advisory, and we put the call to the human y/n/a box showing the
+  // AI's reason — the human's verdict is final (they can still approve). An
+  // AI-allowed call falls through with no advisory and, in "ai" mode, runs
+  // silently. Auto mode and the session "always" override run everything
   // silently. With permission "off", the deterministic `confirm` config decides
   // which tools prompt. A declined call comes back as a model-readable reason.
   async function requestGate(
     runMode: AgentMode,
     call: { id: string; name: string; input: unknown },
+    aiFlag?: { reason: string },
   ): Promise<{ allow: boolean; reason?: string }> {
     if (runMode === "auto" || confirmAlwaysRef.current) return { allow: true };
 
-    // In AI mode the composed AI gate already decided; nothing left for the human.
+    // The AI check flagged this call: escalate to the human box with the reason,
+    // regardless of permission mode. Their answer is final.
+    if (aiFlag) {
+      const ok = await humanConfirm(call, aiFlag.reason);
+      return { allow: ok, reason: ok ? undefined : "user declined the call" };
+    }
+
+    // In AI mode an AI-allowed call needs no further human confirmation.
     if (config.permission.mode === "ai") return { allow: true };
 
     // Deterministic confirm gate.

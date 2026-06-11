@@ -14,12 +14,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { useApp } from "ink";
 import { useRef, useState } from "react";
-import {
-  type AgentMode,
-  type AgentOptions,
-  roleForMode,
-  runAgent,
-} from "../agent.ts";
+import { type AgentMode, roleForMode, runAgent } from "../agent.ts";
 import type { Task } from "../assemble.ts";
 import {
   type AssembledSession,
@@ -54,6 +49,7 @@ import {
   runStopHooks,
   runUserPromptSubmitHooks,
 } from "../extensions/hooks.ts";
+import type { FrontendGate } from "../extensions/permission.ts";
 import { iconFor } from "../icons.ts";
 import { extractImagePaths, type ImageData, readImageFile } from "../image.ts";
 import {
@@ -683,8 +679,8 @@ export function useAgentSession(deps: {
     // assembleSession; it reads the live run mode (modeRef) so a mode switch
     // between turns is reflected without reassembling. Auto-mode's skip is handled
     // by sessionForMode (it drops the gate), so passing modeRef here is belt-and-braces.
-    const frontendGate: NonNullable<AgentOptions["gate"]> = (call) =>
-      approvals.requestGate(modeRef.current, call);
+    const frontendGate: FrontendGate = (call, aiFlag) =>
+      approvals.requestGate(modeRef.current, call, aiFlag);
     return assembleSession({
       config: props.config,
       // Assembly is mode-independent (mode-specific derivation is per-turn via
