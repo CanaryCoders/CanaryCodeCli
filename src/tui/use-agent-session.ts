@@ -186,6 +186,11 @@ export function useAgentSession(deps: {
   // mirrors state for the `useInput` closure and the drain callback.
   const [queued, setQueued] = useState<QueuedItem[]>([]);
   const queuedRef = useRef<QueuedItem[]>([]);
+  // When the user aborts an in-flight turn via the first Esc, we still want any
+  // queued items to run (as a fresh turn) rather than being discarded. This flag
+  // tells the runTurn finally block to flush despite outcome === "aborted". A second
+  // Esc (spam) clears it and the queue, halting everything.
+  const flushOnAbortRef = useRef(false);
   // Images pasted from the clipboard (Ctrl+V), attached to the next prompt sent.
   const pendingImagesRef = useRef<ImageData[]>([]);
   // The `/extensions` checkbox picker (null = closed). The ref mirrors openness
@@ -620,12 +625,14 @@ export function useAgentSession(deps: {
         if (planText.trim()) approvals.showPlan(planText);
       }
       // Flush any queue items left over (queued during the final assistant message,
-      // after the last tool batch — those weren't drained mid-loop). They start a
-      // fresh turn. Mid-loop items were already injected via drainInput.
+      // or retained through a user-initiated abort that armed flush-on-abort). They
+      // start a fresh turn. Mid-loop items were already injected via drainInput.
       const leftover = queuedRef.current;
+      const abortedButFlush = outcome === "aborted" && flushOnAbortRef.current;
+      flushOnAbortRef.current = false;
       if (
         leftover.length > 0 &&
-        outcome !== "aborted" &&
+        (outcome !== "aborted" || abortedButFlush) &&
         !approvals.pendingPlanRef.current
       ) {
         queuedRef.current = [];
@@ -1244,22 +1251,40 @@ export function useAgentSession(deps: {
   }
 
   // Shared cancel escalation for both Ctrl+C and Esc. In priority order it:
-  //   1. cancels a queued prompt (the typed-while-busy line waiting to send),
+  //   1. while a turn is in flight: 1st press aborts but flushes the queue next,
+  //      2nd press (spammed) hard-stops and discards the queue too,
   //   2. clears the current prompt if there's text in it,
-  //   3. aborts the in-flight AI request,
+  //   3. clears a leftover queue with no in-flight turn,
   //   4. arms quit (first press) then quits (second press within the window).
   // `label` is the key name shown in the "press … again to quit" hint.
   function handleCancel(label: string): void {
-    // 1. A queued prompt waiting to be sent after the current turn.
-    if (queuedRef.current.length > 0) {
-      queuedRef.current = [];
-      setQueued([]);
-      note("queued prompt canceled");
+    // While a turn is in flight, Esc means: (1st) stop what it's doing but let the
+    // queued items run next; (2nd, spammed) hard stop — discard the queue too.
+    if (controllerRef.current) {
+      if (flushOnAbortRef.current) {
+        // Second press: hard stop. Discard queued items and don't re-launch them.
+        flushOnAbortRef.current = false;
+        queuedRef.current = [];
+        setQueued([]);
+        controllerRef.current.abort();
+        approvals.declineAllPending();
+        note("stopped — queue cleared");
+      } else {
+        // First press: abort the current turn but flush the queue afterward.
+        flushOnAbortRef.current = true;
+        controllerRef.current.abort();
+        approvals.declineAllPending();
+        note(
+          queuedRef.current.length > 0
+            ? "stopped — running queued messages (Esc again to cancel them)"
+            : "stopped",
+        );
+      }
       quitArmedRef.current = false;
       if (quitTimerRef.current) clearTimeout(quitTimerRef.current);
       return;
     }
-    // 2. A non-empty prompt buffer — clear it.
+    // Not busy: clear a non-empty prompt buffer first.
     if (inputRef.current.length > 0) {
       setInput("");
       bumpCursor();
@@ -1267,17 +1292,17 @@ export function useAgentSession(deps: {
       if (quitTimerRef.current) clearTimeout(quitTimerRef.current);
       return;
     }
-    // 3. An in-flight request — abort it.
-    if (controllerRef.current) {
-      controllerRef.current.abort();
-      // A pending confirm/checkpoint/ask holds the loop on an unresolved promise —
-      // decline them so the abort can actually propagate instead of deadlocking.
-      approvals.declineAllPending();
+    // A leftover queue with no in-flight turn (e.g. queued then aborted) — clear it.
+    if (queuedRef.current.length > 0) {
+      queuedRef.current = [];
+      setQueued([]);
+      flushOnAbortRef.current = false;
+      note("queue cleared");
       quitArmedRef.current = false;
       if (quitTimerRef.current) clearTimeout(quitTimerRef.current);
       return;
     }
-    // 4. Nothing left to cancel — arm, then quit on the second press.
+    // Nothing left to cancel — arm, then quit on the second press.
     if (quitArmedRef.current) {
       quit();
       return;
