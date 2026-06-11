@@ -353,6 +353,65 @@ describe("runAgent drainInput injection", () => {
   });
 });
 
+describe("runAgent refreshTurnConfig", () => {
+  // Provider that records the `model` it was streamed with on each call. Turn 1
+  // does one echo tool call; turn 2 stops with plain text.
+  function modelRecordingProvider(seen: string[]): Provider {
+    let turn = 0;
+    return {
+      id: "fake",
+      async *stream(req): AsyncIterable<StreamEvent> {
+        seen.push(req.model);
+        if (turn++ === 0) {
+          yield { type: "tool_use", id: "c1", name: "echo", input: {} };
+          yield { type: "done", stopReason: "tool_use" };
+        } else {
+          yield { type: "text_delta", text: "done" };
+          yield { type: "done", stopReason: "stop" };
+        }
+      },
+    };
+  }
+
+  test("refreshTurnConfig swaps the model used on the next step", async () => {
+    const modelsSeen: string[] = [];
+    const provider = modelRecordingProvider(modelsSeen);
+    let n = 0;
+    const refreshTurnConfig = () => {
+      n += 1;
+      return {
+        provider,
+        model: n === 1 ? "m1" : "m2",
+        supportsVision: true,
+        thinkingBudget: undefined,
+      };
+    };
+    const echo: Tool = {
+      name: "echo",
+      description: "",
+      schema: { type: "object" },
+      readOnly: true,
+      run: async () => "ok",
+    };
+    const messages: Message[] = [
+      { role: "user", content: [{ type: "text", text: "go" }] },
+    ];
+    await drain(
+      runAgent({
+        provider,
+        model: "ignored",
+        system: "",
+        messages,
+        tools: [echo],
+        refreshTurnConfig,
+      }),
+    );
+
+    expect(modelsSeen[0]).toBe("m1");
+    expect(modelsSeen[1]).toBe("m2");
+  });
+});
+
 describe("runAgent abort during streaming", () => {
   test("an aborted fetch rejection surfaces as a clean aborted done event", async () => {
     const controller = new AbortController();

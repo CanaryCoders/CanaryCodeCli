@@ -176,6 +176,19 @@ export interface AgentOptions {
    * returned together), so this never splits a tool_result from its tool_use.
    */
   drainInput?(): string | null;
+  /**
+   * Re-resolve volatile per-step settings (provider/model/thinking) at the top of
+   * each loop iteration, so a mid-turn /model or /think takes effect on the next
+   * step. When omitted, the construction-time `provider`/`model`/`supportsVision`/
+   * `thinkingBudget` are used unchanged. Does NOT cover mode/tools/system (those
+   * are fixed per run by the caller).
+   */
+  refreshTurnConfig?(): {
+    provider: Provider;
+    model: string;
+    supportsVision: boolean;
+    thinkingBudget: number | undefined;
+  };
 }
 
 export type AgentEvent =
@@ -226,7 +239,7 @@ interface CollectedTurn {
 export async function* runAgent(
   opts: AgentOptions,
 ): AsyncGenerator<AgentEvent> {
-  const { provider, model, system, messages, tools, signal } = opts;
+  const { system, messages, tools, signal } = opts;
   const mode: AgentMode = opts.mode ?? "normal";
   const maxTurns = opts.maxTurns ?? 25;
   const checkpointEvery = opts.checkpointEvery ?? 0;
@@ -251,6 +264,13 @@ export async function* runAgent(
       yield { type: "done", reason: "aborted" };
       return;
     }
+
+    // Re-resolve volatile settings so a mid-turn /model or /think lands on this step.
+    const cfg = opts.refreshTurnConfig?.();
+    const provider = cfg?.provider ?? opts.provider;
+    const model = cfg?.model ?? opts.model;
+    const supportsVision = cfg?.supportsVision ?? opts.supportsVision ?? true;
+    const thinkingBudget = cfg ? cfg.thinkingBudget : opts.thinkingBudget;
 
     // ── turn-boundary cap / checkpoint ──
     if (checkpointEvery > 0) {
@@ -338,7 +358,7 @@ export async function* runAgent(
         system,
         messages,
         tools: toolDefs,
-        thinkingBudget: opts.thinkingBudget,
+        thinkingBudget,
         maxTokens: opts.maxTokens,
         signal,
       })) {
@@ -552,7 +572,7 @@ export async function* runAgent(
       );
       // An image result rides along as an `image` block on this user turn — but
       // only for vision-capable models; otherwise drop it and say so in the text.
-      const visionOk = opts.supportsVision ?? true;
+      const visionOk = supportsVision;
       const resultText =
         image && !visionOk
           ? `${content} (the current model cannot view images)`
