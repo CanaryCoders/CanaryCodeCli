@@ -3,10 +3,6 @@
 // Both frontends (headless CLI and TUI) call this with their own callbacks;
 // nothing else may construct the tool set or compose the system prompt. Each
 // feature is an Extension; deleting a line here removes the feature whole.
-//
-// The inline Extension objects below are transplanted verbatim from what
-// runHeadless used to do by hand. Later tasks formalize them into src/extensions/
-// files; for now they live here so the wiring lives in exactly one place.
 
 import type { AgentMode } from "./agent.ts";
 import { systemForMode } from "./agent.ts";

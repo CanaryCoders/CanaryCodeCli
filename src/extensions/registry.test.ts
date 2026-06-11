@@ -45,15 +45,25 @@ describe("registry gating", () => {
       stub("probe", {
         startup: async () => {
           ran++;
-          return undefined;
+          return "note: probe started";
         },
       }),
     ]);
-    const config = defaultConfig();
-    config.extensions.probe = false;
-    const notes = await startupExtensions(config, "live");
-    expect(ran).toBe(0);
-    expect(notes.join("\n")).toContain("extensions disabled: probe");
+
+    // Positive control: with probe enabled (default), startup runs once and
+    // its returned note appears in the output.
+    const enabledConfig = defaultConfig();
+    const enabledNotes = await startupExtensions(enabledConfig, "live");
+    expect(ran).toBe(1);
+    expect(enabledNotes.join("\n")).toContain("note: probe started");
+
+    // Negative control: flip the toggle and confirm startup does NOT run again
+    // and the disabled note appears instead.
+    const disabledConfig = defaultConfig();
+    disabledConfig.extensions.probe = false;
+    const disabledNotes = await startupExtensions(disabledConfig, "live");
+    expect(ran).toBe(1);
+    expect(disabledNotes.join("\n")).toContain("extensions disabled: probe");
   });
 
   test("a disabled extension contributes no session extension", () => {
