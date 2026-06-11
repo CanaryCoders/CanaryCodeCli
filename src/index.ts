@@ -13,6 +13,7 @@ import {
   assembleSession,
   availableCommands,
   type ExtensionCommand,
+  errorMessage,
   findCommand,
   findCommandAnywhere,
   initExtensions,
@@ -853,7 +854,7 @@ async function runExtensionCli(
     );
     return 0;
   } catch (err) {
-    console.error(`cc ${cmd.name} failed: ${(err as Error).message}`);
+    console.error(`cc ${cmd.name} failed: ${errorMessage(err)}`);
     return 1;
   }
 }

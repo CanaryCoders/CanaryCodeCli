@@ -48,7 +48,7 @@ export type {
   ExtensionCommand,
   ExtensionCommandContext,
 } from "./extension.ts";
-export { extensionEnabled } from "./extension.ts";
+export { errorMessage, extensionEnabled } from "./extension.ts";
 // The user-extension loader, re-exported for tests and extensibility; frontends
 // run it via initExtensions below.
 export { loadUserExtensions } from "./extensions/loader.ts";
@@ -73,8 +73,8 @@ export type { AskAnswer, AskQuestion, FrontendGate, Task, TaskStatus };
 
 /**
  * Load user extensions and fold enabled provider presets into config — the
- * one startup step every frontend runs between loadConfig and
- * startupExtensions. `confirm` approves untrusted project extensions
+ * one startup step every frontend runs right after loadConfig.
+ * `confirm` approves untrusted project extensions
  * (interactive launches only); without it they are skipped with a note.
  */
 export async function initExtensions(
@@ -89,7 +89,7 @@ export async function initExtensions(
   },
 ): Promise<void> {
   setUserExtensions(await loadUserExtensions(config, opts));
-  foldPresets(config);
+  foldPresets(config, opts.note);
 }
 
 /**
@@ -168,7 +168,7 @@ export async function assembleSession(
     ? []
     : [
         { name: "core", tools: () => allTools },
-        ...sessionExtensions(opts.config),
+        ...sessionExtensions(opts.config, opts.note),
         askUserExtension(opts.askUser),
         // MUST be last: update_tasks always sits at the end of the tool set.
         tasksExtension(opts.onTasks),

@@ -188,7 +188,7 @@ export async function loadUserExtensions(
               opts.note(
                 opts.confirm
                   ? `note: project extension "${name}" not approved — skipped`
-                  : `note: project extension "${name}" (${path}) is not approved — launch cc interactively once to approve it`,
+                  : `note: project extension "${name}" (${path}) is not approved — restart cc to approve it`,
               );
               continue;
             }

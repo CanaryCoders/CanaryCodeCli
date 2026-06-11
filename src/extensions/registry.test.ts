@@ -120,6 +120,45 @@ describe("registry gating", () => {
     expect(config3.providers.probeprov).toBeUndefined();
   });
 
+  test("a throwing providerPresets is contained and noted", () => {
+    setUserExtensions([
+      stub("bad", {
+        providerPresets: () => {
+          throw new Error("preset boom");
+        },
+      }),
+      stub("good", {
+        providerPresets: () => ({
+          goodprov: { api: "openai-compat", baseUrl: "https://good.example" },
+        }),
+      }),
+    ]);
+    const config = defaultConfig();
+    const notes: string[] = [];
+    foldPresets(config, (t) => notes.push(t));
+    expect(config.providers.goodprov).toBeDefined();
+    expect(notes.join("\n")).toContain("preset boom");
+  });
+
+  test("a throwing session factory is contained and noted", () => {
+    setUserExtensions([
+      stub("bad", {
+        session: () => {
+          throw "session boom";
+        },
+      }),
+      stub("good", { session: () => ({ name: "good" }) }),
+    ]);
+    const config = defaultConfig();
+    const notes: string[] = [];
+    const sessions = sessionExtensions(config, (t) => notes.push(t));
+    // Built-in sessions still assemble; of the two user stubs only "good"
+    // survives — "bad" threw and was skipped.
+    const names = sessions.map((s) => s.name);
+    expect(names.filter((n) => n === "good" || n === "bad")).toEqual(["good"]);
+    expect(notes.join("\n")).toContain("session boom");
+  });
+
   test("defaultEnabled:false stays off until explicitly enabled", () => {
     setUserExtensions([stub("optin", { defaultEnabled: false })]);
     const config = defaultConfig();

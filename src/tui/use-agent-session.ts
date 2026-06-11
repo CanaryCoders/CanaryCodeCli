@@ -19,6 +19,7 @@ import {
   type AssembledSession,
   assembleSession,
   availableCommands,
+  errorMessage,
   extensionEnabled,
   type FrontendGate,
   initExtensions,
@@ -1027,7 +1028,7 @@ export function useAgentSession(deps: {
         note(`unknown command: /${name}`, "error");
       }
     } catch (err) {
-      note(`/${name} failed: ${(err as Error).message}`, "error");
+      note(`/${name} failed: ${errorMessage(err)}`, "error");
     }
   }
 

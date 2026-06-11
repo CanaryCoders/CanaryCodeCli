@@ -13,7 +13,7 @@ import {
   describeCanary,
   populateCanaryModels,
 } from "../canary.ts";
-import type { Config } from "../config.ts";
+import type { Config, ProviderConfig } from "../config.ts";
 import type {
   Extension,
   ExtensionCommand,
@@ -150,19 +150,45 @@ export async function runCommand(
   return true;
 }
 
-/** Session extensions contributed by enabled extensions, in registry order. */
-export function sessionExtensions(config: Config): SessionExtension[] {
-  return enabledExtensions(config).flatMap((e) =>
-    e.session ? [e.session()] : [],
-  );
+/** Session extensions contributed by enabled extensions, in registry order.
+ * A throwing session factory (user code) is contained: it is noted via `note`
+ * and skipped, so one broken extension never sinks assembly. */
+export function sessionExtensions(
+  config: Config,
+  note?: (text: string) => void,
+): SessionExtension[] {
+  return enabledExtensions(config).flatMap((e) => {
+    if (!e.session) return [];
+    try {
+      return [e.session()];
+    } catch (err) {
+      note?.(
+        `note: extension "${e.name}" session failed — ${errorMessage(err)}`,
+      );
+      return [];
+    }
+  });
 }
 
 /** Fold the provider presets of enabled extensions into `config`, in place.
  * A provider the user defined themselves wins; a disabled extension's preset
- * simply never exists. */
-export function foldPresets(config: Config): void {
+ * simply never exists. A throwing providerPresets (user code) is contained:
+ * noted via `note` and skipped, so one broken extension never kills launch. */
+export function foldPresets(
+  config: Config,
+  note?: (text: string) => void,
+): void {
   for (const ext of enabledExtensions(config)) {
-    for (const [key, preset] of Object.entries(ext.providerPresets?.() ?? {})) {
+    let presets: Record<string, ProviderConfig>;
+    try {
+      presets = ext.providerPresets?.() ?? {};
+    } catch (err) {
+      note?.(
+        `note: extension "${ext.name}" providerPresets failed — ${errorMessage(err)}`,
+      );
+      continue;
+    }
+    for (const [key, preset] of Object.entries(presets)) {
       config.providers[key] ??= preset;
     }
   }
