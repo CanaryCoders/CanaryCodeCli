@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   type Config,
+  defaultConfig,
   getRawConfigPath,
   loadConfig,
   modelForRole,
@@ -17,6 +18,7 @@ import {
   unsetRawConfigPath,
   validateConfigPathValue,
 } from "./config.ts";
+import { foldPresets } from "./extensions/registry.ts";
 
 describe("modelSupportsVision", () => {
   test("respects an explicit supportsVision flag", () => {
@@ -200,4 +202,21 @@ describe("raw config path helpers", () => {
     );
     expect(summarizeConfig(redacted)).not.toContain("secret");
   });
+});
+
+test("defaultConfig carries no extension presets; foldPresets adds them", () => {
+  const config = defaultConfig();
+  expect(Object.keys(config.providers)).toEqual(["anthropic"]);
+  foldPresets(config);
+  expect(config.providers.canaryllm).toBeDefined();
+  expect(config.providers.openai?.api).toBe("openai-responses");
+  expect(config.providers.opencode?.baseUrl).toBe("https://opencode.ai/zen/v1");
+});
+
+test("foldPresets skips disabled extensions' presets", () => {
+  const config = defaultConfig();
+  config.extensions.codex = false;
+  foldPresets(config);
+  expect(config.providers.openai).toBeUndefined();
+  expect(config.providers.canaryllm).toBeDefined();
 });

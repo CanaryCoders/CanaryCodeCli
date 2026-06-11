@@ -13,6 +13,7 @@ import {
   populateZenModels,
   zenModels,
 } from "./opencode.ts";
+import { foldPresets } from "./registry.ts";
 
 const cleanups: string[] = [];
 afterAll(async () => {
@@ -95,6 +96,7 @@ describe("zenModels", () => {
 describe("populateZenModels", () => {
   test("activates the preset when a key is found", async () => {
     const config = defaultConfig();
+    foldPresets(config);
     const authPath = await tempFile("auth.json", {
       opencode: { type: "api", key: "zen-key" },
     });
@@ -111,6 +113,7 @@ describe("populateZenModels", () => {
 
   test("gates the preset when signed out", async () => {
     const config = defaultConfig();
+    foldPresets(config);
     // Pretend a previous activation left state behind.
     config.providers[OPENCODE_PROVIDER]!.apiKey = "stale";
     config.providers[OPENCODE_PROVIDER]!.models = [{ id: "x" }];
@@ -126,6 +129,7 @@ describe("populateZenModels", () => {
 
 test("login-opencode refuses while the extension is disabled", async () => {
   const config = defaultConfig();
+  foldPresets(config);
   config.extensions = { opencode: false };
   config.providers[OPENCODE_PROVIDER]!.models = [{ id: "stale" }];
   const notes: string[] = [];
@@ -142,6 +146,7 @@ test("login-opencode refuses while the extension is disabled", async () => {
 
 test("startup gates the preset while the extension is disabled", async () => {
   const config = defaultConfig();
+  foldPresets(config);
   config.extensions = { opencode: false };
   config.providers[OPENCODE_PROVIDER]!.apiKey = "k";
   config.providers[OPENCODE_PROVIDER]!.models = [{ id: "x" }];
@@ -151,6 +156,7 @@ test("startup gates the preset while the extension is disabled", async () => {
 
 test("gateZenModels empties the preset", () => {
   const config = defaultConfig();
+  foldPresets(config);
   config.providers[OPENCODE_PROVIDER]!.apiKey = "k";
   config.providers[OPENCODE_PROVIDER]!.models = [{ id: "x" }];
   gateZenModels(config);

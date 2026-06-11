@@ -7,15 +7,6 @@ import { chmod, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { CANARY_PROVIDER, canaryProviderConfig } from "./canary.ts";
-import {
-  OPENAI_PROVIDER,
-  openaiCodexProviderConfig,
-} from "./extensions/codex.ts";
-import {
-  OPENCODE_PROVIDER,
-  opencodeZenProviderConfig,
-} from "./extensions/opencode.ts";
 import type { ThinkingLevel } from "./thinking.ts";
 
 export type ProviderApi = "anthropic" | "openai-compat" | "openai-responses";
@@ -209,16 +200,10 @@ export function defaultConfig(): Config {
           { id: "haiku", name: "claude-haiku-4-5-20251001" },
         ],
       },
-      // CanaryLLM gateway, first-class. Inert until CANARYLLM_API_KEY is set;
-      // models discovered from /api/public/models on startup (see canary.ts).
-      [CANARY_PROVIDER]: canaryProviderConfig(),
-      // OpenAI Codex (ChatGPT subscription) preset. Inert until the user signs in
-      // with `cc login-codex`; its models are gated on ~/.cc/auth.json at startup
-      // (see extensions/codex.ts / gateCodexModels).
-      [OPENAI_PROVIDER]: openaiCodexProviderConfig(),
-      // OpenCode Zen preset. Inert until opencode credentials (or
-      // OPENCODE_API_KEY) are found at startup (see extensions/opencode.ts).
-      [OPENCODE_PROVIDER]: opencodeZenProviderConfig(),
+      // Extension provider presets (canary, codex, opencode) are NOT baked in
+      // here — the registry folds the presets of ENABLED extensions in after
+      // load (see extensions/registry.ts foldPresets). config.ts must not
+      // depend on extension modules.
     },
     webSearch: {},
     extensions: {},

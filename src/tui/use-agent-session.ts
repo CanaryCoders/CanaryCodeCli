@@ -20,6 +20,7 @@ import {
   assembleSession,
   extensionEnabled,
   type FrontendGate,
+  foldPresets,
   runBuiltinCommand,
   sessionForMode,
   startupBuiltins,
@@ -674,6 +675,7 @@ export function useAgentSession(deps: {
 
   async function reloadConfig(): Promise<void> {
     const next = await loadConfig();
+    foldPresets(next);
     // Re-run built-in startup discovery/gating against the fresh config (live —
     // a reload should reflect current credentials). Notes are dropped: a reload
     // is not a launch.

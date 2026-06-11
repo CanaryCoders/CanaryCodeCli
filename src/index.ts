@@ -14,6 +14,7 @@ import {
   builtinCommands,
   type ExtensionCommand,
   findBuiltinCommand,
+  foldPresets,
   sessionForMode,
   startupBuiltins,
 } from "./assemble.ts";
@@ -285,6 +286,7 @@ async function runHeadless(args: Args): Promise<number> {
     console.error((err as Error).message);
     return 1;
   }
+  foldPresets(config);
 
   // Warm the update cache in the background (no stdout notice — headless output
   // must stay clean for scripting / --json; the TUI surfaces the notice).
@@ -727,6 +729,7 @@ async function runTui(args: Args): Promise<number> {
     console.error((err as Error).message);
     return 1;
   }
+  foldPresets(config);
 
   // Built-in extension startup (see runHeadless). "fast" favors cached catalogs
   // (a file read) so the TUI paints without waiting on network fetches; stale
@@ -827,6 +830,7 @@ async function runBuiltinCli(
     console.error((err as Error).message);
     return 1;
   }
+  foldPresets(config);
   try {
     await cmd.run(
       {
