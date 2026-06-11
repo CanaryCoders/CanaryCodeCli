@@ -33,7 +33,8 @@ docs.
   `agents` (incl. sub-agents), `mcp`, `hooks`, `permission`, `tasks`.
 - `config.ts`, `session.ts`, `context.ts`, `commands.ts`, `thinking.ts`,
   `diff.ts`, `markdown.ts`, `fuzzy.ts` — supporting modules.
-- `tui/` — Ink components (`App.tsx`, `Message.tsx`, `Input.tsx`, …) + `theme.ts`.
+- `tui/` — Ink components (`App.tsx`, `Message.tsx`, `Input.tsx`, …) + `theme.ts`;
+  `verbs.ts` (root) supplies the spinner's status verbs.
 
 ## Commands
 
