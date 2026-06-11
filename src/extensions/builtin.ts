@@ -1,12 +1,13 @@
 // builtin.ts — the registry of built-in extensions.
 //
-// A BuiltinExtension (extension.ts) is a feature's life OUTSIDE the session:
-// provider presets, startup model discovery/gating, and login-style commands.
-// The frontends iterate this registry instead of naming features — adding a
-// built-in here gives it `cc <command>`/`/<command>` wiring, startup notes, and
-// an `/extensions` toggle for free. Session-side features (websearch, skills,
-// agents, mcp, hooks) stay registered in assemble.ts; TOGGLEABLE_EXTENSIONS
-// below is the union `/extensions` can flip.
+// An Extension (extension.ts) covers both lifecycles: the outer one (provider
+// presets, startup model discovery/gating, login-style commands) and the
+// per-session one via the `session` factory. The frontends iterate this registry
+// instead of naming features — adding an extension here gives it
+// `cc <command>`/`/<command>` wiring, startup notes, and an `/extensions`
+// toggle for free. Session-side features (websearch, skills, agents, mcp, hooks)
+// stay registered in assemble.ts; TOGGLEABLE_EXTENSIONS below is the union
+// `/extensions` can flip.
 
 import {
   CANARY_PROVIDER,
@@ -15,16 +16,16 @@ import {
 } from "../canary.ts";
 import type { Config } from "../config.ts";
 import type {
-  BuiltinCommand,
-  BuiltinCommandContext,
-  BuiltinExtension,
+  Extension,
+  ExtensionCommand,
+  ExtensionCommandContext,
 } from "../extension.ts";
 import { extensionEnabled } from "../extension.ts";
 import { codexBuiltin } from "./codex.ts";
 import { opencodeBuiltin } from "./opencode.ts";
 
 /** The CanaryLLM gateway as a built-in (preset stays in config.ts defaults). */
-const canaryBuiltin: BuiltinExtension = {
+const canaryBuiltin: Extension = {
   name: "canaryllm",
   description: "CanaryLLM gateway models (CANARYLLM_API_KEY)",
   async startup(config) {
@@ -37,7 +38,7 @@ const canaryBuiltin: BuiltinExtension = {
   },
 };
 
-export const BUILTIN_EXTENSIONS: BuiltinExtension[] = [
+export const BUILTIN_EXTENSIONS: Extension[] = [
   canaryBuiltin,
   codexBuiltin,
   opencodeBuiltin,
@@ -73,12 +74,12 @@ export function toggleableExtensions(): {
 }
 
 /** All login-style commands contributed by built-ins, in registry order. */
-export function builtinCommands(): BuiltinCommand[] {
+export function builtinCommands(): ExtensionCommand[] {
   return BUILTIN_EXTENSIONS.flatMap((e) => e.commands ?? []);
 }
 
 /** Find a built-in command by its word (e.g. "login-codex"). */
-export function findBuiltinCommand(name: string): BuiltinCommand | undefined {
+export function findBuiltinCommand(name: string): ExtensionCommand | undefined {
   return builtinCommands().find((c) => c.name === name);
 }
 
@@ -117,7 +118,7 @@ export async function startupBuiltins(
 /** Run a built-in command by name. Returns false when no such command exists. */
 export async function runBuiltinCommand(
   name: string,
-  ctx: BuiltinCommandContext,
+  ctx: ExtensionCommandContext,
   args: string[] = [],
 ): Promise<boolean> {
   const cmd = findBuiltinCommand(name);

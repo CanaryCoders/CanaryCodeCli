@@ -43,7 +43,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { type AgentOptions, runAgent } from "../agent.ts";
 import { type Config, resolveModel } from "../config.ts";
-import type { Extension } from "../extension.ts";
+import type { SessionExtension } from "../extension.ts";
 import { createProvider, type Message, type Provider } from "../provider.ts";
 import type { Tool } from "../tools.ts";
 import {
@@ -484,7 +484,7 @@ const DELEGATION_PROMPT_SECTION = [
 
 export function agentsExtension(
   dirs?: Parameters<typeof discoverAgents>[0],
-): Extension {
+): SessionExtension {
   let agents: AgentDef[] = [];
   let enabled = false;
   return {

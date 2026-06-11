@@ -2,8 +2,8 @@
 import { describe, expect, test } from "bun:test";
 import {
   composeExtensions,
-  type Extension,
   type ExtensionHost,
+  type SessionExtension,
 } from "./extension.ts";
 import type { Tool } from "./tools.ts";
 
@@ -25,16 +25,19 @@ const host = {
 
 describe("composeExtensions", () => {
   test("collects tools in extension order", async () => {
-    const a: Extension = { name: "a", tools: () => [fakeTool("t1")] };
-    const b: Extension = { name: "b", tools: async () => [fakeTool("t2")] };
+    const a: SessionExtension = { name: "a", tools: () => [fakeTool("t1")] };
+    const b: SessionExtension = {
+      name: "b",
+      tools: async () => [fakeTool("t2")],
+    };
     const c = await composeExtensions([a, b], host);
     expect(c.tools.map((t) => t.name)).toEqual(["t1", "t2"]);
   });
 
   test("getTools() exposes the full composed set to every extension", async () => {
     let seen: string[] = [];
-    const a: Extension = { name: "a", tools: () => [fakeTool("t1")] };
-    const b: Extension = {
+    const a: SessionExtension = { name: "a", tools: () => [fakeTool("t1")] };
+    const b: SessionExtension = {
       name: "b",
       tools: (ctx) => [
         {
@@ -53,30 +56,33 @@ describe("composeExtensions", () => {
   });
 
   test("joins systemPrompt sections in order, skipping empties", async () => {
-    const a: Extension = { name: "a", systemPrompt: () => "SECTION A" };
-    const b: Extension = { name: "b", systemPrompt: () => undefined };
-    const d: Extension = { name: "d", systemPrompt: async () => "SECTION D" };
+    const a: SessionExtension = { name: "a", systemPrompt: () => "SECTION A" };
+    const b: SessionExtension = { name: "b", systemPrompt: () => undefined };
+    const d: SessionExtension = {
+      name: "d",
+      systemPrompt: async () => "SECTION D",
+    };
     const c = await composeExtensions([a, b, d], host);
     expect(c.promptSections).toEqual(["SECTION A", "SECTION D"]);
   });
 
   test("preToolUse: first deny wins, later hooks not called", async () => {
     const calls: string[] = [];
-    const allow: Extension = {
+    const allow: SessionExtension = {
       name: "allow",
       preToolUse: async () => {
         calls.push("allow");
         return { allow: true };
       },
     };
-    const deny: Extension = {
+    const deny: SessionExtension = {
       name: "deny",
       preToolUse: async () => {
         calls.push("deny");
         return { allow: false, reason: "nope" };
       },
     };
-    const after: Extension = {
+    const after: SessionExtension = {
       name: "after",
       preToolUse: async () => {
         calls.push("after");
@@ -91,14 +97,14 @@ describe("composeExtensions", () => {
 
   test("postToolUse: all run; one throwing does not stop the rest", async () => {
     const calls: string[] = [];
-    const boom: Extension = {
+    const boom: SessionExtension = {
       name: "boom",
       postToolUse: async () => {
         calls.push("boom");
         throw new Error("x");
       },
     };
-    const ok: Extension = {
+    const ok: SessionExtension = {
       name: "ok",
       postToolUse: async () => {
         calls.push("ok");
@@ -114,14 +120,14 @@ describe("composeExtensions", () => {
 
   test("dispose: all run even when one throws", async () => {
     const calls: string[] = [];
-    const boom: Extension = {
+    const boom: SessionExtension = {
       name: "boom",
       dispose: async () => {
         calls.push("boom");
         throw new Error("x");
       },
     };
-    const ok: Extension = {
+    const ok: SessionExtension = {
       name: "ok",
       dispose: async () => {
         calls.push("ok");

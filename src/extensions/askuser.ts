@@ -12,7 +12,7 @@
 // each question's recommended option, so the model can't tell the difference and
 // never gets a lever to "skip" a genuine question.
 
-import type { Extension } from "../extension.ts";
+import type { SessionExtension } from "../extension.ts";
 import type { Tool } from "../tools.ts";
 
 /** One selectable answer: a short `label` plus an optional explanatory `description`. */
@@ -231,7 +231,7 @@ export function askUserTool(onAskUser: AskUserFn): Tool {
   };
 }
 
-export function askUserExtension(answerer: AskUserFn): Extension {
+export function askUserExtension(answerer: AskUserFn): SessionExtension {
   return {
     name: "askuser",
     tools: () => [askUserTool(answerer)],

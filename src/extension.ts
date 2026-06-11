@@ -1,28 +1,23 @@
 // src/extension.ts — the extension kernel.
 //
-// An Extension is one feature's complete footprint: the tools it contributes,
-// the prompt section it injects (named and visible — nothing enters the system
-// prompt anonymously), and its pre/post tool hooks. `composeExtensions` folds N
-// extensions into the exact callback shape `runAgent` already accepts, so the
-// core loop stays a pure engine that knows nothing about features.
+// A SessionExtension is one feature's complete footprint: the tools it
+// contributes, the prompt section it injects (named and visible — nothing
+// enters the system prompt anonymously), and its pre/post tool hooks.
+// `composeExtensions` folds N session extensions into the exact callback shape
+// `runAgent` already accepts, so the core loop stays a pure engine that knows
+// nothing about features.
+//
+// The unified Extension interface (below) covers both lifecycles: the outer one
+// (provider presets, startup discovery, login-style commands) and the
+// per-session one via the `session` factory.
 
 import type { AgentOptions } from "./agent.ts";
 import type { Config, ProviderConfig } from "./config.ts";
 import type { Provider } from "./provider.ts";
 import type { Tool } from "./tools.ts";
 
-// ── Built-in extensions ──────────────────────────────────────────────────────
-//
-// A session Extension (below) covers what a feature contributes to one agent
-// session: tools, a prompt section, tool hooks. Some features also have a life
-// OUTSIDE the session — a provider preset baked into the default config, model
-// discovery/gating at startup, and login-style commands (CLI subcommands + TUI
-// slash commands). A BuiltinExtension describes that outer lifecycle; the
-// registry in extensions/builtin.ts lists them so the frontends iterate instead
-// of hardcoding each feature.
-
-/** What a built-in extension command receives from its host (CLI or TUI). */
-export interface BuiltinCommandContext {
+/** What an extension command receives from its host (CLI or TUI). */
+export interface ExtensionCommandContext {
   config: Config;
   /** Status/result line for the human (console.log in CLI, note() in TUI). */
   note(text: string): void;
@@ -31,7 +26,7 @@ export interface BuiltinCommandContext {
 }
 
 /** A login-style command surfaced as `cc <name>` and `/<name>`. */
-export interface BuiltinCommand {
+export interface ExtensionCommand {
   /** Command word, e.g. "login-codex". */
   name: string;
   /** Argument hint shown in help, e.g. "[--manual]". */
@@ -39,29 +34,41 @@ export interface BuiltinCommand {
   /** One-line description for help/autocomplete. */
   description: string;
   /** Run the command. Throw to report failure (the host formats the error). */
-  run(ctx: BuiltinCommandContext, args: string[]): Promise<void>;
+  run(ctx: ExtensionCommandContext, args: string[]): Promise<void>;
 }
 
-export interface BuiltinExtension {
+/**
+ * One extension — built-in or user-loaded. Covers both lifecycles: the outer
+ * one (provider presets, startup discovery, login-style commands) and the
+ * per-session one (tools, prompt section, tool hooks) via the `session`
+ * factory. Whether an extension is enabled is decided ONLY by the registry
+ * (extensions/registry.ts); an extension never checks its own toggle.
+ */
+export interface Extension {
   name: string;
   /** One-line description shown by `/extensions`. */
   description: string;
-  /** Provider presets folded into the default config (inert until signed in). */
+  /** Enabled when config has no extensions.<name> entry. Default true. */
+  defaultEnabled?: boolean;
+  /** Provider presets folded into config while this extension is enabled. */
   providerPresets?(): Record<string, ProviderConfig>;
   /**
-   * Startup discovery/gating, mutating `config` in place — populate provider
-   * models when authenticated, empty them when not (or when disabled). "fast"
-   * favors caches + background refresh (the TUI's first paint); "live" blocks
-   * on the network (headless, reloads). Returns an optional one-line note.
+   * Startup discovery/gating, mutating `config` in place. Only called while
+   * enabled. "fast" favors caches + background refresh (the TUI's first
+   * paint); "live" blocks on the network (headless, reloads). Returns an
+   * optional one-line note.
    */
   startup?(config: Config, mode: "fast" | "live"): Promise<string | undefined>;
-  /** Login-style commands this extension contributes. */
-  commands?: BuiltinCommand[];
+  /** Login-style commands, surfaced as `cc <name>` and `/<name>` while enabled. */
+  commands?: ExtensionCommand[];
+  /** Per-session factory. A fresh instance per assembly keeps session state
+   * (MCP connections, …) from leaking across sessions. */
+  session?(): SessionExtension;
 }
 
 /**
  * Whether an extension is enabled: the `extensions.<name>` config toggle, else
- * the given default. Applies to built-ins and to toggleable session extensions.
+ * the given default. Applies to all extensions.
  */
 export function extensionEnabled(
   config: Config,
@@ -102,7 +109,7 @@ export interface ExtensionContext extends ExtensionHost {
   getTools(): Tool[];
 }
 
-export interface Extension {
+export interface SessionExtension {
   name: string;
   /** Tools this extension contributes. Called once at assembly. */
   tools?(ctx: ExtensionContext): Promise<Tool[]> | Tool[];
@@ -134,7 +141,7 @@ export interface ComposedExtensions {
 }
 
 export async function composeExtensions(
-  extensions: Extension[],
+  extensions: SessionExtension[],
   host: ExtensionHost,
 ): Promise<ComposedExtensions> {
   const tools: Tool[] = [];

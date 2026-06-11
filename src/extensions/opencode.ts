@@ -21,7 +21,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Config, ModelConfig, ProviderConfig } from "../config.ts";
-import type { BuiltinCommandContext, BuiltinExtension } from "../extension.ts";
+import type { Extension, ExtensionCommandContext } from "../extension.ts";
 import { extensionEnabled } from "../extension.ts";
 
 /** The provider key used for the baked-in OpenCode Zen preset. */
@@ -179,7 +179,7 @@ export function describeZen(result: ZenPopulateResult): string | undefined {
 /** Re-scan for opencode credentials and activate the Zen models, or explain
  * how to sign in. The actual OAuth happens in opencode's own console flow —
  * we piggyback its credential store rather than reimplement it. */
-async function runLoginOpencode(ctx: BuiltinCommandContext): Promise<void> {
+async function runLoginOpencode(ctx: ExtensionCommandContext): Promise<void> {
   // A disabled extension stays disabled — login must not resurrect it.
   if (!extensionEnabled(ctx.config, "opencode")) {
     ctx.note(
@@ -209,7 +209,7 @@ async function runLoginOpencode(ctx: BuiltinCommandContext): Promise<void> {
   );
 }
 
-export const opencodeBuiltin: BuiltinExtension = {
+export const opencodeBuiltin: Extension = {
   name: "opencode",
   description: "OpenCode Zen models via opencode's credentials",
   providerPresets: () => ({

@@ -17,8 +17,8 @@ import {
 } from "./context.ts";
 import type {
   ComposedExtensions,
-  Extension,
   ExtensionHost,
+  SessionExtension,
 } from "./extension.ts";
 import { composeExtensions, extensionEnabled } from "./extension.ts";
 import { agentsExtension } from "./extensions/agents.ts";
@@ -47,7 +47,10 @@ import { webSearchExtension } from "./extensions/websearch.ts";
 import type { Tool } from "./tools.ts";
 import { tools as allTools } from "./tools.ts";
 
-export type { BuiltinCommand, BuiltinCommandContext } from "./extension.ts";
+export type {
+  ExtensionCommand,
+  ExtensionCommandContext,
+} from "./extension.ts";
 export { extensionEnabled } from "./extension.ts";
 // The built-in extension registry, re-exported so frontends drive provider
 // startup discovery, login-style commands, and `/extensions` toggles through
@@ -136,7 +139,7 @@ export async function assembleSession(
   // tools, no prompt section, no startup work. Non-toggleable plumbing (core
   // tools, ask_user, tasks; permission via permission.mode) always assembles.
   const toggleable = new Set<string>(TOGGLEABLE_SESSION_EXTENSIONS);
-  const extensions: Extension[] = opts.noTools
+  const extensions: SessionExtension[] = opts.noTools
     ? []
     : [
         { name: "core", tools: () => allTools },

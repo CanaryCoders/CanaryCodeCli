@@ -11,8 +11,8 @@
 import { type AgentMode, roleForMode, runAgent } from "./agent.ts";
 import {
   assembleSession,
-  type BuiltinCommand,
   builtinCommands,
+  type ExtensionCommand,
   findBuiltinCommand,
   sessionForMode,
   startupBuiltins,
@@ -817,7 +817,7 @@ async function runTui(args: Args): Promise<number> {
 /** Run a built-in extension command (`cc login-codex`, `cc login-opencode`, …)
  * as a CLI subcommand: console output, prompt() for manual paste flows. */
 async function runBuiltinCli(
-  cmd: BuiltinCommand,
+  cmd: ExtensionCommand,
   rest: string[],
 ): Promise<number> {
   let config: Config;

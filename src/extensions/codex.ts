@@ -31,7 +31,7 @@ import {
   type TokenGetter,
 } from "../auth.ts";
 import type { Config, ModelConfig, ProviderConfig } from "../config.ts";
-import type { BuiltinCommandContext, BuiltinExtension } from "../extension.ts";
+import type { Extension, ExtensionCommandContext } from "../extension.ts";
 import { extensionEnabled } from "../extension.ts";
 
 /** The provider key used for the baked-in Codex preset. */
@@ -278,7 +278,7 @@ export function describeCodex(
 /** Sign in (browser OAuth, or --manual paste flow when a readLine is available),
  * then discover the account's models so `/model` can offer them immediately. */
 async function runLoginCodex(
-  ctx: BuiltinCommandContext,
+  ctx: ExtensionCommandContext,
   args: string[],
 ): Promise<void> {
   // A disabled extension stays disabled — login must not resurrect it.
@@ -319,7 +319,7 @@ async function runLoginCodex(
   );
 }
 
-export const codexBuiltin: BuiltinExtension = {
+export const codexBuiltin: Extension = {
   name: "codex",
   description: "OpenAI Codex models via your ChatGPT subscription",
   providerPresets: () => ({ [OPENAI_PROVIDER]: openaiCodexProviderConfig() }),

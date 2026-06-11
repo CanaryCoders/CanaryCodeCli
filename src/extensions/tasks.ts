@@ -16,7 +16,7 @@
 // dispatching one sub-agent per task via spawn_agent.
 
 import type { Config } from "../config.ts";
-import type { Extension } from "../extension.ts";
+import type { SessionExtension } from "../extension.ts";
 import { iconFor } from "../icons.ts";
 import type { Tool } from "../tools.ts";
 
@@ -183,7 +183,7 @@ const TASKS_PROMPT_SECTION = [
   "self-contained request, skip the task list and just do the work.",
 ].join("\n");
 
-export function tasksExtension(onUpdate: TaskUpdateFn): Extension {
+export function tasksExtension(onUpdate: TaskUpdateFn): SessionExtension {
   return {
     name: "tasks",
     tools: (ctx) => [updateTasksTool(onUpdate, ctx.config)],

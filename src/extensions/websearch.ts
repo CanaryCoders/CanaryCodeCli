@@ -8,7 +8,7 @@
 // the registry by the caller, so tools.ts stays config-free.
 
 import type { WebSearchConfig } from "../config.ts";
-import type { Extension } from "../extension.ts";
+import type { SessionExtension } from "../extension.ts";
 import type { Tool } from "../tools.ts";
 
 export interface SearchResult {
@@ -350,7 +350,7 @@ export function webSearchTool(cfg: WebSearchConfig): Tool {
   };
 }
 
-export function webSearchExtension(): Extension {
+export function webSearchExtension(): SessionExtension {
   return {
     name: "websearch",
     tools: (ctx) => [webSearchTool(ctx.config.webSearch)],

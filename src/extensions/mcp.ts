@@ -577,11 +577,11 @@ export async function closeMcp(conn: McpConnection): Promise<void> {
 
 // ── extension factory ─────────────────────────────────────────────────────────
 
-import type { Extension } from "../extension.ts";
+import type { SessionExtension } from "../extension.ts";
 
 export function mcpExtension(
   transportFor?: (cfg: McpServerConfig) => Transport,
-): Extension {
+): SessionExtension {
   let mcpConn: McpConnection | undefined;
   return {
     name: "mcp",

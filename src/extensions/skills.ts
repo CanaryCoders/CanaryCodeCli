@@ -11,7 +11,7 @@
 import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { Extension } from "../extension.ts";
+import type { SessionExtension } from "../extension.ts";
 import type { Tool } from "../tools.ts";
 
 export interface Skill {
@@ -171,7 +171,7 @@ export function readSkillTool(skills: Skill[]): Tool {
 
 export function skillsExtension(
   dirs?: Parameters<typeof discoverSkills>[0],
-): Extension {
+): SessionExtension {
   let skills: Skill[] = [];
   return {
     name: "skills",
