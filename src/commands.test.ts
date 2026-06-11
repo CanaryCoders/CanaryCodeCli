@@ -1,7 +1,11 @@
 // commands.test.ts — slash-command parsing and autocomplete.
 
 import { describe, expect, test } from "bun:test";
-import { type CommandSet, makeCommandSet } from "./commands.ts";
+import {
+  type CommandSet,
+  classifyBusyAction,
+  makeCommandSet,
+} from "./commands.ts";
 
 /** The extension commands the old static registry used to bake in. */
 const EXT_COMMANDS = [
@@ -25,6 +29,30 @@ const ctx = {
   models: ["opus", "sonnet", "gpt-5"],
   sessions: [{ id: "abcdef123456", title: "recent work" }],
 };
+
+test("classifyBusyAction routes commands typed while busy", () => {
+  // live: applied immediately (state/config + read-only notes)
+  expect(classifyBusyAction({ kind: "set-model", model: "x" })).toBe("live");
+  expect(classifyBusyAction({ kind: "set-think", level: "off" })).toBe("live");
+  expect(classifyBusyAction({ kind: "set-mode", mode: "plan" })).toBe("live");
+  expect(classifyBusyAction({ kind: "list-models" })).toBe("live");
+  expect(classifyBusyAction({ kind: "cost" })).toBe("live");
+  expect(classifyBusyAction({ kind: "help", text: "" })).toBe("live");
+  // queue: injected at the next-step boundary
+  expect(classifyBusyAction({ kind: "message", text: "hi" })).toBe("queue");
+  expect(classifyBusyAction({ kind: "init" })).toBe("queue");
+  // defer: not safe mid-turn — show a note, run nothing
+  expect(classifyBusyAction({ kind: "clear" })).toBe("defer");
+  expect(classifyBusyAction({ kind: "exit" })).toBe("defer");
+  expect(classifyBusyAction({ kind: "update" })).toBe("defer");
+  expect(
+    classifyBusyAction({ kind: "extension-command", name: "x", args: [] }),
+  ).toBe("defer");
+  expect(classifyBusyAction({ kind: "config", op: "summary" })).toBe("defer");
+  expect(classifyBusyAction({ kind: "extensions", op: "list" })).toBe("defer");
+  expect(classifyBusyAction({ kind: "resume" })).toBe("defer");
+  expect(classifyBusyAction({ kind: "error", message: "" })).toBe("defer");
+});
 
 describe("dispatchCommand /config", () => {
   test("parses summary/get/set/unset/reload", () => {
