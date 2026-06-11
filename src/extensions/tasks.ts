@@ -121,7 +121,7 @@ const DESCRIPTION = [
   "one task `in_progress` at a time: mark a task in_progress before you start it and",
   "completed the moment it is done. Use this for any request that spans multiple",
   "distinct issues or is a large multi-step feature — lay out the tasks first, then",
-  "work them (typically one spawn_agent per task). Tracking-only: it changes nothing",
+  "work them sequentially. Tracking-only: it changes nothing",
   "in the project.",
 ].join(" ");
 

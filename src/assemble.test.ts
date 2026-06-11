@@ -2,12 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { assembleSession, sessionForMode } from "./assemble.ts";
 import { defaultConfig } from "./config.ts";
 
-// Assembly is mode-independent now — always assemble with "normal" and derive a
-// per-turn view (tools/system/gate) via sessionForMode for the mode under test.
+// Assembly is mode-independent — derive a per-turn view (tools/system/gate)
+// via sessionForMode for the mode under test.
 function opts() {
   return {
     config: defaultConfig(),
-    mode: "normal" as const,
     provider: { id: "anthropic", stream: async function* () {} } as never,
     model: "test-model",
     sessionId: "s1",

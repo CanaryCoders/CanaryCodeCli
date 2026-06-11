@@ -686,7 +686,6 @@ export function useAgentSession(deps: {
       // Assembly is mode-independent (mode-specific derivation is per-turn via
       // sessionForMode). spawn_agent inherits this provider/model as its child
       // default — the launch/`/model` model at assembly time.
-      mode: "normal",
       provider: providerRef.current,
       model: modelNameRef.current,
       sessionId: sessionIdRef.current,

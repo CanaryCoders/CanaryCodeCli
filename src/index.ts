@@ -406,13 +406,12 @@ async function runHeadless(args: Args): Promise<number> {
   // to stderr (clean stdout for scripting); headless answers ask_user by
   // auto-picking each question's recommended option and renders the task list as a
   // compact stderr checklist.
-  // Assemble mode-independently (mode: "normal"); the per-turn view for this
-  // run's actual `mode` is derived below via sessionForMode. Headless runs a
-  // single fixed mode, but routing both frontends through the same path keeps
-  // plan filtering / the mode suffix / auto's gate skip in exactly one place.
+  // Assembly is mode-independent; the per-turn view for this run's actual
+  // `mode` is derived below via sessionForMode. Headless runs a single fixed
+  // mode, but routing both frontends through the same path keeps plan
+  // filtering / the mode suffix / auto's gate skip in exactly one place.
   const session = await assembleSession({
     config,
-    mode: "normal",
     provider,
     model: modelName,
     sessionId,

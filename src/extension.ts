@@ -6,7 +6,7 @@
 // extensions into the exact callback shape `runAgent` already accepts, so the
 // core loop stays a pure engine that knows nothing about features.
 
-import type { AgentMode, AgentOptions } from "./agent.ts";
+import type { AgentOptions } from "./agent.ts";
 import type { Config } from "./config.ts";
 import type { Provider } from "./provider.ts";
 import type { Tool } from "./tools.ts";
@@ -25,7 +25,6 @@ export interface Verdict {
 /** Everything a frontend supplies to extensions at assembly time. */
 export interface ExtensionHost {
   config: Config;
-  mode: AgentMode;
   provider: Provider;
   model: string;
   sessionId: string;
