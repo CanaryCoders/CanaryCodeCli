@@ -184,15 +184,21 @@ export function PromptArea({
   }
   return (
     <Box flexDirection="column" marginTop={SPACING.inputGap}>
-      {session.queued !== null ? (
-        <Box>
-          {/* width=2 + flexShrink=0: see the checkpoint row above. */}
-          <Box width={2} flexShrink={0}>
-            <Text dimColor>{queuedIcon}</Text>
-          </Box>
-          <Box marginLeft={1}>
-            <Text dimColor>{`queued: ${session.queued} (Esc to cancel)`}</Text>
-          </Box>
+      {session.queued.length > 0 ? (
+        <Box flexDirection="column">
+          {session.queued.map((item, i) => (
+            <Box key={`${item.display}-${i}`}>
+              {/* width=2 + flexShrink=0: see the checkpoint row above. */}
+              <Box width={2} flexShrink={0}>
+                <Text dimColor>{queuedIcon}</Text>
+              </Box>
+              <Box marginLeft={1}>
+                <Text dimColor>
+                  {`queued: ${item.display}${i === 0 ? " (Esc to cancel)" : ""}`}
+                </Text>
+              </Box>
+            </Box>
+          ))}
         </Box>
       ) : null}
       {autocomplete.completeOpen ? (

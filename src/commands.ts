@@ -51,6 +51,41 @@ export type CommandAction =
   | { kind: "exit" }
   | { kind: "error"; message: string };
 
+/**
+ * How a command typed *while the agent is busy* should be handled:
+ * - "live"  — apply immediately (state/config change or read-only note). /model &
+ *             /think take effect on the in-flight turn's next step; /mode on the
+ *             next turn. (See the mid-turn-queue spec §3/§4.)
+ * - "queue" — push onto the FIFO and inject at the next tool-result boundary.
+ * - "defer" — unsafe to run mid-turn (would corrupt in-flight conversation/lifecycle
+ *             state); show a "after the current turn" note and run nothing.
+ */
+export function classifyBusyAction(
+  action: CommandAction,
+): "live" | "queue" | "defer" {
+  switch (action.kind) {
+    case "set-model":
+    case "set-think":
+    case "set-mode":
+    case "list-models":
+    case "cost":
+    case "help":
+      return "live";
+    case "message":
+    case "init":
+      return "queue";
+    case "clear":
+    case "resume":
+    case "extension-command":
+    case "extensions":
+    case "update":
+    case "config":
+    case "exit":
+    case "error":
+      return "defer";
+  }
+}
+
 /** Static description of a command, used for dispatch and for `/help`. */
 export interface CommandSpec {
   /** Canonical name (without the slash). */

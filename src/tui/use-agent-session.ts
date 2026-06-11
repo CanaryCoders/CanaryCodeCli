@@ -30,7 +30,11 @@ import {
   type Task,
 } from "../assemble.ts";
 import { readClipboardImage } from "../clipboard.ts";
-import { type CommandAction, makeCommandSet } from "../commands.ts";
+import {
+  type CommandAction,
+  classifyBusyAction,
+  makeCommandSet,
+} from "../commands.ts";
 import {
   getRawConfigPath,
   loadConfig,
@@ -89,9 +93,12 @@ Then write CC.md with these sections, filled in from what you actually found (om
 
 Keep it short and high-signal. Use write_file to create ./CC.md.`;
 
+/** A prompt or prompt-command queued while the agent is busy. */
+export type QueuedItem = { display: string; text: string };
+
 export interface AgentSession {
   busy: boolean;
-  queued: string | null;
+  queued: QueuedItem[];
   tasks: Task[];
   cost: number;
   costKnown: boolean;
@@ -172,10 +179,18 @@ export function useAgentSession(deps: {
   // before the timer fires quits. The timer disarms it so a lone press never quits.
   const quitArmedRef = useRef(false);
   const quitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // A prompt typed and submitted while a turn is in flight; it sends automatically
-  // once the turn finishes. The ref mirrors state for the `useInput` closure.
-  const [queued, setQueued] = useState<string | null>(null);
-  const queuedRef = useRef<string | null>(null);
+  // Prompts/commands typed while a turn is in flight. They are injected at the next
+  // tool-result boundary (runAgent's drainInput) or, if queued after the last tool
+  // batch, flushed as a fresh turn when the turn ends. `display` is shown in the UI
+  // ("/init"); `text` is what is actually sent (e.g. the full INIT_PROMPT). The ref
+  // mirrors state for the `useInput` closure and the drain callback.
+  const [queued, setQueued] = useState<QueuedItem[]>([]);
+  const queuedRef = useRef<QueuedItem[]>([]);
+  // When the user aborts an in-flight turn via the first Esc, we still want any
+  // queued items to run (as a fresh turn) rather than being discarded. This flag
+  // tells the runTurn finally block to flush despite outcome === "aborted". A second
+  // Esc (spam) clears it and the queue, halting everything.
+  const flushOnAbortRef = useRef(false);
   // Images pasted from the clipboard (Ctrl+V), attached to the next prompt sent.
   const pendingImagesRef = useRef<ImageData[]>([]);
   // The `/extensions` checkbox picker (null = closed). The ref mirrors openness
@@ -201,6 +216,7 @@ export function useAgentSession(deps: {
   const [thinking, setThinkingState] = useState<ThinkingLevel>(
     props.initialThinking ?? "off",
   );
+  const thinkingRef = useRef(thinking);
   // Persist mode / thinking onto the session row as they change, so a later
   // `--resume` restores them. Wrappers keep React state + the stored row in sync.
   const setMode = (next: AgentMode) => {
@@ -209,6 +225,7 @@ export function useAgentSession(deps: {
     props.store.setMode(sessionIdRef.current, next);
   };
   const setThinking = (next: ThinkingLevel) => {
+    thinkingRef.current = next;
     setThinkingState(next);
     props.store.setThinking(sessionIdRef.current, next);
     // Persist as the default thinking level so it survives restarts.
@@ -327,8 +344,9 @@ export function useAgentSession(deps: {
     setLive([]);
     // Clear any queued prompt waiting on this turn — the dispatch failed, so the
     // queue is stale; the user can resubmit.
-    queuedRef.current = null;
-    setQueued(null);
+    queuedRef.current = [];
+    setQueued([]);
+    flushOnAbortRef.current = false;
   };
 
   // ── run one user prompt through the agent loop ──
@@ -429,6 +447,22 @@ export function useAgentSession(deps: {
       else local.push({ id: nextId(), kind: "thinking", text });
     };
 
+    // Re-resolve provider/model/thinking each agentic step so a mid-turn /model or
+    // /think (which only mutate the base refs) lands on the next step. Mode is fixed
+    // for the turn (`runMode`); a /mode change applies to the next turn. (spec §4)
+    const refreshTurnConfig = () => {
+      const m = modelForTurn(runMode);
+      const budget = supportsThinking(m.provider.id)
+        ? budgetFor(thinkingRef.current)
+        : 0;
+      return {
+        provider: m.provider,
+        model: m.model,
+        supportsVision: m.supportsVision,
+        thinkingBudget: budget,
+      };
+    };
+
     try {
       for await (const ev of runAgent({
         provider: turnProvider,
@@ -447,6 +481,8 @@ export function useAgentSession(deps: {
         gate,
         preToolUse,
         postToolUse,
+        drainInput: drainQueue,
+        refreshTurnConfig,
       })) {
         switch (ev.type) {
           case "text":
@@ -589,17 +625,22 @@ export function useAgentSession(deps: {
           if (item.kind === "assistant") planText += item.text;
         if (planText.trim()) approvals.showPlan(planText);
       }
-      // Send a prompt queued while this turn was running (unless it was aborted, a
-      // plan is now awaiting review, or it got canceled meanwhile).
-      const next = queuedRef.current;
+      // Flush any queue items left over (queued during the final assistant message,
+      // or retained through a user-initiated abort that armed flush-on-abort). They
+      // start a fresh turn. Mid-loop items were already injected via drainInput.
+      const leftover = queuedRef.current;
+      const abortedButFlush = outcome === "aborted" && flushOnAbortRef.current;
+      flushOnAbortRef.current = false;
       if (
-        next !== null &&
-        outcome !== "aborted" &&
+        leftover.length > 0 &&
+        (outcome !== "aborted" || abortedButFlush) &&
         !approvals.pendingPlanRef.current
       ) {
-        queuedRef.current = null;
-        setQueued(null);
-        submitPrompt(next).catch(reportTurnFailure);
+        queuedRef.current = [];
+        setQueued([]);
+        const text = leftover.map((i) => i.text).join("\n\n");
+        const display = leftover.map((i) => i.display).join("\n\n");
+        submitPrompt(display, text).catch(reportTurnFailure);
       }
     }
   }
@@ -885,32 +926,27 @@ export function useAgentSession(deps: {
     }
   }
 
-  // ── handle a submitted input line (command or prompt) ──
-  function onSubmit(rawValue: string): void {
-    // The buffer may carry paste sentinels — expand them to the real pasted text
-    // before the prompt is sent, recorded to history, or dispatched as a command.
-    const value = expandPastes(rawValue, pasteMap);
-    const line = value.trim();
-    if (!line) return;
-    // Busy → queue this line to send when the current turn finishes. A second
-    // submit replaces the queued prompt rather than stacking.
-    if (busy) {
-      setInput("");
-      promptHistory.recordHistory(line);
-      queuedRef.current = line;
-      setQueued(line);
-      return;
-    }
-    setInput("");
-    promptHistory.recordHistory(line);
+  // Push an item onto the busy-time FIFO queue (ref + mirrored state).
+  function enqueue(item: QueuedItem): void {
+    queuedRef.current = [...queuedRef.current, item];
+    setQueued(queuedRef.current);
+  }
 
-    const action = makeCommandSet(availableCommands(props.config)).dispatch(
-      line,
-    );
+  // Drain the whole FIFO: clear it and return all items' `text` joined, or null when
+  // empty. Synchronous ref mutation → atomic; safe to call from runAgent's drainInput.
+  function drainQueue(): string | null {
+    const items = queuedRef.current;
+    if (items.length === 0) return null;
+    queuedRef.current = [];
+    setQueued([]);
+    return items.map((i) => i.text).join("\n\n");
+  }
+
+  // Apply a command that is safe to run live while busy (state/config + read-only).
+  // /model & /think mutate refs the in-flight turn re-reads next step; /mode applies
+  // to the next turn. Shared with the non-busy switch so the two can't diverge.
+  function applyLiveAction(action: CommandAction): void {
     switch (action.kind) {
-      case "message":
-        submitPrompt(line).catch(reportTurnFailure);
-        break;
       case "set-mode":
         setMode(action.mode);
         note(`mode → ${action.mode}`);
@@ -924,6 +960,92 @@ export function useAgentSession(deps: {
         break;
       case "list-models":
         listModels();
+        break;
+      case "cost": {
+        const s = props.store.getSession(sessionIdRef.current);
+        if (s) {
+          note(
+            hasPriceData(s.model)
+              ? `tokens: ${s.inputTokens}→${s.outputTokens} · cost: $${s.costUsd.toFixed(4)}`
+              : `tokens: ${s.inputTokens}→${s.outputTokens}`,
+          );
+        }
+        break;
+      }
+      case "help":
+        note(action.text);
+        break;
+    }
+  }
+
+  // Build the QueuedItem for a queueable action, or null to skip queueing.
+  // `init` runs its CC.md guard now (queue-time) and injects the full INIT_PROMPT.
+  function toQueuedItem(
+    action: CommandAction,
+    line: string,
+  ): QueuedItem | null {
+    if (action.kind === "init") {
+      if (existsSync(join(process.cwd(), "CC.md"))) {
+        note(
+          `CC.md already exists — left intact (${join(process.cwd(), "CC.md")})`,
+          "error",
+        );
+        return null;
+      }
+      return { display: "/init", text: INIT_PROMPT };
+    }
+    // message
+    return { display: line, text: line };
+  }
+
+  // ── handle a submitted input line (command or prompt) ──
+  function onSubmit(rawValue: string): void {
+    // The buffer may carry paste sentinels — expand them to the real pasted text
+    // before the prompt is sent, recorded to history, or dispatched as a command.
+    const value = expandPastes(rawValue, pasteMap);
+    const line = value.trim();
+    if (!line) return;
+    // Busy → route by command kind. State/config commands apply live; messages and
+    // prompt-commands are queued and injected at the next tool-result boundary;
+    // disruptive lifecycle commands are deferred with a note. (spec §3)
+    if (busy) {
+      setInput("");
+      promptHistory.recordHistory(line);
+      const busyAction = makeCommandSet(
+        availableCommands(props.config),
+      ).dispatch(line);
+      switch (classifyBusyAction(busyAction)) {
+        case "live":
+          applyLiveAction(busyAction);
+          break;
+        case "queue": {
+          const item = toQueuedItem(busyAction, line);
+          if (item) enqueue(item);
+          break;
+        }
+        case "defer":
+          note("not available until the current turn finishes");
+          break;
+      }
+      return;
+    }
+    setInput("");
+    promptHistory.recordHistory(line);
+
+    const action = makeCommandSet(availableCommands(props.config)).dispatch(
+      line,
+    );
+    switch (action.kind) {
+      case "message":
+        submitPrompt(line).catch(reportTurnFailure);
+        break;
+      case "set-mode":
+      case "set-think":
+      case "set-model":
+      case "list-models":
+      case "cost":
+      case "help":
+        applyLiveAction(action);
         break;
       case "clear": {
         messagesRef.current = [];
@@ -952,17 +1074,6 @@ export function useAgentSession(deps: {
         note("conversation cleared");
         break;
       }
-      case "cost": {
-        const s = props.store.getSession(sessionIdRef.current);
-        if (s) {
-          note(
-            hasPriceData(s.model)
-              ? `tokens: ${s.inputTokens}→${s.outputTokens} · cost: $${s.costUsd.toFixed(4)}`
-              : `tokens: ${s.inputTokens}→${s.outputTokens}`,
-          );
-        }
-        break;
-      }
       case "resume":
         note(
           "resume from the TUI isn't supported yet — start with `cc --resume`",
@@ -984,9 +1095,6 @@ export function useAgentSession(deps: {
         break;
       case "config":
         void handleConfig(action);
-        break;
-      case "help":
-        note(action.text);
         break;
       case "exit":
         quit();
@@ -1144,22 +1252,41 @@ export function useAgentSession(deps: {
   }
 
   // Shared cancel escalation for both Ctrl+C and Esc. In priority order it:
-  //   1. cancels a queued prompt (the typed-while-busy line waiting to send),
+  //   1. while a turn is in flight: 1st press aborts but flushes the queue next,
+  //      2nd press (spammed) hard-stops and discards the queue too,
   //   2. clears the current prompt if there's text in it,
-  //   3. aborts the in-flight AI request,
+  //   3. clears a leftover queue with no in-flight turn,
   //   4. arms quit (first press) then quits (second press within the window).
   // `label` is the key name shown in the "press … again to quit" hint.
   function handleCancel(label: string): void {
-    // 1. A queued prompt waiting to be sent after the current turn.
-    if (queuedRef.current !== null) {
-      queuedRef.current = null;
-      setQueued(null);
-      note("queued prompt canceled");
+    // While a turn is in flight, Esc means: (1st) stop what it's doing but let the
+    // queued items run next; (2nd, spammed) hard stop — discard the queue too.
+    if (controllerRef.current) {
+      if (flushOnAbortRef.current) {
+        // Second press: hard stop. Discard queued items and don't re-launch them.
+        flushOnAbortRef.current = false;
+        const hadQueue = queuedRef.current.length > 0;
+        queuedRef.current = [];
+        setQueued([]);
+        controllerRef.current.abort();
+        approvals.declineAllPending();
+        note(hadQueue ? "stopped — queue cleared" : "stopped");
+      } else {
+        // First press: abort the current turn but flush the queue afterward.
+        flushOnAbortRef.current = true;
+        controllerRef.current.abort();
+        approvals.declineAllPending();
+        note(
+          queuedRef.current.length > 0
+            ? "stopped — running queued messages (Esc again to cancel them)"
+            : "stopped",
+        );
+      }
       quitArmedRef.current = false;
       if (quitTimerRef.current) clearTimeout(quitTimerRef.current);
       return;
     }
-    // 2. A non-empty prompt buffer — clear it.
+    // Not busy: clear a non-empty prompt buffer first.
     if (inputRef.current.length > 0) {
       setInput("");
       bumpCursor();
@@ -1167,17 +1294,17 @@ export function useAgentSession(deps: {
       if (quitTimerRef.current) clearTimeout(quitTimerRef.current);
       return;
     }
-    // 3. An in-flight request — abort it.
-    if (controllerRef.current) {
-      controllerRef.current.abort();
-      // A pending confirm/checkpoint/ask holds the loop on an unresolved promise —
-      // decline them so the abort can actually propagate instead of deadlocking.
-      approvals.declineAllPending();
+    // A leftover queue with no in-flight turn (e.g. queued then aborted) — clear it.
+    if (queuedRef.current.length > 0) {
+      queuedRef.current = [];
+      setQueued([]);
+      flushOnAbortRef.current = false;
+      note("queue cleared");
       quitArmedRef.current = false;
       if (quitTimerRef.current) clearTimeout(quitTimerRef.current);
       return;
     }
-    // 4. Nothing left to cancel — arm, then quit on the second press.
+    // Nothing left to cancel — arm, then quit on the second press.
     if (quitArmedRef.current) {
       quit();
       return;

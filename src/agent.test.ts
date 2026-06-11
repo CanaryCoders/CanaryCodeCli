@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AgentEvent, roleForMode, runAgent } from "./agent.ts";
 import {
+  type ContentBlock,
   type Message,
   type Provider,
   type StreamEvent,
@@ -291,6 +292,123 @@ describe("runAgent repeated-call loop breaker", () => {
     expect(runs()).toBe(2);
     const errorEnds = events.filter((e) => e.type === "tool_end" && e.isError);
     expect(errorEnds).toHaveLength(3);
+  });
+});
+
+describe("runAgent drainInput injection", () => {
+  // Turn 1 calls `echo`; turn 2 stops with plain text. drainInput fires once at
+  // the tool-result boundary, so its text rides on the tool-result user message.
+  function echoThenStopProvider(): Provider {
+    let turn = 0;
+    return {
+      id: "fake",
+      async *stream(): AsyncIterable<StreamEvent> {
+        if (turn++ === 0) {
+          yield { type: "tool_use", id: "c1", name: "echo", input: {} };
+          yield { type: "done", stopReason: "tool_use" };
+        } else {
+          yield { type: "text_delta", text: "done" };
+          yield { type: "done", stopReason: "stop" };
+        }
+      },
+    };
+  }
+
+  test("drainInput appends queued text to the tool-result user message", async () => {
+    let drained = false;
+    const drainInput = () => {
+      if (drained) return null;
+      drained = true;
+      return "INJECTED";
+    };
+    const echo: Tool = {
+      name: "echo",
+      description: "",
+      schema: { type: "object" },
+      readOnly: true,
+      run: async () => "ok",
+    };
+    const messages: Message[] = [
+      { role: "user", content: [{ type: "text", text: "go" }] },
+    ];
+    await drain(
+      runAgent({
+        provider: echoThenStopProvider(),
+        model: "m",
+        system: "",
+        messages,
+        tools: [echo],
+        drainInput,
+      }),
+    );
+
+    // messages: [user "go", assistant(tool_use), user(tool_result + injected), assistant("done")]
+    const toolResultMsg = messages[2];
+    expect(toolResultMsg.role).toBe("user");
+    const blocks = toolResultMsg.content as ContentBlock[];
+    const text = blocks.find((b) => b.type === "text");
+    expect(text?.type === "text" && text.text).toBe("INJECTED");
+    expect(blocks[0].type).toBe("tool_result");
+    expect(blocks[blocks.length - 1].type).toBe("text");
+  });
+});
+
+describe("runAgent refreshTurnConfig", () => {
+  // Provider that records the `model` it was streamed with on each call. Turn 1
+  // does one echo tool call; turn 2 stops with plain text.
+  function modelRecordingProvider(seen: string[]): Provider {
+    let turn = 0;
+    return {
+      id: "fake",
+      async *stream(req): AsyncIterable<StreamEvent> {
+        seen.push(req.model);
+        if (turn++ === 0) {
+          yield { type: "tool_use", id: "c1", name: "echo", input: {} };
+          yield { type: "done", stopReason: "tool_use" };
+        } else {
+          yield { type: "text_delta", text: "done" };
+          yield { type: "done", stopReason: "stop" };
+        }
+      },
+    };
+  }
+
+  test("refreshTurnConfig swaps the model used on the next step", async () => {
+    const modelsSeen: string[] = [];
+    const provider = modelRecordingProvider(modelsSeen);
+    let n = 0;
+    const refreshTurnConfig = () => {
+      n += 1;
+      return {
+        provider,
+        model: n === 1 ? "m1" : "m2",
+        supportsVision: true,
+        thinkingBudget: undefined,
+      };
+    };
+    const echo: Tool = {
+      name: "echo",
+      description: "",
+      schema: { type: "object" },
+      readOnly: true,
+      run: async () => "ok",
+    };
+    const messages: Message[] = [
+      { role: "user", content: [{ type: "text", text: "go" }] },
+    ];
+    await drain(
+      runAgent({
+        provider,
+        model: "ignored",
+        system: "",
+        messages,
+        tools: [echo],
+        refreshTurnConfig,
+      }),
+    );
+
+    expect(modelsSeen[0]).toBe("m1");
+    expect(modelsSeen[1]).toBe("m2");
   });
 });
 
