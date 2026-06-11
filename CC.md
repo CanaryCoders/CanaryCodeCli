@@ -26,15 +26,17 @@ docs.
 - `provider.ts`, `canary.ts` — model providers; `auth.ts` — ChatGPT/Codex OAuth.
 - `tools.ts` — the core tool set (read_file, write_file, edit_file, list_dir,
   bash, grep). Frozen: new tools belong in extensions.
-- `extension.ts` — the `Extension` interface + `composeExtensions` kernel, and
-  the `BuiltinExtension` descriptor (provider presets, startup model discovery,
-  login-style commands).
+- `extension.ts` — the unified `Extension` interface + `SessionExtension` +
+  `composeExtensions` kernel. One interface covers both lifecycles: outer
+  (providerPresets, startup, commands) and per-session (via `session()`).
 - `assemble.ts` — the one place sessions are assembled; both frontends call it.
 - `extensions/` — one file per feature: `websearch`, `askuser`, `skills`,
   `agents` (incl. sub-agents), `mcp`, `hooks`, `permission`, `tasks`,
   `codex` (ChatGPT-subscription models), `opencode` (OpenCode Zen models via
-  opencode's credentials); `builtin.ts` is the built-in registry frontends
-  iterate (startup discovery, `cc login-*` subcommands, `/extensions` toggles).
+  opencode's credentials); `registry.ts` is the single config-aware authority
+  (built-in + user extension lists, toggle enforcement, startup, presets,
+  command dispatch); `loader.ts` discovers and trust-checks user extensions
+  from `~/.cc/extensions/` and `./.cc/extensions/`.
 - `config.ts`, `session.ts`, `context.ts`, `commands.ts`, `thinking.ts`,
   `diff.ts`, `markdown.ts`, `fuzzy.ts` — supporting modules.
 - `tui/` — Ink components (`App.tsx`, `Message.tsx`, `Input.tsx`, …) + `theme.ts`;

@@ -254,7 +254,38 @@ The model list mirrors opencode's local models.dev cache (with a static fallback
 
 ### Extension toggles
 
-Bare `/extensions` opens an interactive checkbox picker: ↑/↓ move, Space flips a checkbox, Enter applies every change at once (one session reassembly), Esc cancels. `/extensions enable|disable <name>` flips one directly. Either way a change persists as `extensions.<name>` in `~/.cc/config.json` and applies immediately. Built-in provider extensions (`canaryllm`, `codex`, `opencode`) gate their models when disabled; session extensions (`websearch`, `skills`, `agents`, `mcp`, `hooks`) drop their tools and prompt sections whole. Core plumbing (the six core tools, `ask_user`, `update_tasks`, the permission engine) is not toggleable.
+Bare `/extensions` opens an interactive checkbox picker: ↑/↓ move, Space flips a checkbox, Enter applies every change at once (one session reassembly), Esc cancels. `/extensions enable|disable <name>` flips one directly. Either way a change persists as `extensions.<name>` in `~/.cc/config.json` and applies immediately.
+
+A disabled extension contributes **nothing** — enforced by the registry kernel, not by the extension itself:
+- no commands (absent from `/help`, autocomplete, slash dispatch, and `cc <subcommand>`)
+- no startup work and no provider preset (provider presets are folded into config for enabled extensions only)
+- no session pieces (no tools, no system-prompt section, no tool hooks)
+
+Core plumbing (the six core tools, `ask_user`, `update_tasks`, the permission engine) is not toggleable.
+
+### User extensions
+
+Drop `.ts` or `.js` modules into `~/.cc/extensions/` (user-global, implicitly trusted) or `./.cc/extensions/` (project-level). Project extensions require approval on first load: the TUI prompts before first paint, distinguishing a first-ever approval from a file that changed since the last one; headless skips unapproved files with a note. Approvals are tracked by content hash in `~/.cc/trusted-extensions.json`.
+
+An extension's **name is its filename stem** — any `name` field inside the module is overridden. This means the `extensions.<name>: false` config toggle is decidable before the file is even imported; a disabled file is never executed, but an inert stub keeps it listed in `/extensions` so it can be re-enabled. Name collisions with built-ins or with a user-global file are skipped with a note. A broken or invalid module is always skipped with a note; a user extension can never crash `cc`. Changed files take effect on the next launch (Bun module cache).
+
+A minimal example:
+
+```ts
+// ~/.cc/extensions/greet.ts
+export default {
+  description: "demo extension",
+  commands: [
+    {
+      name: "greet",
+      description: "say hello from a user extension",
+      run: async (ctx) => ctx.note("hello from the greet extension!"),
+    },
+  ],
+};
+```
+
+User extensions have the same capabilities as built-ins: provider presets, startup discovery, login-style commands (`cc <name>` and `/<name>`), and full session extensions (tools, system-prompt section, pre/post tool hooks) via `session()`.
 
 ### MCP servers
 
@@ -368,9 +399,13 @@ bun test            # run the unit tests
 
 ## Architecture & extending
 
-`cc` follows a small-core design (inspired by [Pi](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/)): the core is the agent loop (`src/agent.ts`), the provider layer (`src/provider.ts`), the core tool set (`src/tools.ts`, frozen), and session storage. Everything else — web search, skills, sub-agents, MCP, hooks, the AI permission engine, the task list — is an `Extension` (`src/extension.ts`): a named bundle of tools, an optional system-prompt section, and pre/post tool hooks.
+`cc` follows a small-core design (inspired by [Pi](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/)): the core is the agent loop (`src/agent.ts`), the provider layer (`src/provider.ts`), the core tool set (`src/tools.ts`, frozen), and session storage. Everything else — web search, skills, sub-agents, MCP, hooks, the AI permission engine, the task list — is an `Extension` (`src/extension.ts`): a named bundle covering two lifecycles in one interface.
 
-To add a feature: write a factory returning an `Extension` in `src/extensions/<name>.ts` and register it in `src/assemble.ts`. To remove one: delete its file and its registration line. Extensions that aren't configured contribute nothing — no tokens, no startup work, no prompt text.
+**`Extension` interface** (`src/extension.ts`): `{ name, description, defaultEnabled?, providerPresets?(), startup?(config, "fast"|"live"), commands?, session?() }`. The outer lifecycle (`providerPresets`, `startup`, `commands`) runs once per process. The per-session lifecycle is produced by the `session()` factory, which returns a fresh `SessionExtension` for each agent assembly; this keeps session state (MCP connections, tool instances) from leaking across sessions.
+
+**`src/extensions/registry.ts`** is the single config-aware authority. It holds the built-in extension list and the user-loaded list together. Whether an extension is enabled (via `extensions.<name>` in config, toggled by `/extensions`) is decided here and nowhere else — extensions never self-check their own toggle. A disabled extension contributes nothing: no commands, no startup work, no provider presets, no session pieces.
+
+To add a built-in feature: write a module in `src/extensions/<name>.ts` exporting an `Extension` and add it to `BUILTIN_EXTENSIONS` in `registry.ts`. To remove one: delete its file and its entry. Extensions that are disabled or not configured contribute nothing — no tokens, no startup work, no prompt text.
 
 ## License
 
