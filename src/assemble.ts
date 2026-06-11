@@ -48,18 +48,13 @@ export { extensionEnabled } from "./extension.ts";
 // the assembly boundary instead of importing feature modules directly.
 export {
   availableCommands,
-  builtinCommands,
-  findBuiltinCommand,
   findCommand,
   findCommandAnywhere,
   foldPresets,
   listExtensions,
-  runBuiltinCommand,
   runCommand,
   setUserExtensions,
-  startupBuiltins,
   startupExtensions,
-  toggleableExtensions,
 } from "./extensions/registry.ts";
 // Frontend-facing feature types re-exported through the assembly boundary, so a
 // frontend (TUI component / headless formatter) never has to reach into a feature

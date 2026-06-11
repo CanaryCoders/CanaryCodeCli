@@ -12,10 +12,6 @@
 
 import type { AgentMode } from "./agent.ts";
 import { CONFIG_PATHS } from "./config.ts";
-import {
-  builtinCommands,
-  toggleableExtensions,
-} from "./extensions/registry.ts";
 import { fuzzyRank, fuzzyScore } from "./fuzzy.ts";
 import { parseLevel, type ThinkingLevel } from "./thinking.ts";
 
@@ -42,8 +38,8 @@ export type CommandAction =
   | { kind: "resume"; id?: string }
   | { kind: "cost" }
   | { kind: "init" }
-  /** A command contributed by a built-in extension (login-codex, login-opencode, …). */
-  | { kind: "builtin-command"; name: string; args: string[] }
+  /** A command contributed by an extension (built-in or user-loaded). */
+  | { kind: "extension-command"; name: string; args: string[] }
   | { kind: "extensions"; op: "list" | "enable" | "disable"; name?: string }
   | { kind: "update" }
   | {
@@ -67,8 +63,8 @@ export interface CommandSpec {
   description: string;
 }
 
-/** The full command set. Order here is the order shown by `/help`. */
-export const COMMANDS: CommandSpec[] = [
+/** The static commands that open the `/help` listing. */
+const BASE_COMMANDS: CommandSpec[] = [
   {
     name: "model",
     usage: "[id]",
@@ -103,26 +99,14 @@ export const COMMANDS: CommandSpec[] = [
     usage: "[enable|disable <name>]",
     description: "toggle extensions (bare: interactive checkbox picker)",
   },
-  // Login-style commands contributed by built-in extensions (extensions/registry.ts).
-  ...builtinCommands().map((c) => ({
-    name: c.name,
-    usage: c.usage,
-    description: c.description,
-  })),
+];
+
+/** The static commands that close the `/help` listing. */
+const TAIL_COMMANDS: CommandSpec[] = [
   { name: "update", description: "update cc to the latest release" },
   { name: "help", aliases: ["?"], description: "show this command list" },
   { name: "exit", aliases: ["quit", "q"], description: "exit cc" },
 ];
-
-/** Lookup table from a name or alias to its spec. */
-const BY_NAME = new Map<string, CommandSpec>();
-for (const spec of COMMANDS) {
-  BY_NAME.set(spec.name, spec);
-  for (const alias of spec.aliases ?? []) BY_NAME.set(alias, spec);
-}
-
-/** Command words owned by built-in extensions (dispatched generically). */
-const BUILTIN_COMMAND_NAMES = new Set(builtinCommands().map((c) => c.name));
 
 /** Whether a raw input line is a slash command (vs. an ordinary prompt). */
 function isCommand(input: string): boolean {
@@ -159,7 +143,7 @@ function parseExtensionsAction(arg: string): CommandAction {
   };
 }
 
-/** Render the `/help` command list as aligned lines. */
+/** Parse the `/config [get|set|unset|reload]` argument. */
 function parseConfigAction(arg: string): CommandAction {
   if (!arg) return { kind: "config", op: "summary" };
   const match = arg.match(/^(\S+)(?:\s+(.*))?$/);
@@ -196,88 +180,13 @@ function parseConfigAction(arg: string): CommandAction {
 }
 
 /** Render the `/help` command list as aligned lines. */
-function helpText(): string {
-  const left = COMMANDS.map((c) => `/${c.name}${c.usage ? ` ${c.usage}` : ""}`);
+function helpText(specs: CommandSpec[]): string {
+  const left = specs.map((c) => `/${c.name}${c.usage ? ` ${c.usage}` : ""}`);
   const width = Math.max(...left.map((l) => l.length));
-  const lines = COMMANDS.map(
+  const lines = specs.map(
     (c, i) => `  ${left[i].padEnd(width)}  ${c.description}`,
   );
   return ["Commands:", ...lines].join("\n");
-}
-
-/**
- * Parse and dispatch an input line into a `CommandAction`. Non-command lines
- * become a `message` action. Unknown commands and bad arguments become an
- * `error` action with a human-readable message — the host decides how to show it.
- */
-export function dispatchCommand(input: string): CommandAction {
-  const parsed = parseCommand(input);
-  if (!parsed) return { kind: "message", text: input };
-
-  const spec = BY_NAME.get(parsed.name);
-  if (!spec) {
-    return {
-      kind: "error",
-      message: `unknown command: /${parsed.name} (try /help)`,
-    };
-  }
-
-  // Built-in extension commands dispatch generically — the host looks the
-  // handler up in the registry, so new built-ins never grow this switch.
-  if (BUILTIN_COMMAND_NAMES.has(spec.name)) {
-    return {
-      kind: "builtin-command",
-      name: spec.name,
-      args: parsed.arg ? parsed.arg.split(/\s+/) : [],
-    };
-  }
-
-  switch (spec.name) {
-    case "model":
-      return parsed.arg
-        ? { kind: "set-model", model: parsed.arg }
-        : { kind: "list-models" };
-    case "think": {
-      // A bare `/think` means the default on-level; an unrecognized value errors.
-      const level = parseLevel(parsed.arg || "think");
-      if (level === undefined) {
-        return {
-          kind: "error",
-          message: `unknown thinking level: "${parsed.arg}" (off|think|think-hard|ultrathink)`,
-        };
-      }
-      return { kind: "set-think", level };
-    }
-    case "plan":
-      return { kind: "set-mode", mode: "plan" };
-    case "auto":
-      return { kind: "set-mode", mode: "auto" };
-    case "normal":
-      return { kind: "set-mode", mode: "normal" };
-    case "clear":
-      return { kind: "clear" };
-    case "resume":
-      return parsed.arg
-        ? { kind: "resume", id: parsed.arg }
-        : { kind: "resume" };
-    case "cost":
-      return { kind: "cost" };
-    case "config":
-      return parseConfigAction(parsed.arg);
-    case "init":
-      return { kind: "init" };
-    case "extensions":
-      return parseExtensionsAction(parsed.arg);
-    case "update":
-      return { kind: "update" };
-    case "help":
-      return { kind: "help", text: helpText() };
-    case "exit":
-      return { kind: "exit" };
-    default:
-      // Unreachable while COMMANDS and this switch stay in sync.
-      return { kind: "error", message: `unhandled command: /${spec.name}` };
-  }
 }
 
 // ── slash autocomplete ─────────────────────────────────────────────────────────
@@ -309,6 +218,8 @@ export interface CompletionContext {
   sessions?: { id: string; title: string | null }[];
   /** Optional config paths supplied by the host; defaults to built-in common paths. */
   configPaths?: string[];
+  /** Known extensions (for `/extensions enable|disable` completion). */
+  extensions?: { name: string; description: string }[];
 }
 
 /** The thinking levels `/think` accepts, in increasing order. */
@@ -412,7 +323,7 @@ function paramValues(
       const op = tokens[0]?.toLowerCase();
       const opComplete = tokens.length >= 2 || /\s$/.test(arg);
       if ((op === "enable" || op === "disable") && opComplete) {
-        return toggleableExtensions().map((e) => ({
+        return (ctx.extensions ?? []).map((e) => ({
           value: `/extensions ${op} ${e.name}`,
           label: e.name,
           description: e.description,
@@ -428,53 +339,167 @@ function paramValues(
   }
 }
 
-/**
- * Compute autocomplete suggestions for a raw input line. Returns [] when the
- * line is not a `/`-command in progress. The first token (no space yet) ranks
- * commands; after a command word + space, ranks that command's parameters.
- */
-export function completions(
-  input: string,
-  ctx: CompletionContext,
-): Completion[] {
-  if (!input.startsWith("/")) return [];
-  const rest = input.slice(1);
-  const space = rest.search(/\s/);
+/** A built command set: the dispatcher and completer over one spec list. */
+export interface CommandSet {
+  /** Full spec list in /help order. */
+  specs: CommandSpec[];
+  /** Parse + dispatch an input line (the old dispatchCommand). */
+  dispatch(input: string): CommandAction;
+  /** Autocomplete suggestions (the old completions). */
+  completions(input: string, ctx: CompletionContext): Completion[];
+}
 
-  // First token still being typed → complete the command name.
-  if (space === -1) {
-    const q = rest;
-    // Single pass: score each command and keep only the matches (avoids a
-    // separate map()+filter() over the registry).
-    const scored: Array<{ c: CommandSpec; best: number }> = [];
-    for (const c of COMMANDS) {
-      // Score against the name, any alias, and the description; keep the best.
-      const keys = [c.name, ...(c.aliases ?? []), c.description];
-      let best = -Infinity;
-      for (const k of keys) {
-        const m = fuzzyScore(q, k);
-        if (m && m.score > best) best = m.score;
-      }
-      if (best > -Infinity) scored.push({ c, best });
-    }
-    scored.sort((a, b) => b.best - a.best);
-    return scored.map(({ c }) => ({
-      value: `/${c.name}${c.usage ? " " : ""}`,
-      label: `/${c.name}${c.usage ? ` ${c.usage}` : ""}`,
+/**
+ * Build the command set for the CURRENT config: the static base commands plus
+ * the commands of currently-enabled extensions. Hosts rebuild this whenever
+ * the extension set may have changed (cheap — a map over ~25 specs), so a
+ * disabled extension's commands are unknown everywhere at once.
+ */
+export function makeCommandSet(
+  extensionCommands: {
+    name: string;
+    usage?: string;
+    description: string;
+  }[] = [],
+): CommandSet {
+  const specs: CommandSpec[] = [
+    ...BASE_COMMANDS,
+    ...extensionCommands.map((c) => ({
+      name: c.name,
+      usage: c.usage,
       description: c.description,
-    }));
+    })),
+    ...TAIL_COMMANDS,
+  ];
+  const byName = new Map<string, CommandSpec>();
+  for (const spec of specs) {
+    byName.set(spec.name, spec);
+    for (const alias of spec.aliases ?? []) byName.set(alias, spec);
+  }
+  const extensionNames = new Set(extensionCommands.map((c) => c.name));
+
+  /**
+   * Parse and dispatch an input line into a `CommandAction`. Non-command lines
+   * become a `message` action. Unknown commands and bad arguments become an
+   * `error` action with a human-readable message — the host decides how to show it.
+   */
+  function dispatch(input: string): CommandAction {
+    const parsed = parseCommand(input);
+    if (!parsed) return { kind: "message", text: input };
+
+    const spec = byName.get(parsed.name);
+    if (!spec) {
+      return {
+        kind: "error",
+        message: `unknown command: /${parsed.name} (try /help)`,
+      };
+    }
+
+    // Extension commands dispatch generically — the host looks the handler up
+    // in the registry, so new extensions never grow this switch.
+    if (extensionNames.has(spec.name)) {
+      return {
+        kind: "extension-command",
+        name: spec.name,
+        args: parsed.arg ? parsed.arg.split(/\s+/) : [],
+      };
+    }
+
+    switch (spec.name) {
+      case "model":
+        return parsed.arg
+          ? { kind: "set-model", model: parsed.arg }
+          : { kind: "list-models" };
+      case "think": {
+        // A bare `/think` means the default on-level; an unrecognized value errors.
+        const level = parseLevel(parsed.arg || "think");
+        if (level === undefined) {
+          return {
+            kind: "error",
+            message: `unknown thinking level: "${parsed.arg}" (off|think|think-hard|ultrathink)`,
+          };
+        }
+        return { kind: "set-think", level };
+      }
+      case "plan":
+        return { kind: "set-mode", mode: "plan" };
+      case "auto":
+        return { kind: "set-mode", mode: "auto" };
+      case "normal":
+        return { kind: "set-mode", mode: "normal" };
+      case "clear":
+        return { kind: "clear" };
+      case "resume":
+        return parsed.arg
+          ? { kind: "resume", id: parsed.arg }
+          : { kind: "resume" };
+      case "cost":
+        return { kind: "cost" };
+      case "config":
+        return parseConfigAction(parsed.arg);
+      case "init":
+        return { kind: "init" };
+      case "extensions":
+        return parseExtensionsAction(parsed.arg);
+      case "update":
+        return { kind: "update" };
+      case "help":
+        return { kind: "help", text: helpText(specs) };
+      case "exit":
+        return { kind: "exit" };
+      default:
+        // Unreachable while the specs and this switch stay in sync.
+        return { kind: "error", message: `unhandled command: /${spec.name}` };
+    }
   }
 
-  // Command word complete → complete its parameter values.
-  const name = rest.slice(0, space).toLowerCase();
-  const argQuery = rest.slice(space + 1).trimStart();
-  const spec = BY_NAME.get(name);
-  if (!spec) return [];
-  const rawArg = rest.slice(space + 1);
-  const values = paramValues(spec.name, ctx, rawArg);
-  const query =
-    spec.name === "config" || spec.name === "extensions"
-      ? (rawArg.trimStart().split(/\s+/).at(-1) ?? "")
-      : argQuery;
-  return fuzzyRank(query, values, (v) => v.label).map((r) => r.item);
+  /**
+   * Compute autocomplete suggestions for a raw input line. Returns [] when the
+   * line is not a `/`-command in progress. The first token (no space yet) ranks
+   * commands; after a command word + space, ranks that command's parameters.
+   */
+  function complete(input: string, ctx: CompletionContext): Completion[] {
+    if (!input.startsWith("/")) return [];
+    const rest = input.slice(1);
+    const space = rest.search(/\s/);
+
+    // First token still being typed → complete the command name.
+    if (space === -1) {
+      const q = rest;
+      // Single pass: score each command and keep only the matches (avoids a
+      // separate map()+filter() over the registry).
+      const scored: Array<{ c: CommandSpec; best: number }> = [];
+      for (const c of specs) {
+        // Score against the name, any alias, and the description; keep the best.
+        const keys = [c.name, ...(c.aliases ?? []), c.description];
+        let best = -Infinity;
+        for (const k of keys) {
+          const m = fuzzyScore(q, k);
+          if (m && m.score > best) best = m.score;
+        }
+        if (best > -Infinity) scored.push({ c, best });
+      }
+      scored.sort((a, b) => b.best - a.best);
+      return scored.map(({ c }) => ({
+        value: `/${c.name}${c.usage ? " " : ""}`,
+        label: `/${c.name}${c.usage ? ` ${c.usage}` : ""}`,
+        description: c.description,
+      }));
+    }
+
+    // Command word complete → complete its parameter values.
+    const name = rest.slice(0, space).toLowerCase();
+    const argQuery = rest.slice(space + 1).trimStart();
+    const spec = byName.get(name);
+    if (!spec) return [];
+    const rawArg = rest.slice(space + 1);
+    const values = paramValues(spec.name, ctx, rawArg);
+    const query =
+      spec.name === "config" || spec.name === "extensions"
+        ? (rawArg.trimStart().split(/\s+/).at(-1) ?? "")
+        : argQuery;
+    return fuzzyRank(query, values, (v) => v.label).map((r) => r.item);
+  }
+
+  return { specs, dispatch, completions: complete };
 }

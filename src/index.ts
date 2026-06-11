@@ -11,12 +11,13 @@
 import { type AgentMode, roleForMode, runAgent } from "./agent.ts";
 import {
   assembleSession,
-  builtinCommands,
+  availableCommands,
   type ExtensionCommand,
-  findBuiltinCommand,
+  findCommand,
+  findCommandAnywhere,
   foldPresets,
   sessionForMode,
-  startupBuiltins,
+  startupExtensions,
 } from "./assemble.ts";
 import {
   type Config,
@@ -155,9 +156,11 @@ function parseArgs(argv: string[]): Args {
   return out;
 }
 
-function printUsage(): void {
-  // Subcommand lines for built-in extension commands, aligned like the rest.
-  const builtin = builtinCommands().map((c) => {
+function printUsage(
+  extCommands: { name: string; usage?: string; description: string }[],
+): void {
+  // Subcommand lines for extension commands, aligned like the rest.
+  const builtin = extCommands.map((c) => {
     const left = `cc ${c.name}${c.usage ? ` ${c.usage}` : ""}`;
     return `  ${left.padEnd(25)}  ${c.description}`;
   });
@@ -296,7 +299,7 @@ async function runHeadless(args: Args): Promise<number> {
   // authenticated (CanaryLLM key, Codex sign-in, opencode credentials) and gates
   // the preset when not, so an unauthenticated launch never offers — or falls
   // back onto — a model that would just error. "live" blocks on the network.
-  for (const note of await startupBuiltins(config, "live")) {
+  for (const note of await startupExtensions(config, "live")) {
     process.stderr.write(`${note}\n`);
   }
 
@@ -735,7 +738,7 @@ async function runTui(args: Args): Promise<number> {
   // (a file read) so the TUI paints without waiting on network fetches; stale
   // caches refresh in the background. A successful in-session `/login-<ext>`
   // re-discovers the models live.
-  const builtinNotes = await startupBuiltins(config, "fast");
+  const builtinNotes = await startupExtensions(config, "fast");
 
   const resolved = resolveModel(config, args.model);
   if (!resolved) {
@@ -817,20 +820,13 @@ async function runTui(args: Args): Promise<number> {
   return 0;
 }
 
-/** Run a built-in extension command (`cc login-codex`, `cc login-opencode`, …)
- * as a CLI subcommand: console output, prompt() for manual paste flows. */
-async function runBuiltinCli(
+/** Run an extension command (`cc login-codex`, …) as a CLI subcommand:
+ * console output, prompt() for manual paste flows. */
+async function runExtensionCli(
+  config: Config,
   cmd: ExtensionCommand,
   rest: string[],
 ): Promise<number> {
-  let config: Config;
-  try {
-    config = await loadConfig();
-  } catch (err) {
-    console.error((err as Error).message);
-    return 1;
-  }
-  foldPresets(config);
   try {
     await cmd.run(
       {
@@ -845,6 +841,48 @@ async function runBuiltinCli(
     console.error(`cc ${cmd.name} failed: ${(err as Error).message}`);
     return 1;
   }
+}
+
+/** The extension commands /help and usage should list — config-aware, but a
+ * broken config must not break `cc --help`. */
+async function usageCommands(): Promise<
+  { name: string; usage?: string; description: string }[]
+> {
+  try {
+    return availableCommands(await loadConfig());
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Try argv[0] as an extension subcommand. Returns an exit code when it was
+ * one (including the disabled-extension error), or undefined to fall through
+ * and treat the word as a prompt.
+ */
+async function tryExtensionSubcommand(
+  word: string,
+  rest: string[],
+): Promise<number | undefined> {
+  let config: Config;
+  try {
+    config = await loadConfig();
+  } catch (err) {
+    // A broken config blocks every run path (command or prompt alike).
+    console.error((err as Error).message);
+    return 1;
+  }
+  foldPresets(config);
+  const cmd = findCommand(config, word);
+  if (cmd) return runExtensionCli(config, cmd, rest);
+  const owner = findCommandAnywhere(word);
+  if (owner) {
+    console.error(
+      `cc: "${word}" belongs to the disabled extension "${owner.extension.name}" — enable it with /extensions in the TUI, or set {"extensions":{"${owner.extension.name}":true}} in ~/.cc/config.json`,
+    );
+    return 1;
+  }
+  return undefined;
 }
 
 /**
@@ -872,19 +910,19 @@ async function runUpdate(): Promise<number> {
 
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
-  // Subcommands handled before flag parsing: built-in extension commands
-  // (login-codex, login-opencode, …) and update.
-  const builtinCmd = argv[0] ? findBuiltinCommand(argv[0]) : undefined;
-  if (builtinCmd) {
-    process.exit(await runBuiltinCli(builtinCmd, argv.slice(1)));
-  }
   if (argv[0] === "update") {
     process.exit(await runUpdate());
+  }
+  // A bare first word may be an extension subcommand (login-codex, …);
+  // resolving it needs config, since disabled extensions expose nothing.
+  if (argv[0] && !argv[0].startsWith("-")) {
+    const handled = await tryExtensionSubcommand(argv[0], argv.slice(1));
+    if (handled !== undefined) process.exit(handled);
   }
   const args = parseArgs(argv);
 
   if (args.help) {
-    printUsage();
+    printUsage(await usageCommands());
     return;
   }
   if (args.version) {
@@ -903,7 +941,7 @@ async function main(): Promise<void> {
     if (code !== 0) process.exit(code);
     return;
   }
-  printUsage();
+  printUsage(await usageCommands());
 }
 
 main();

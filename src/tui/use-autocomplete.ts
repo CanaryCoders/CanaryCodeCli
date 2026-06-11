@@ -7,10 +7,11 @@
 // while the agent is busy so a command can be composed/queued mid-turn.
 
 import { useRef, useState } from "react";
+import { availableCommands, listExtensions } from "../assemble.ts";
 import {
   type Completion,
   type CompletionContext,
-  completions,
+  makeCommandSet,
 } from "../commands.ts";
 import type { Config } from "../config.ts";
 import type { SessionStore } from "../session.ts";
@@ -27,7 +28,14 @@ function buildCompletionContext(
   const sessions = store
     .listSessions(20)
     .map((s) => ({ id: s.id, title: s.title }));
-  return { models, sessions };
+  return {
+    models,
+    sessions,
+    extensions: listExtensions(config).map((e) => ({
+      name: e.name,
+      description: e.description,
+    })),
+  };
 }
 
 export interface Autocomplete {
@@ -108,7 +116,10 @@ export function useAutocomplete(opts: {
   const completeActive =
     !planActive && input.startsWith("/") && !completeDismissed;
   const suggestions = completeActive
-    ? completions(input, buildCompletionContext(config, store))
+    ? makeCommandSet(availableCommands(config)).completions(
+        input,
+        buildCompletionContext(config, store),
+      )
     : [];
   const completeOpen = suggestions.length > 0;
   const sel = completeOpen

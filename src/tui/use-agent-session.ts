@@ -18,17 +18,18 @@ import { type AgentMode, roleForMode, runAgent } from "../agent.ts";
 import {
   type AssembledSession,
   assembleSession,
+  availableCommands,
   extensionEnabled,
   type FrontendGate,
   foldPresets,
-  runBuiltinCommand,
+  listExtensions,
+  runCommand,
   sessionForMode,
-  startupBuiltins,
+  startupExtensions,
   type Task,
-  toggleableExtensions,
 } from "../assemble.ts";
 import { readClipboardImage } from "../clipboard.ts";
-import { dispatchCommand } from "../commands.ts";
+import { type CommandAction, makeCommandSet } from "../commands.ts";
 import {
   getRawConfigPath,
   loadConfig,
@@ -679,7 +680,7 @@ export function useAgentSession(deps: {
     // Re-run built-in startup discovery/gating against the fresh config (live —
     // a reload should reflect current credentials). Notes are dropped: a reload
     // is not a launch.
-    await startupBuiltins(next, "live");
+    await startupExtensions(next, "live");
     replaceConfigInPlace(props.config, next);
   }
 
@@ -740,7 +741,7 @@ export function useAgentSession(deps: {
   }
 
   async function handleConfig(
-    action: Extract<ReturnType<typeof dispatchCommand>, { kind: "config" }>,
+    action: Extract<CommandAction, { kind: "config" }>,
   ): Promise<void> {
     try {
       if (action.op === "summary") {
@@ -898,7 +899,9 @@ export function useAgentSession(deps: {
     setInput("");
     promptHistory.recordHistory(line);
 
-    const action = dispatchCommand(line);
+    const action = makeCommandSet(availableCommands(props.config)).dispatch(
+      line,
+    );
     switch (action.kind) {
       case "message":
         submitPrompt(line).catch(reportTurnFailure);
@@ -963,7 +966,7 @@ export function useAgentSession(deps: {
       case "init":
         doInit();
         break;
-      case "builtin-command":
+      case "extension-command":
         void runBuiltin(action.name, action.args);
         break;
       case "extensions":
@@ -1004,12 +1007,13 @@ export function useAgentSession(deps: {
     submitPrompt("/init", INIT_PROMPT, "normal").catch(reportTurnFailure);
   }
 
-  // A command contributed by a built-in extension (`/login-codex`,
+  // A command contributed by an extension (`/login-codex`,
   // `/login-opencode`, …) — the handler lives with its extension; the TUI only
   // routes notes into the scrollback and formats failures.
   async function runBuiltin(name: string, args: string[]): Promise<void> {
     try {
-      await runBuiltinCommand(
+      await runCommand(
+        props.config,
         name,
         { config: props.config, note: (text) => note(text) },
         args,
@@ -1024,12 +1028,12 @@ export function useAgentSession(deps: {
   // ~/.cc/config.json (`extensions.<name>`), re-runs the built-in startup
   // gating, and reassembles the session so tool/prompt changes apply at once.
   async function handleExtensions(
-    action: Extract<ReturnType<typeof dispatchCommand>, { kind: "extensions" }>,
+    action: Extract<CommandAction, { kind: "extensions" }>,
   ): Promise<void> {
     // A prior toggle may still be applying (config reload + reassembly take
     // seconds) — wait it out so this command never reads mid-apply state.
     if (togglesInFlightRef.current) await togglesInFlightRef.current;
-    const known = toggleableExtensions();
+    const known = listExtensions(props.config);
     if (action.op === "list") {
       // Read the persisted toggles straight from disk so the picker reflects
       // saved truth even if some in-memory reload is lagging.
@@ -1039,8 +1043,9 @@ export function useAgentSession(deps: {
       extensionsOpenRef.current = true;
       setExtensionsPicker(
         known.map((e) => ({
-          ...e,
-          enabled: raw?.[e.name] ?? extensionEnabled(props.config, e.name),
+          name: e.name,
+          description: e.description,
+          enabled: raw?.[e.name] ?? e.enabled,
         })),
       );
       return;

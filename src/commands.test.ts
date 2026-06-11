@@ -1,7 +1,25 @@
 // commands.test.ts — slash-command parsing and autocomplete.
 
 import { describe, expect, test } from "bun:test";
-import { completions, dispatchCommand } from "./commands.ts";
+import { type CommandSet, makeCommandSet } from "./commands.ts";
+
+/** The extension commands the old static registry used to bake in. */
+const EXT_COMMANDS = [
+  {
+    name: "login-codex",
+    usage: "[--manual]",
+    description: "sign in with your ChatGPT (OpenAI Codex) subscription",
+  },
+  {
+    name: "logout-codex",
+    description: "sign out of your ChatGPT (OpenAI Codex) subscription",
+  },
+  { name: "login-opencode", description: "connect OpenCode Zen" },
+  { name: "logout-opencode", description: "disconnect OpenCode Zen" },
+];
+const set: CommandSet = makeCommandSet(EXT_COMMANDS);
+const dispatchCommand = set.dispatch;
+const completions = set.completions;
 
 const ctx = {
   models: ["opus", "sonnet", "gpt-5"],
@@ -148,17 +166,17 @@ describe("dispatchCommand /extensions", () => {
 describe("dispatchCommand built-in extension commands", () => {
   test("login/logout commands dispatch generically with args", () => {
     expect(dispatchCommand("/login-codex --manual")).toEqual({
-      kind: "builtin-command",
+      kind: "extension-command",
       name: "login-codex",
       args: ["--manual"],
     });
     expect(dispatchCommand("/login-opencode")).toEqual({
-      kind: "builtin-command",
+      kind: "extension-command",
       name: "login-opencode",
       args: [],
     });
     expect(dispatchCommand("/logout-opencode")).toEqual({
-      kind: "builtin-command",
+      kind: "extension-command",
       name: "logout-opencode",
       args: [],
     });
@@ -170,12 +188,47 @@ describe("completions /extensions", () => {
     expect(completions("/extensions ", ctx)).toEqual([]);
   });
 
-  test("completes the op once typed, then extension names", () => {
+  test("completes the op once typed", () => {
     const ops = completions("/extensions en", ctx).map((c) => c.label);
     expect(ops).toContain("enable");
-    const names = completions("/extensions disable ", ctx).map((c) => c.label);
-    expect(names).toContain("opencode");
-    expect(names).toContain("codex");
+  });
+
+  test("completes extension names after enable/disable", () => {
+    const extCtx = {
+      extensions: [
+        { name: "websearch", description: "the web_search tool" },
+        { name: "codex", description: "OpenAI Codex models" },
+      ],
+    };
+    const names = completions("/extensions disable ", extCtx).map(
+      (c) => c.label,
+    );
     expect(names).toContain("websearch");
+    expect(names).toContain("codex");
+  });
+});
+
+describe("makeCommandSet reflects the extension set", () => {
+  test("a command absent from the set is unknown", () => {
+    const bare = makeCommandSet([]);
+    expect(bare.dispatch("/login-codex")).toMatchObject({ kind: "error" });
+    expect(
+      bare
+        .completions("/login", {})
+        .map((c) => c.label)
+        .join(" "),
+    ).not.toContain("login-codex");
+  });
+
+  test("help lists extension commands only when present", () => {
+    const withExt = makeCommandSet(EXT_COMMANDS);
+    const helpWith = withExt.dispatch("/help");
+    expect(helpWith.kind).toBe("help");
+    if (helpWith.kind === "help")
+      expect(helpWith.text).toContain("login-codex");
+    const bare = makeCommandSet([]);
+    const helpBare = bare.dispatch("/help");
+    if (helpBare.kind === "help")
+      expect(helpBare.text).not.toContain("login-codex");
   });
 });
