@@ -1,15 +1,19 @@
 // src/extension.ts — the extension kernel.
 //
-// A SessionExtension is one feature's complete footprint: the tools it
-// contributes, the prompt section it injects (named and visible — nothing
-// enters the system prompt anonymously), and its pre/post tool hooks.
-// `composeExtensions` folds N session extensions into the exact callback shape
-// `runAgent` already accepts, so the core loop stays a pure engine that knows
-// nothing about features.
+// `Extension` is the primary public interface. It covers two lifecycles in one
+// object: the outer lifecycle (providerPresets, startup discovery, login-style
+// commands) that runs once per process, and the per-session lifecycle exposed
+// through the `session()` factory, which produces a fresh `SessionExtension`
+// for each agent assembly. The split keeps process-level state (config mutation,
+// cached credentials) away from session-level state (MCP connections, tool
+// instances). Whether an Extension is active is decided solely by the registry
+// (extensions/registry.ts); extensions never check their own toggle.
 //
-// The unified Extension interface (below) covers both lifecycles: the outer one
-// (provider presets, startup discovery, login-style commands) and the
-// per-session one via the `session` factory.
+// `SessionExtension` is the per-session shape: the tools a feature contributes,
+// the prompt section it injects (named and visible — nothing enters the system
+// prompt anonymously), and its pre/post tool hooks. `composeExtensions` folds N
+// session extensions into the exact callback shape `runAgent` already accepts,
+// so the core loop stays a pure engine that knows nothing about features.
 
 import type { AgentOptions } from "./agent.ts";
 import type { Config, ProviderConfig } from "./config.ts";
