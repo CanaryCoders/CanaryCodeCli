@@ -251,6 +251,12 @@ Web search works with no API key. It defaults to a free DuckDuckGo backend that 
 }
 ```
 
+> **Token cost:** while a server is connected, every MCP tool's name,
+> description, and input schema is sent with each request — popular servers
+> add thousands of tokens per turn. For tools you use occasionally, a skill
+> or a plain CLI invoked via `bash` is cheaper: the agent reads the docs only
+> when it actually needs them.
+
 ### Custom agents
 
 Drop a markdown file in `~/.cc/agents/<name>.md` for a global agent or `./.cc/agents/<name>.md` for a project agent. The project file overrides the global one. The frontmatter configures the agent. The body is the agent's system prompt:
@@ -343,6 +349,21 @@ bun test            # run the unit tests
 ```
 
 `cc` uses the Bun runtime and ESNext modules with no build step. `.ts` runs directly. The core targets under ~2000 LOC; keep new dependencies minimal and intentional.
+
+### Architecture & extending
+
+`cc` follows a small-core design (inspired by
+[Pi](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/)): the core is
+the agent loop (`src/agent.ts`), the provider layer (`src/provider.ts`), six
+file/shell tools (`src/tools.ts`), and session storage. Everything else — web
+search, skills, sub-agents, MCP, hooks, the AI permission engine, the task
+list — is an `Extension` (`src/extension.ts`): a named bundle of tools, an
+optional system-prompt section, and pre/post tool hooks.
+
+To add a feature: write a factory returning an `Extension` in
+`src/extensions/<name>.ts` and register it in `src/assemble.ts`. To remove
+one: delete its file and its registration line. Extensions that aren't
+configured contribute nothing — no tokens, no startup work, no prompt text.
 
 ## License
 

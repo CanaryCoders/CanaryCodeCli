@@ -23,10 +23,14 @@ docs.
 ## Layout (`src/`)
 
 - `index.ts` — CLI entry / arg parsing; `agent.ts` — the core agent loop.
-- `provider.ts`, `canary.ts` — model providers (OpenAI-compat / Anthropic).
-- `tools.ts`, `verbs.ts` — tool definitions; `websearch.ts`, `mcp.ts`,
-  `skills.ts`, `subagents.ts`, `agents.ts` — capabilities.
-- `permission.ts`, `hooks.ts` — the pre-tool gating pipeline.
+- `provider.ts`, `canary.ts` — model providers; `auth.ts`, `openai-codex.ts` —
+  ChatGPT/Codex auth and model discovery.
+- `tools.ts` — the core tool set (read_file, write_file, edit_file, list_dir,
+  bash, grep). Frozen: new tools belong in extensions.
+- `extension.ts` — the `Extension` interface + `composeExtensions` kernel.
+- `assemble.ts` — the one place sessions are assembled; both frontends call it.
+- `extensions/` — one file per feature: `websearch`, `askuser`, `skills`,
+  `agents` (incl. sub-agents), `mcp`, `hooks`, `permission`, `tasks`.
 - `config.ts`, `session.ts`, `context.ts`, `commands.ts`, `thinking.ts`,
   `diff.ts`, `markdown.ts`, `fuzzy.ts` — supporting modules.
 - `tui/` — Ink components (`App.tsx`, `Message.tsx`, `Input.tsx`, …) + `theme.ts`.
@@ -38,8 +42,9 @@ docs.
 - lint: `bun run lint`  (`biome lint ./src`)
 - format: `bun run format`  (`biome format --write ./src`)
 - check (lint + types): `bun run check`
+- test: `bun test`
 
-There is no test suite. Validate changes with `bun run check`.
+Validate changes with `bun test && bun run check`.
 
 ## Conventions
 
@@ -48,3 +53,11 @@ There is no test suite. Validate changes with `bun run check`.
 - Every tool carries a `readOnly` flag — plan mode filters on it; preserve it
   when adding tools.
 - Config lives at `~/.cc/config.json`; `${VAR}` references interpolate from env.
+- Layering: core (`agent.ts`, `provider.ts`, `tools.ts`, `session.ts`) never
+  imports from `extensions/` or `tui/`. Extensions import core +
+  `extension.ts`, never each other and never frontends. Frontends import
+  `assemble.ts`, never feature modules directly (narrow carve-outs: session
+  lifecycle hook runners and small presentation helpers).
+- Every system-prompt injection is a named extension's `systemPrompt()`;
+  nothing else may append to the prompt.
+- A feature that isn't configured must cost zero tokens and zero startup work.
