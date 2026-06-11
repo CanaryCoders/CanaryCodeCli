@@ -166,6 +166,16 @@ export interface AgentOptions {
     call: { id: string; name: string; input: unknown },
     result: { content: string; isError: boolean },
   ): Promise<void>;
+  /**
+   * Pull any queued user input to inject at the next tool-result boundary. Called
+   * once per agentic iteration, right after the tool batch's results are gathered
+   * and before they are appended to the conversation. A non-empty return is added
+   * as a trailing `text` block on that user message so the model sees it on its
+   * next step. Return `null`/empty to inject nothing. The earliest protocol-legal
+   * injection point is this user message (all tool_results for a batch must be
+   * returned together), so this never splits a tool_result from its tool_use.
+   */
+  drainInput?(): string | null;
 }
 
 export type AgentEvent =
@@ -577,6 +587,8 @@ export async function* runAgent(
       }
     }
     results.push(...images);
+    const injected = opts.drainInput?.();
+    if (injected) results.push({ type: "text", text: injected });
     messages.push({ role: "user", content: results });
   }
 }
