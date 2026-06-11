@@ -182,16 +182,6 @@ export function agentsPromptSection(agents: AgentDef[]): string | undefined {
   ].join("\n");
 }
 
-/**
- * Append the custom-agents catalog to the base system prompt. No-op when there
- * are no custom agents. Thin wrapper over {@link agentsPromptSection} kept for
- * the TUI assembly path (removed once it routes through the extension kernel).
- */
-export function composeAgentsPrompt(base: string, agents: AgentDef[]): string {
-  const section = agentsPromptSection(agents);
-  return section ? [base, "", section].join("\n") : base;
-}
-
 /** A one-line stderr/startup note listing discovered agents (undefined if none). */
 export function describeAgents(agents: AgentDef[]): string | undefined {
   if (agents.length === 0) return undefined;

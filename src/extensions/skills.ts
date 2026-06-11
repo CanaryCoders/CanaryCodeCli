@@ -126,16 +126,6 @@ export function skillsPromptSection(skills: Skill[]): string | undefined {
   ].join("\n");
 }
 
-/**
- * Append the available-skills catalog to the base system prompt. No-op when
- * there are no skills. Thin wrapper over {@link skillsPromptSection} kept for the
- * TUI assembly path (removed once it routes through the extension kernel too).
- */
-export function composeSkillsPrompt(base: string, skills: Skill[]): string {
-  const section = skillsPromptSection(skills);
-  return section ? [base, "", section].join("\n") : base;
-}
-
 /** A one-line stderr note describing which skills were discovered (undefined if none). */
 export function describeSkills(skills: Skill[]): string | undefined {
   if (skills.length === 0) return undefined;

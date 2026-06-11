@@ -19,8 +19,13 @@ import {
   type AgentOptions,
   roleForMode,
   runAgent,
-  systemForMode,
 } from "../agent.ts";
+import type { Task } from "../assemble.ts";
+import {
+  type AssembledSession,
+  assembleSession,
+  sessionForMode,
+} from "../assemble.ts";
 import {
   clearCredentials,
   hasCredentials,
@@ -43,20 +48,12 @@ import {
   unsetRawConfigPath,
   validateConfigPathValue,
 } from "../config.ts";
-import { Semaphore, spawnAgentTool } from "../extensions/agents.ts";
-import { askUserTool } from "../extensions/askuser.ts";
 import {
-  runPostToolHooks,
-  runPreToolHooks,
   runSessionEndHooks,
   runSessionStartHooks,
   runStopHooks,
   runUserPromptSubmitHooks,
 } from "../extensions/hooks.ts";
-import { closeMcp, connectMcpServers, describeMcp } from "../extensions/mcp.ts";
-import { readSkillTool } from "../extensions/skills.ts";
-import { type Task, updateTasksTool } from "../extensions/tasks.ts";
-import { webSearchTool } from "../extensions/websearch.ts";
 import { iconFor } from "../icons.ts";
 import { extractImagePaths, type ImageData, readImageFile } from "../image.ts";
 import {
@@ -74,8 +71,6 @@ import {
   supportsThinking,
   type ThinkingLevel,
 } from "../thinking.ts";
-import type { Tool } from "../tools.ts";
-import { tools as allTools } from "../tools.ts";
 import { applyUpdate, updateDisabledReason } from "../update.ts";
 import type { AppProps } from "./app-types.ts";
 import { drainInputQuiet, expandPastes } from "./input-helpers.ts";
@@ -125,8 +120,9 @@ export interface AgentSession {
   rejectPlan: () => void;
   /** The shared Ctrl+C / Esc cancel escalation. */
   handleCancel: (label: string) => void;
-  /** Connect MCP servers once, on mount (deferred so they don't block first paint). */
-  startMcp: () => Promise<void>;
+  /** Assemble the session once, on mount (deferred so a slow MCP server doesn't
+   * block first paint). Turns dispatched before this resolves queue behind it. */
+  startSession: () => Promise<void>;
 }
 
 export function useAgentSession(deps: {
@@ -151,9 +147,17 @@ export function useAgentSession(deps: {
   // mirrors what the UI shows.
   const providerRef = useRef(props.provider);
   const modelNameRef = useRef(props.modelName);
-  // Base system prompt (project context + skills already folded in). Held in a
-  // ref so `/init` can fold a freshly generated CC.md in live, mid-session.
-  const baseSystemRef = useRef(props.baseSystem);
+  // The assembled session (tools, system prompt, gate, hooks, MCP lifecycle),
+  // built once after first paint by startSession() and held here. Per-turn views
+  // (plan filtering, mode suffix, auto's gate skip) are derived via sessionForMode.
+  // Null until assembly completes; runTurn awaits assemblyRef before reading it so
+  // a prompt sent during the deferred MCP connect simply queues behind readiness.
+  const assembledRef = useRef<AssembledSession | null>(null);
+  const assemblyRef = useRef<Promise<void> | null>(null);
+  // A session-scoped abort signal handed to assembleSession for the AI permission
+  // check. Aborted only at shutdown — per-turn aborts use their own controller and
+  // the loop ignores a late gate verdict once aborted (the check fails open on abort).
+  const sessionAbortRef = useRef(new AbortController());
   // Seed with any resumed transcript; those turns are already stored, so the
   // persist baseline starts past them (only new turns get appended).
   const messagesRef = useRef<Message[]>(props.resumedMessages ?? []);
@@ -168,8 +172,6 @@ export function useAgentSession(deps: {
   // before the timer fires quits. The timer disarms it so a lone press never quits.
   const quitArmedRef = useRef(false);
   const quitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Guards the one-time deferred MCP connect (see startMcp) against a re-invocation.
-  const mcpStartedRef = useRef(false);
   // A prompt typed and submitted while a turn is in flight; it sends automatically
   // once the turn finishes. The ref mirrors state for the `useInput` closure.
   const [queued, setQueued] = useState<string | null>(null);
@@ -249,10 +251,13 @@ export function useAgentSession(deps: {
       // exit the process lingers after the UI is gone: the now-cooked terminal
       // echoes any further keystrokes as raw `^[`/`^C` until a signal kills it.
       app.exit();
-      // Best-effort close of MCP transports (kills spawned servers like puppeteer's
-      // browser), capped so a wedged transport can't block the quit, then exit hard.
+      // Abort the session-scoped signal (cancels any in-flight AI permission
+      // check) and dispose the assembled session — its dispose() closes MCP
+      // transports (killing spawned servers like puppeteer's browser). Capped so a
+      // wedged transport can't block the quit, then exit hard.
+      sessionAbortRef.current.abort();
       await Promise.race([
-        closeMcp(props.mcp).catch(() => {}),
+        (assembledRef.current?.dispose() ?? Promise.resolve()).catch(() => {}),
         new Promise((resolve) => setTimeout(resolve, 1000)),
       ]);
       process.exit(0);
@@ -291,49 +296,6 @@ export function useAgentSession(deps: {
     };
   }
 
-  // ── build the tool set for a run (fresh signal so spawn_agent can be aborted) ──
-  function buildTools(
-    signal: AbortSignal,
-    turnProvider: Provider,
-    turnModel: string,
-    gate: AgentOptions["gate"],
-  ): Tool[] {
-    if (props.noTools) return [];
-    let tools: Tool[] = [
-      ...allTools,
-      webSearchTool(props.config.webSearch),
-      readSkillTool(props.skills),
-      askUserTool(approvals.requestAsk),
-      ...props.mcp.tools,
-    ];
-    if (props.config.maxDepth > 0) {
-      const limiter = new Semaphore(props.config.maxConcurrent);
-      // Snapshot the base set children inherit (the tools built so far, before
-      // spawn_agent and update_tasks are appended).
-      const inherited = tools;
-      tools = [
-        ...tools,
-        spawnAgentTool({
-          config: props.config,
-          parentProvider: turnProvider,
-          parentModel: turnModel,
-          inheritedTools: () => inherited,
-          depth: 0,
-          limiter,
-          signal,
-          agents: props.agents,
-          gate,
-        }),
-      ];
-    }
-    // update_tasks is the orchestrator's own todo list — added top-level only (it
-    // is deliberately NOT in spawn_agent's inheritedTools above), so the panel
-    // reflects the main agent's plan while children just do their one task and
-    // return a summary.
-    tools = [...tools, updateTasksTool(setTasks, props.config)];
-    return tools;
-  }
-
   /** Persist newly appended (or compacted) turns to the session store. */
   function flush(compacted: boolean): void {
     const msgs = messagesRef.current;
@@ -368,19 +330,30 @@ export function useAgentSession(deps: {
     const controller = new AbortController();
     controllerRef.current = controller;
 
+    // Wait for the deferred assembly (tools + MCP connect) to finish before the
+    // first turn. A prompt sent during the connect window queues behind it here
+    // rather than running with an incomplete tool set. startSession is idempotent.
+    await startSession();
+    const assembled = assembledRef.current;
+
     const runMode = modeOverride ?? modeRef.current;
     const {
       provider: turnProvider,
       model: turnModel,
       supportsVision: turnSupportsVision,
     } = modelForTurn(runMode);
-    const system = systemForMode(baseSystemRef.current, runMode);
-    // One gate shared by the main loop and spawn_agent's children, so a sub-agent's
-    // mutating tools go through the same approval flow as the parent's.
-    const gate: AgentOptions["gate"] = (call) =>
-      approvals.requestGate(runMode, call);
-    let tools = buildTools(controller.signal, turnProvider, turnModel, gate);
-    if (runMode === "plan") tools = tools.filter((t) => t.readOnly);
+    // Per-turn view of the assembled session: plan filtering, the mode suffix, and
+    // auto's gate skip are all derived here (tools/system/gate) from the single
+    // mode-independent assembly. The PreToolUse/PostToolUse hooks are composed
+    // once at assembly and reused every turn. `assembled` is never null when tools
+    // are enabled; under --no-tools assembly still runs (it yields an empty tool
+    // set), so the only null case is a still-pending/failed assembly.
+    const view = assembled
+      ? sessionForMode(assembled, runMode)
+      : { tools: [], system: "", gate: undefined };
+    const { tools, system, gate } = view;
+    const preToolUse = assembled?.preToolUse;
+    const postToolUse = assembled?.postToolUse;
 
     const budget = supportsThinking(turnProvider.id) ? budgetFor(thinking) : 0;
     // Auto mode runs unattended → a hard cap (no human to ask). Normal/plan run
@@ -388,21 +361,6 @@ export function useAgentSession(deps: {
     const interactive = runMode !== "auto";
     const maxTurns = props.config.autoMaxTurns;
     const checkpointEvery = interactive ? props.config.checkpointEvery : 0;
-
-    // Lifecycle hooks run in every mode (deterministic policy). PreToolUse can
-    // block a call; PostToolUse observes. Omitted when none are configured.
-    const hooks = props.config.hooks;
-    const ctx = hookContext();
-    const preToolUse = hooks.PreToolUse?.length
-      ? (call: { name: string; input: unknown }) =>
-          runPreToolHooks(hooks, call, ctx)
-      : undefined;
-    const postToolUse = hooks.PostToolUse?.length
-      ? (
-          call: { name: string; input: unknown },
-          result: { content: string; isError: boolean },
-        ) => runPostToolHooks(hooks, call, result, ctx)
-      : undefined;
 
     // The in-flight turn is built up here and mirrored into React state for render.
     // Only the *last* item is ever mutated (text appends to it, a tool flips
@@ -596,7 +554,7 @@ export function useAgentSession(deps: {
       if (props.config.hooks.Stop?.length) {
         try {
           await runStopHooks(props.config.hooks, {
-            ...ctx,
+            ...hookContext(),
             reason: outcome,
           });
         } catch (err) {
@@ -715,34 +673,61 @@ export function useAgentSession(deps: {
     replaceConfigInPlace(props.config, next);
   }
 
-  // Deferred initial MCP connect: runTui hands the App an empty `props.mcp` and the
-  // App calls this once on mount, so a slow MCP server never blocks first paint. The
-  // tools fold into the shared `props.mcp` (read at send time) and the `⌁ mcp` note
-  // replaces the startup "connecting…" line. Idempotent — a no-op after the first run
-  // and when there are no servers (or --no-tools).
-  async function startMcp(): Promise<void> {
-    if (mcpStartedRef.current || props.noTools) return;
-    mcpStartedRef.current = true;
-    const configured = Object.keys(props.config.mcpServers).length;
-    if (configured === 0) return;
-    const conn = await connectMcpServers(props.config.mcpServers);
-    props.mcp.tools = conn.tools;
-    props.mcp.clients = conn.clients;
-    props.mcp.notes = conn.notes;
-    note(describeMcp(conn, configured) ?? "⌁ mcp: no servers configured");
+  // Assemble the session through the shared extension kernel: tools, system
+  // prompt, the composed gate (AI permission check + the human confirm gate
+  // below), pre/post-tool hooks, and the MCP lifecycle all come from this one
+  // call. Notes (skills/agents/mcp/context) route into the scrollback. The MCP
+  // connect happens here, which is why assembly is deferred to after first paint.
+  async function assemble(): Promise<AssembledSession> {
+    // The human confirm gate. The frontend gate is composed BEHIND the AI gate by
+    // assembleSession; it reads the live run mode (modeRef) so a mode switch
+    // between turns is reflected without reassembling. Auto-mode's skip is handled
+    // by sessionForMode (it drops the gate), so passing modeRef here is belt-and-braces.
+    const frontendGate: NonNullable<AgentOptions["gate"]> = (call) =>
+      approvals.requestGate(modeRef.current, call);
+    return assembleSession({
+      config: props.config,
+      // Assembly is mode-independent (mode-specific derivation is per-turn via
+      // sessionForMode). spawn_agent inherits this provider/model as its child
+      // default — the launch/`/model` model at assembly time.
+      mode: "normal",
+      provider: providerRef.current,
+      model: modelNameRef.current,
+      sessionId: sessionIdRef.current,
+      signal: sessionAbortRef.current.signal,
+      noTools: props.noTools,
+      gate: frontendGate,
+      note: (text) => note(text),
+      askUser: approvals.requestAsk,
+      onTasks: setTasks,
+    });
   }
 
-  async function reloadMcp(): Promise<void> {
-    const oldClients = props.mcp.clients;
-    const next = await connectMcpServers(props.config.mcpServers);
-    await Promise.all(oldClients.map((c) => c.close().catch(() => {})));
-    props.mcp.tools = next.tools;
-    props.mcp.clients = next.clients;
-    props.mcp.notes = next.notes;
-    note(
-      describeMcp(next, Object.keys(props.config.mcpServers).length) ??
-        "⌁ mcp: no servers configured",
-    );
+  // Deferred initial assembly: the App calls this once on mount, so a slow MCP
+  // server (assembly connects them) never blocks first paint. Idempotent — the
+  // first call stores the in-flight promise and every later caller (including the
+  // first turn) awaits it rather than reassembling.
+  async function startSession(): Promise<void> {
+    if (assemblyRef.current) {
+      await assemblyRef.current;
+      return;
+    }
+    const p = (async () => {
+      assembledRef.current = await assemble();
+    })();
+    assemblyRef.current = p;
+    await p;
+  }
+
+  // `/config reload mcp`: full reassembly. Dispose the old session (closes the MCP
+  // clients), then assemble afresh so the new mcpServers config takes effect. The
+  // skills/agents/mcp notes reprint — acceptable for a manual reload.
+  async function reloadSession(): Promise<void> {
+    await startSession(); // ensure the initial assembly has settled first
+    const old = assembledRef.current;
+    const next = await assemble();
+    assembledRef.current = next;
+    await old?.dispose().catch(() => {});
   }
 
   async function handleConfig(
@@ -794,7 +779,7 @@ export function useAgentSession(deps: {
       }
       if (action.op === "reload") {
         await reloadConfig();
-        if (action.path === "mcp") await reloadMcp();
+        if (action.path === "mcp") await reloadSession();
         else note("config reloaded");
       }
     } catch (err) {
@@ -1138,6 +1123,6 @@ export function useAgentSession(deps: {
     editPlan,
     rejectPlan,
     handleCancel,
-    startMcp,
+    startSession,
   };
 }

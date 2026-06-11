@@ -8,6 +8,7 @@
 // runHeadless used to do by hand. Later tasks formalize them into src/extensions/
 // files; for now they live here so the wiring lives in exactly one place.
 
+import type { AgentMode } from "./agent.ts";
 import { systemForMode } from "./agent.ts";
 import {
   composeSystemPrompt,
@@ -21,14 +22,31 @@ import type {
 } from "./extension.ts";
 import { composeExtensions } from "./extension.ts";
 import { agentsExtension } from "./extensions/agents.ts";
-import { type AskUserFn, askUserExtension } from "./extensions/askuser.ts";
+import {
+  type AskAnswer,
+  type AskQuestion,
+  type AskUserFn,
+  askUserExtension,
+} from "./extensions/askuser.ts";
 import { hooksExtension } from "./extensions/hooks.ts";
 import { mcpExtension } from "./extensions/mcp.ts";
 import { buildPermissionGate, composeGates } from "./extensions/permission.ts";
 import { skillsExtension } from "./extensions/skills.ts";
-import { type TaskUpdateFn, tasksExtension } from "./extensions/tasks.ts";
+import {
+  type Task,
+  type TaskStatus,
+  type TaskUpdateFn,
+  tasksExtension,
+} from "./extensions/tasks.ts";
 import { webSearchExtension } from "./extensions/websearch.ts";
+import type { Tool } from "./tools.ts";
 import { tools as allTools } from "./tools.ts";
+
+// Frontend-facing feature types re-exported through the assembly boundary, so a
+// frontend (TUI component / headless formatter) never has to reach into a feature
+// module just to name a type. These are the only feature surfaces the frontends
+// touch; everything else flows through assembleSession's callbacks.
+export type { AskAnswer, AskQuestion, Task, TaskStatus };
 
 /**
  * The base system prompt, shared by both frontends. Each mode (plan/auto)
@@ -72,14 +90,19 @@ export interface AssembledSession extends ComposedExtensions {
 export async function assembleSession(
   opts: AssembleOptions,
 ): Promise<AssembledSession> {
-  const { mode } = opts;
-
+  // Assembly is mode-independent: the tool set, system prompt, and gate are
+  // built once and the per-turn mode (plan filtering, mode suffix, auto's gate
+  // skip) is derived later via `sessionForMode`. This lets a frontend (the TUI)
+  // switch modes between turns without reassembling — and reconnecting MCP. The
+  // AI permission gate is built whenever config asks for it, regardless of mode;
+  // `sessionForMode` drops it for an auto-mode turn.
+  //
   // Build the AI permission gate and compose it with the frontend's own gate
   // BEFORE composing extensions, so `ctx.gate` (which the agents extension hands
   // to its children) already includes the AI check. The AI gate runs first; a
   // deny short-circuits before the frontend gate (the TUI confirm box) is asked.
   const aiGate =
-    mode !== "auto" && opts.config.permission.mode === "ai"
+    opts.config.permission.mode === "ai"
       ? buildPermissionGate({
           config: opts.config,
           signal: opts.signal,
@@ -103,19 +126,36 @@ export async function assembleSession(
       ];
 
   const composed = await composeExtensions(extensions, { ...opts, gate });
-  let tools = composed.tools;
-  if (mode === "plan") tools = tools.filter((t) => t.readOnly);
 
   // Project memory (CC.md > AGENTS.md > CLAUDE.md, nearest dir first) is prepended
-  // to the base prompt; the feature sections and per-mode rules fold in after.
+  // to the base prompt; the feature sections fold in after. The per-mode rules are
+  // appended per turn by `sessionForMode`, NOT here — `system` is the base prompt.
   const projectContext = await loadProjectContext();
   const contextNote = describeContext(projectContext);
   if (contextNote) opts.note(contextNote);
   const base = composeSystemPrompt(SYSTEM_PROMPT, projectContext);
-  const system = systemForMode(
-    [base, ...composed.promptSections].join("\n\n"),
-    mode,
-  );
+  const system = [base, ...composed.promptSections].join("\n\n");
 
-  return { ...composed, tools, system, gate };
+  return { ...composed, system, gate };
+}
+
+/**
+ * Derive the per-turn tool set, system prompt, and gate for a mode from an
+ * assembled session. Assembly is mode-independent; plan filtering, the mode
+ * suffix, and auto's gate skip are cheap per-turn derivations:
+ *   • plan  — only read-only tools survive; the AI/human gate still applies.
+ *   • auto  — full tool set, no gate (autonomous runs never pause to confirm).
+ *   • normal — full tool set, the composed gate.
+ */
+export function sessionForMode(
+  session: AssembledSession,
+  mode: AgentMode,
+): { tools: Tool[]; system: string; gate?: ExtensionHost["gate"] } {
+  const tools =
+    mode === "plan" ? session.tools.filter((t) => t.readOnly) : session.tools;
+  return {
+    tools,
+    system: systemForMode(session.system, mode),
+    gate: mode === "auto" ? undefined : session.gate,
+  };
 }

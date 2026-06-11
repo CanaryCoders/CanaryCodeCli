@@ -8,21 +8,17 @@
 //   • plan       — a finished plan awaiting accept/edit/reject
 // Each is a {state, ref, resolver-ref} triple: the state drives the overlay, the
 // ref mirrors it for the once-captured `useInput` closure, and the resolver-ref
-// holds the promise's resolve fn. `requestGate` composes the confirm box with the
-// optional AI permission checker. Pulled out of App so the component body stays
-// small; this is the project's approved encapsulation boundary (a custom hook).
+// holds the promise's resolve fn. `requestGate` is the HUMAN confirm gate only —
+// the AI permission check is now composed in front of it by `assembleSession`
+// (`buildPermissionGate` + `composeGates`), so a deny from the AI check
+// short-circuits before this gate is consulted. Pulled out of App so the
+// component body stays small; this is the project's approved encapsulation
+// boundary (a custom hook).
 
 import { useRef, useState } from "react";
 import type { AgentMode } from "../agent.ts";
+import type { AskAnswer, AskQuestion } from "../assemble.ts";
 import type { Config } from "../config.ts";
-import { modelForRole, resolveModel } from "../config.ts";
-import type { AskAnswer, AskQuestion } from "../extensions/askuser.ts";
-import {
-  checkCommandSafety,
-  inPermissionScope,
-} from "../extensions/permission.ts";
-import type { Provider } from "../provider.ts";
-import { createProvider } from "../provider.ts";
 import { buildConfirmPreview, type ConfirmPreview } from "./confirm-helpers.ts";
 
 export interface Approvals {
@@ -56,13 +52,8 @@ export interface Approvals {
   declineAllPending: () => void;
 }
 
-export function useApprovals(opts: {
-  config: Config;
-  note: (text: string, tone?: "info" | "error") => void;
-  /** The in-flight run's abort signal, so the AI safety check can be canceled. */
-  getSignal: () => AbortSignal | undefined;
-}): Approvals {
-  const { config, note, getSignal } = opts;
+export function useApprovals(opts: { config: Config }): Approvals {
+  const { config } = opts;
 
   // ── confirm ──
   const [pendingConfirm, setPendingConfirm] = useState<ConfirmPreview | null>(
@@ -98,46 +89,6 @@ export function useApprovals(opts: {
     setPendingPlan(text);
   };
 
-  // The AI permission checker (provider + model), resolved lazily on first gated
-  // call and cached. `undefined` = not yet resolved; `null` = disabled/unavailable.
-  const checkerRef = useRef<{ provider: Provider; model: string } | null>();
-
-  // Resolve (and cache) the AI permission checker. Returns null when permission
-  // isn't in "ai" mode or the configured model can't be resolved.
-  function getChecker(): { provider: Provider; model: string } | null {
-    if (checkerRef.current !== undefined) return checkerRef.current;
-    if (config.permission.mode !== "ai") {
-      checkerRef.current = null;
-      return null;
-    }
-    // With failClosed the consequence of a missing checker is stricter, so say so.
-    const disabledSuffix = config.permission.failClosed
-      ? " — all gated calls will require confirmation (permission.failClosed)"
-      : "";
-    const resolved = resolveModel(config, modelForRole(config, "permission"));
-    if (!resolved) {
-      note(
-        `permission model "${modelForRole(config, "permission")}" not found; AI safety check disabled${disabledSuffix}`,
-        "error",
-      );
-      checkerRef.current = null;
-      return null;
-    }
-    try {
-      checkerRef.current = {
-        provider: createProvider(resolved.providerConfig),
-        model: resolved.model.name ?? resolved.model.id,
-      };
-    } catch (err) {
-      note(
-        `AI safety check disabled: ${(err as Error).message}${disabledSuffix}`,
-        "error",
-      );
-      checkerRef.current = null;
-    }
-    return checkerRef.current;
-  }
-
   /** Render the y/n/a box (optionally with an AI reason) and await the choice. */
   function humanConfirm(
     call: { name: string; input: unknown },
@@ -166,46 +117,22 @@ export function useApprovals(opts: {
     resolve(ok);
   }
 
-  // ── the approval gate the agent loop calls before a mutating tool runs ──
-  // Auto mode and the session "always" override run everything silently. With
-  // permission "ai", the checker model classifies the call: safe runs silently,
-  // unsafe escalates to the human y/n/a box (with the reason). With permission
-  // "off", the deterministic `confirm` config decides which tools prompt. A
-  // declined call comes back as a model-readable reason.
+  // ── the HUMAN approval gate the agent loop calls before a mutating tool runs ──
+  // The AI permission check (permission.mode === "ai") is composed IN FRONT of
+  // this gate by assembleSession (buildPermissionGate + composeGates): an unsafe
+  // verdict denies and short-circuits, so this gate only ever sees AI-allowed
+  // calls. In "ai" mode there is no further human confirmation, so this gate
+  // simply allows. Auto mode and the session "always" override run everything
+  // silently. With permission "off", the deterministic `confirm` config decides
+  // which tools prompt. A declined call comes back as a model-readable reason.
   async function requestGate(
     runMode: AgentMode,
     call: { id: string; name: string; input: unknown },
   ): Promise<{ allow: boolean; reason?: string }> {
     if (runMode === "auto" || confirmAlwaysRef.current) return { allow: true };
 
-    if (config.permission.mode === "ai") {
-      if (!inPermissionScope(config.permission.scope, call.name)) {
-        return { allow: true };
-      }
-      const checker = getChecker();
-      // Misconfigured checker: fail open by default; with permission.failClosed,
-      // escalate every in-scope call to the human box instead (same path an
-      // "unsafe" verdict takes — a present human means "ask", not hard-block).
-      const verdict = checker
-        ? await checkCommandSafety(
-            checker.provider,
-            checker.model,
-            call,
-            getSignal(),
-            {
-              failClosed: config.permission.failClosed,
-            },
-          )
-        : config.permission.failClosed
-          ? {
-              safe: false,
-              reason: "AI safety check unavailable (permission.failClosed)",
-            }
-          : { safe: true, reason: "" };
-      if (verdict.safe) return { allow: true };
-      const ok = await humanConfirm(call, verdict.reason);
-      return { allow: ok, reason: ok ? undefined : "user declined the call" };
-    }
+    // In AI mode the composed AI gate already decided; nothing left for the human.
+    if (config.permission.mode === "ai") return { allow: true };
 
     // Deterministic confirm gate.
     const setting = config.confirm;

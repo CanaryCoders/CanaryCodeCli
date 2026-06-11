@@ -111,8 +111,6 @@ function App(props: AppProps): React.ReactElement {
   // the user answers.
   const approvals = useApprovals({
     config: props.config,
-    note: transcript.note,
-    getSignal: () => controllerRef.current?.signal,
   });
 
   // Shell-style prompt history (Up/Down at the input boundary).
@@ -144,19 +142,23 @@ function App(props: AppProps): React.ReactElement {
     controllerRef,
   });
 
-  // Connect MCP servers once the UI has painted — runTui defers them here (rather
-  // than awaiting before launch) so a slow server never delays first paint. The
-  // call is idempotent; the ref keeps the mount-once effect off the session's
-  // per-render identity without a stale closure.
-  const startMcpRef = useRef(session.startMcp);
-  startMcpRef.current = session.startMcp;
+  // Assemble the session once the UI has painted — runTui defers it here (rather
+  // than awaiting before launch) so a slow MCP server (assembly connects them)
+  // never delays first paint. The call is idempotent; the ref keeps the mount-once
+  // effect off the session's per-render identity without a stale closure.
+  const startSessionRef = useRef(session.startSession);
+  startSessionRef.current = session.startSession;
   const noteRef = useRef(transcript.note);
   noteRef.current = transcript.note;
   useEffect(() => {
-    // Connection errors are reported per-server inside startMcp; this catch guards
-    // the unexpected throw so it cannot become an invisible unhandled rejection.
-    startMcpRef.current().catch((err: unknown) => {
-      noteRef.current(`mcp startup failed: ${(err as Error).message}`, "error");
+    // Per-feature errors (per-server MCP failures, etc.) are reported inside
+    // assembly via the note callback; this catch guards an unexpected throw so it
+    // cannot become an invisible unhandled rejection.
+    startSessionRef.current().catch((err: unknown) => {
+      noteRef.current(
+        `session startup failed: ${(err as Error).message}`,
+        "error",
+      );
     });
   }, []);
 

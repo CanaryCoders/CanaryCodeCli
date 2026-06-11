@@ -9,7 +9,7 @@
 // interactive TUI lands in Phase 4.
 
 import { type AgentMode, roleForMode, runAgent } from "./agent.ts";
-import { assembleSession, SYSTEM_PROMPT } from "./assemble.ts";
+import { assembleSession, sessionForMode } from "./assemble.ts";
 import {
   clearCredentials,
   hasCredentials,
@@ -25,17 +25,7 @@ import {
   modelSupportsVision,
   resolveModel,
 } from "./config.ts";
-import {
-  composeSystemPrompt,
-  describeContext,
-  loadProjectContext,
-} from "./context.ts";
 import { diffStat, renderDiff } from "./diff.ts";
-import {
-  composeAgentsPrompt,
-  describeAgents,
-  discoverAgents,
-} from "./extensions/agents.ts";
 import { autoAnswer } from "./extensions/askuser.ts";
 import {
   describeHooks,
@@ -44,12 +34,6 @@ import {
   runStopHooks,
   runUserPromptSubmitHooks,
 } from "./extensions/hooks.ts";
-import type { McpConnection } from "./extensions/mcp.ts";
-import {
-  composeSkillsPrompt,
-  describeSkills,
-  discoverSkills,
-} from "./extensions/skills.ts";
 import { statusMark } from "./extensions/tasks.ts";
 import { extractImagePaths, readImageFile } from "./image.ts";
 import { renderAnsi } from "./markdown.ts";
@@ -422,9 +406,13 @@ async function runHeadless(args: Args): Promise<number> {
   // to stderr (clean stdout for scripting); headless answers ask_user by
   // auto-picking each question's recommended option and renders the task list as a
   // compact stderr checklist.
+  // Assemble mode-independently (mode: "normal"); the per-turn view for this
+  // run's actual `mode` is derived below via sessionForMode. Headless runs a
+  // single fixed mode, but routing both frontends through the same path keeps
+  // plan filtering / the mode suffix / auto's gate skip in exactly one place.
   const session = await assembleSession({
     config,
-    mode,
+    mode: "normal",
     provider,
     model: modelName,
     sessionId,
@@ -441,7 +429,7 @@ async function runHeadless(args: Args): Promise<number> {
       process.stderr.write(`\n≡ tasks:\n${lines}\n`);
     },
   });
-  const { tools, system } = session;
+  const { tools, system, gate } = sessionForMode(session, mode);
   if (mode === "plan") process.stderr.write("≡ plan mode (read-only)\n");
   if (mode === "auto")
     process.stderr.write(`◉ auto mode (autonomous · max ${turnCap} turns)\n`);
@@ -550,7 +538,7 @@ async function runHeadless(args: Args): Promise<number> {
       thinkingBudget,
       compactAtTokens: config.compactAtTokens,
       signal: controller.signal,
-      gate: session.gate,
+      gate,
       preToolUse: session.preToolUse,
       postToolUse: session.postToolUse,
     })) {
@@ -794,43 +782,24 @@ async function runTui(args: Args): Promise<number> {
   if (canaryNote) startupNotes.push(canaryNote);
   if (codexNote) startupNotes.push(codexNote);
 
-  // Project memory (CC.md > AGENTS.md > CLAUDE.md) + skills fold into the base
-  // system prompt; App re-appends the per-mode rules at send time.
-  const projectContext = await loadProjectContext();
-  const ctxNote = describeContext(projectContext);
-  if (ctxNote) startupNotes.push(ctxNote);
-
-  const skills = await discoverSkills();
-  const skillsNote = describeSkills(skills);
-  if (skillsNote) startupNotes.push(skillsNote);
-
-  const agents = await discoverAgents();
-  const agentsNote = describeAgents(agents);
-  if (agentsNote) startupNotes.push(agentsNote);
-
+  // Tools, system prompt (project memory + skills/agents/feature sections), the
+  // approval gate, lifecycle hooks, and the MCP lifecycle are all assembled
+  // through the shared extension kernel — but INSIDE the TUI session machine,
+  // AFTER first paint (see App → session.startSession), so a slow MCP server
+  // never blocks the launch. The context/skills/agents/mcp notes those extensions
+  // emit therefore arrive in the scrollback once assembly runs, not here.
   const hooksNote = describeHooks(config.hooks);
   if (hooksNote) startupNotes.push(hooksNote);
 
-  // MCP servers connect AFTER the UI mounts (see App → session.startMcp) so a slow
-  // server — a browser-automation MCP can take several seconds to spawn — never
-  // blocks first paint. Start with an empty tool set; the tools and the real `⌁ mcp`
-  // note fold in once connected. Show a "connecting…" line meanwhile so the gap is
-  // explained (and a prompt sent in those first seconds simply has no MCP tools yet).
-  const mcp: McpConnection = { tools: [], clients: [], notes: [] };
+  // Assembly (and its MCP connect) is deferred; show a "connecting…" line up front
+  // so the gap is explained — a prompt sent in those first seconds queues behind
+  // assembly readiness rather than running with an incomplete tool set.
   const mcpServerCount = Object.keys(config.mcpServers).length;
   if (!args.noTools && mcpServerCount > 0) {
     startupNotes.push(
       `⌁ mcp: connecting to ${mcpServerCount} server${mcpServerCount === 1 ? "" : "s"}…`,
     );
   }
-
-  const baseSystem = composeAgentsPrompt(
-    composeSkillsPrompt(
-      composeSystemPrompt(SYSTEM_PROMPT, projectContext),
-      skills,
-    ),
-    agents,
-  );
 
   // Thinking level persists in config (the user's default); an explicit `--think`
   // flag overrides it for this launch without changing the saved default.
@@ -860,10 +829,6 @@ async function runTui(args: Args): Promise<number> {
     modelName,
     modelLabel,
     version: VERSION,
-    baseSystem,
-    skills,
-    agents,
-    mcp,
     store,
     sessionId,
     noTools: args.noTools,

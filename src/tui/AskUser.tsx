@@ -16,7 +16,10 @@
 
 import { Box, Text, useInput } from "ink";
 import { useReducer, useRef } from "react";
-import type { AskAnswer, AskQuestion } from "../extensions/askuser.ts";
+import type { AskAnswer, AskQuestion } from "../assemble.ts";
+// recommendedIndex is a pure presentation helper (which option to pre-select);
+// the ask_user UI is the one place a frontend renders this feature's data, so it
+// imports the helper directly. The runtime answer flow goes through assembly.
 import { recommendedIndex } from "../extensions/askuser.ts";
 import { useIcon } from "./Icon.tsx";
 import { MultilineInput } from "./Input.tsx";

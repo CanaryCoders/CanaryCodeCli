@@ -6,9 +6,6 @@
 
 import type { AgentMode } from "../agent.ts";
 import type { Config } from "../config.ts";
-import type { AgentDef } from "../extensions/agents.ts";
-import type { McpConnection } from "../extensions/mcp.ts";
-import type { Skill } from "../extensions/skills.ts";
 import type { Message, Provider } from "../provider.ts";
 import type { SessionStore } from "../session.ts";
 import type { ThinkingLevel } from "../thinking.ts";
@@ -21,12 +18,6 @@ export interface AppProps {
   modelLabel: string;
   /** App version, shown in the launch banner. */
   version: string;
-  /** Base system prompt (project context + skills already folded in). */
-  baseSystem: string;
-  skills: Skill[];
-  /** Custom agent definitions spawn_agent can dispatch to by name. */
-  agents: AgentDef[];
-  mcp: McpConnection;
   store: SessionStore;
   sessionId: string;
   /** Whether tools are disabled entirely (--no-tools). */
