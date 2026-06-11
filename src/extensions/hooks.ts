@@ -7,6 +7,7 @@
 // (`event`, `tool`, `input`) so existing scripts keep working.
 
 import type { HookConfig, HooksConfig } from "../config.ts";
+import type { Extension } from "../extension.ts";
 
 export type HookEventName = keyof HooksConfig;
 
@@ -384,8 +385,6 @@ export function describeHooks(hooks: HooksConfig): string | undefined {
   }
   return labels.length ? `⎇ hooks: ${labels.join(", ")}` : undefined;
 }
-
-import type { Extension } from "../extension.ts";
 
 export function hooksExtension(): Extension {
   return {

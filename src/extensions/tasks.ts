@@ -16,6 +16,7 @@
 // dispatching one sub-agent per task via spawn_agent.
 
 import type { Config } from "../config.ts";
+import type { Extension } from "../extension.ts";
 import { iconFor } from "../icons.ts";
 import type { Tool } from "../tools.ts";
 
@@ -172,8 +173,6 @@ export function updateTasksTool(onUpdate: TaskUpdateFn, config?: Config): Tool {
     },
   };
 }
-
-import type { Extension } from "../extension.ts";
 
 const TASKS_PROMPT_SECTION = [
   "## Tasks",
