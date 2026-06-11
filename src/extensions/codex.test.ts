@@ -5,7 +5,6 @@ import type { Config } from "../config.ts";
 import { parseCodexModel } from "../provider.ts";
 import {
   type CodexPopulateResult,
-  codexExtension,
   OPENAI_PROVIDER,
   openaiCodexProviderConfig,
   populateCodexModels,
@@ -100,13 +99,4 @@ describe("populateCodexModels", () => {
     expect(ids.some((id) => id.startsWith("gpt-5.5"))).toBe(true);
     expect(ids).not.toContain("gpt-5.2-codex");
   });
-});
-
-test("login-codex refuses while the extension is disabled", async () => {
-  const config = configWithCodex();
-  config.extensions = { codex: false };
-  const notes: string[] = [];
-  const login = codexExtension.commands!.find((c) => c.name === "login-codex")!;
-  await login.run({ config, note: (t) => notes.push(t) }, []);
-  expect(notes.join("\n")).toContain("disabled");
 });

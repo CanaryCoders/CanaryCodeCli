@@ -32,7 +32,6 @@ import {
 } from "../auth.ts";
 import type { Config, ModelConfig, ProviderConfig } from "../config.ts";
 import type { Extension, ExtensionCommandContext } from "../extension.ts";
-import { extensionEnabled } from "../extension.ts";
 
 /** The provider key used for the baked-in Codex preset. */
 export const OPENAI_PROVIDER = "openai";
@@ -281,13 +280,6 @@ async function runLoginCodex(
   ctx: ExtensionCommandContext,
   args: string[],
 ): Promise<void> {
-  // A disabled extension stays disabled — login must not resurrect it.
-  if (!extensionEnabled(ctx.config, "codex")) {
-    ctx.note(
-      "the codex extension is disabled — enable it first with /extensions enable codex",
-    );
-    return;
-  }
   const manual = args.includes("--manual");
   if (manual && !ctx.readLine) {
     throw new Error("--manual sign-in needs a terminal (use `cc login-codex`)");
@@ -324,7 +316,7 @@ export const codexExtension: Extension = {
   description: "OpenAI Codex models via your ChatGPT subscription",
   providerPresets: () => ({ [OPENAI_PROVIDER]: openaiCodexProviderConfig() }),
   async startup(config, mode) {
-    if (!extensionEnabled(config, "codex") || !(await hasCredentials())) {
+    if (!(await hasCredentials())) {
       gateCodexModels(config, false);
       return undefined;
     }

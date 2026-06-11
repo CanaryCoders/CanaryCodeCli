@@ -9,7 +9,6 @@ import {
   discoverZenKey,
   gateZenModels,
   OPENCODE_PROVIDER,
-  opencodeExtension,
   populateZenModels,
   zenModels,
 } from "./opencode.ts";
@@ -125,33 +124,6 @@ describe("populateZenModels", () => {
     expect(config.providers[OPENCODE_PROVIDER]!.models).toEqual([]);
     expect(config.providers[OPENCODE_PROVIDER]!.apiKey).toBeUndefined();
   });
-});
-
-test("login-opencode refuses while the extension is disabled", async () => {
-  const config = defaultConfig();
-  foldPresets(config);
-  config.extensions = { opencode: false };
-  config.providers[OPENCODE_PROVIDER]!.models = [{ id: "stale" }];
-  const notes: string[] = [];
-  const login = opencodeExtension.commands!.find(
-    (c) => c.name === "login-opencode",
-  )!;
-  await login.run({ config, note: (t) => notes.push(t) }, []);
-  expect(notes.join("\n")).toContain("disabled");
-  // It must not have re-activated the preset either.
-  expect(config.providers[OPENCODE_PROVIDER]!.models).toEqual([
-    { id: "stale" },
-  ]);
-});
-
-test("startup gates the preset while the extension is disabled", async () => {
-  const config = defaultConfig();
-  foldPresets(config);
-  config.extensions = { opencode: false };
-  config.providers[OPENCODE_PROVIDER]!.apiKey = "k";
-  config.providers[OPENCODE_PROVIDER]!.models = [{ id: "x" }];
-  expect(await opencodeExtension.startup!(config, "fast")).toBeUndefined();
-  expect(config.providers[OPENCODE_PROVIDER]!.models).toEqual([]);
 });
 
 test("gateZenModels empties the preset", () => {

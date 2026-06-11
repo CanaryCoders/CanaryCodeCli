@@ -22,7 +22,6 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Config, ModelConfig, ProviderConfig } from "../config.ts";
 import type { Extension, ExtensionCommandContext } from "../extension.ts";
-import { extensionEnabled } from "../extension.ts";
 
 /** The provider key used for the baked-in OpenCode Zen preset. */
 export const OPENCODE_PROVIDER = "opencode";
@@ -180,13 +179,6 @@ export function describeZen(result: ZenPopulateResult): string | undefined {
  * how to sign in. The actual OAuth happens in opencode's own console flow —
  * we piggyback its credential store rather than reimplement it. */
 async function runLoginOpencode(ctx: ExtensionCommandContext): Promise<void> {
-  // A disabled extension stays disabled — login must not resurrect it.
-  if (!extensionEnabled(ctx.config, "opencode")) {
-    ctx.note(
-      "the opencode extension is disabled — enable it first with /extensions enable opencode",
-    );
-    return;
-  }
   const result = await populateZenModels(ctx.config);
   if (result) {
     const ids = (ctx.config.providers[OPENCODE_PROVIDER]?.models ?? []).map(
@@ -216,10 +208,6 @@ export const opencodeExtension: Extension = {
     [OPENCODE_PROVIDER]: opencodeZenProviderConfig(),
   }),
   async startup(config) {
-    if (!extensionEnabled(config, "opencode")) {
-      gateZenModels(config);
-      return undefined;
-    }
     // Both modes are "fast": discovery is two local file reads, no network.
     return describeZen(await populateZenModels(config));
   },
