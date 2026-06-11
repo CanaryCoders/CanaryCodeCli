@@ -15,7 +15,7 @@ import {
   type ExtensionCommand,
   findCommand,
   findCommandAnywhere,
-  foldPresets,
+  initExtensions,
   sessionForMode,
   startupExtensions,
 } from "./assemble.ts";
@@ -289,7 +289,9 @@ async function runHeadless(args: Args): Promise<number> {
     console.error((err as Error).message);
     return 1;
   }
-  foldPresets(config);
+  await initExtensions(config, {
+    note: (text) => process.stderr.write(`${text}\n`),
+  });
 
   // Warm the update cache in the background (no stdout notice — headless output
   // must stay clean for scripting / --json; the TUI surfaces the notice).
@@ -732,7 +734,20 @@ async function runTui(args: Args): Promise<number> {
     console.error((err as Error).message);
     return 1;
   }
-  foldPresets(config);
+  // User-extension loading runs BEFORE Ink mounts: Bun's global confirm() is a
+  // synchronous y/n on the launching terminal, which is exactly where a trust
+  // decision for project extensions belongs. Loader notes surface as startup
+  // scrollback items below.
+  const extensionNotes: string[] = [];
+  await initExtensions(config, {
+    note: (text) => extensionNotes.push(text),
+    confirm: async ({ name, path, changed }) =>
+      confirm(
+        changed
+          ? `cc: project extension "${name}" (${path}) CHANGED since you approved it — load the new version?`
+          : `cc: load project extension "${name}" from ${path}?`,
+      ),
+  });
 
   // Built-in extension startup (see runHeadless). "fast" favors cached catalogs
   // (a file read) so the TUI paints without waiting on network fetches; stale
@@ -762,7 +777,7 @@ async function runTui(args: Args): Promise<number> {
   const updateNotice = await cachedUpdateNotice(config);
   if (updateNotice) startupNotes.push(updateNotice);
   void refreshUpdateCache(config);
-  startupNotes.push(...builtinNotes);
+  startupNotes.push(...extensionNotes, ...builtinNotes);
 
   // Tools, system prompt (project memory + skills/agents/feature sections), the
   // approval gate, lifecycle hooks, and the MCP lifecycle are all assembled
@@ -849,7 +864,9 @@ async function usageCommands(): Promise<
   { name: string; usage?: string; description: string }[]
 > {
   try {
-    return availableCommands(await loadConfig());
+    const config = await loadConfig();
+    await initExtensions(config, { note: () => {} });
+    return availableCommands(config);
   } catch {
     return [];
   }
@@ -872,7 +889,9 @@ async function tryExtensionSubcommand(
     console.error((err as Error).message);
     return 1;
   }
-  foldPresets(config);
+  await initExtensions(config, {
+    note: (text) => process.stderr.write(`${text}\n`),
+  });
   const cmd = findCommand(config, word);
   if (cmd) return runExtensionCli(config, cmd, rest);
   const owner = findCommandAnywhere(word);

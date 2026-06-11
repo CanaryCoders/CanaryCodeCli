@@ -6,6 +6,7 @@
 
 import type { AgentMode } from "./agent.ts";
 import { systemForMode } from "./agent.ts";
+import type { Config } from "./config.ts";
 import {
   composeSystemPrompt,
   describeContext,
@@ -23,12 +24,17 @@ import {
   type AskUserFn,
   askUserExtension,
 } from "./extensions/askuser.ts";
+import { loadUserExtensions } from "./extensions/loader.ts";
 import {
   buildPermissionGate,
   composeGates,
   type FrontendGate,
 } from "./extensions/permission.ts";
-import { sessionExtensions } from "./extensions/registry.ts";
+import {
+  foldPresets,
+  sessionExtensions,
+  setUserExtensions,
+} from "./extensions/registry.ts";
 import {
   type Task,
   type TaskStatus,
@@ -43,6 +49,9 @@ export type {
   ExtensionCommandContext,
 } from "./extension.ts";
 export { extensionEnabled } from "./extension.ts";
+// The user-extension loader, re-exported for tests and extensibility; frontends
+// run it via initExtensions below.
+export { loadUserExtensions } from "./extensions/loader.ts";
 // The built-in extension registry, re-exported so frontends drive provider
 // startup discovery, login-style commands, and `/extensions` toggles through
 // the assembly boundary instead of importing feature modules directly.
@@ -61,6 +70,27 @@ export {
 // module just to name a type. These are the only feature surfaces the frontends
 // touch; everything else flows through assembleSession's callbacks.
 export type { AskAnswer, AskQuestion, FrontendGate, Task, TaskStatus };
+
+/**
+ * Load user extensions and fold enabled provider presets into config — the
+ * one startup step every frontend runs between loadConfig and
+ * startupExtensions. `confirm` approves untrusted project extensions
+ * (interactive launches only); without it they are skipped with a note.
+ */
+export async function initExtensions(
+  config: Config,
+  opts: {
+    note(text: string): void;
+    confirm?(info: {
+      name: string;
+      path: string;
+      changed: boolean;
+    }): Promise<boolean>;
+  },
+): Promise<void> {
+  setUserExtensions(await loadUserExtensions(config, opts));
+  foldPresets(config);
+}
 
 /**
  * The base system prompt, shared by both frontends. Each mode (plan/auto)

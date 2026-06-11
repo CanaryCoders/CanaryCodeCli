@@ -21,7 +21,7 @@ import {
   availableCommands,
   extensionEnabled,
   type FrontendGate,
-  foldPresets,
+  initExtensions,
   listExtensions,
   runCommand,
   sessionForMode,
@@ -676,10 +676,14 @@ export function useAgentSession(deps: {
 
   async function reloadConfig(): Promise<void> {
     const next = await loadConfig();
-    foldPresets(next);
-    // Re-run built-in startup discovery/gating against the fresh config (live —
-    // a reload should reflect current credentials). Notes are dropped: a reload
-    // is not a launch.
+    // Re-run the loader so a just-enabled user extension imports now (Bun's
+    // module cache makes re-imports of already-loaded files free). No confirm
+    // mid-session: an unapproved project extension skips with a note telling
+    // the user to relaunch.
+    await initExtensions(next, { note: (text) => note(text) });
+    // Re-run extension startup against the fresh config (live — a reload
+    // should reflect current credentials). Startup notes are dropped: a
+    // reload is not a launch.
     await startupExtensions(next, "live");
     replaceConfigInPlace(props.config, next);
   }

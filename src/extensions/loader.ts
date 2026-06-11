@@ -19,6 +19,7 @@ import { basename, extname, join } from "node:path";
 import { RESERVED_COMMAND_NAMES } from "../commands.ts";
 import type { Config } from "../config.ts";
 import type { Extension } from "../extension.ts";
+import { errorMessage } from "../extension.ts";
 import { BUILTIN_EXTENSIONS } from "./registry.ts";
 
 export interface LoadUserExtensionsOpts {
@@ -78,11 +79,6 @@ async function listExtensionFiles(dir: string): Promise<string[]> {
 
 function sha256(text: string): string {
   return createHash("sha256").update(text).digest("hex");
-}
-
-/** Human-readable message for any thrown value (`throw "oops"` included). */
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 /** Shape-check a dynamically imported module's default export. */

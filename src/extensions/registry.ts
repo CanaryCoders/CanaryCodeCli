@@ -20,7 +20,7 @@ import type {
   ExtensionCommandContext,
   SessionExtension,
 } from "../extension.ts";
-import { extensionEnabled } from "../extension.ts";
+import { errorMessage, extensionEnabled } from "../extension.ts";
 import { agentsExtension } from "./agents.ts";
 import { codexExtension } from "./codex.ts";
 import { hooksExtension } from "./hooks.ts";
@@ -184,9 +184,7 @@ export async function startupExtensions(
       const note = await ext.startup(config, mode);
       if (note) notes.push(note);
     } catch (err) {
-      notes.push(
-        `note: ${ext.name} startup failed — ${(err as Error).message}`,
-      );
+      notes.push(`note: ${ext.name} startup failed — ${errorMessage(err)}`);
     }
   }
   // Surface toggled-off extensions so a launch makes the state visible

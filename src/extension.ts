@@ -82,6 +82,12 @@ export function extensionEnabled(
   return config.extensions[name] ?? defaultEnabled;
 }
 
+/** Human-readable message for any thrown value (`throw "oops"` included) —
+ * extension code (user-written startup/commands) can throw anything. */
+export function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 export interface ToolCall {
   id: string;
   name: string;
