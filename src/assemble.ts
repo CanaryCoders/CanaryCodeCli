@@ -50,7 +50,7 @@ import { tools as allTools } from "./tools.ts";
 // frontend (TUI component / headless formatter) never has to reach into a feature
 // module just to name a type. These are the only feature surfaces the frontends
 // touch; everything else flows through assembleSession's callbacks.
-export type { AskAnswer, AskQuestion, Task, TaskStatus };
+export type { AskAnswer, AskQuestion, FrontendGate, Task, TaskStatus };
 
 /**
  * The base system prompt, shared by both frontends. Each mode (plan/auto)

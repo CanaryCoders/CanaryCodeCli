@@ -15,11 +15,12 @@ import { join } from "node:path";
 import { useApp } from "ink";
 import { useRef, useState } from "react";
 import { type AgentMode, roleForMode, runAgent } from "../agent.ts";
-import type { Task } from "../assemble.ts";
 import {
   type AssembledSession,
   assembleSession,
+  type FrontendGate,
   sessionForMode,
+  type Task,
 } from "../assemble.ts";
 import {
   clearCredentials,
@@ -49,7 +50,6 @@ import {
   runStopHooks,
   runUserPromptSubmitHooks,
 } from "../extensions/hooks.ts";
-import type { FrontendGate } from "../extensions/permission.ts";
 import { iconFor } from "../icons.ts";
 import { extractImagePaths, type ImageData, readImageFile } from "../image.ts";
 import {
@@ -693,7 +693,7 @@ export function useAgentSession(deps: {
       signal: sessionAbortRef.current.signal,
       noTools: props.noTools,
       gate: frontendGate,
-      note: (text) => note(text),
+      note: (text) => note(text), // drops the local note()'s tone arg
       askUser: approvals.requestAsk,
       onTasks: setTasks,
     });
