@@ -39,6 +39,26 @@ describe("registry gating", () => {
     expect(findCommandAnywhere("probe-cmd")?.extension.name).toBe("probe");
   });
 
+  test("duplicate command names dedupe; the earlier extension wins", () => {
+    setUserExtensions([
+      stub("first", {
+        commands: [
+          { name: "dup-cmd", description: "first owner", run: async () => {} },
+        ],
+      }),
+      stub("second", {
+        commands: [
+          { name: "dup-cmd", description: "second owner", run: async () => {} },
+        ],
+      }),
+    ]);
+    const dups = availableCommands(defaultConfig()).filter(
+      (c) => c.name === "dup-cmd",
+    );
+    expect(dups).toHaveLength(1);
+    expect(dups[0].description).toBe("first owner");
+  });
+
   test("a disabled extension's startup never runs and is listed as off", async () => {
     let ran = 0;
     setUserExtensions([

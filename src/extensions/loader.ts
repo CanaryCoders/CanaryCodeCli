@@ -24,8 +24,14 @@ import { BUILTIN_EXTENSIONS } from "./registry.ts";
 export interface LoadUserExtensionsOpts {
   /** Status note for skips/errors (stderr in headless, scrollback in TUI). */
   note(text: string): void;
-  /** Approve an untrusted project extension. Absent (headless) → skipped. */
-  confirm?(info: { name: string; path: string }): Promise<boolean>;
+  /** Approve an untrusted project extension. Absent (headless) → skipped.
+   * `changed` is true when a previous approval exists for this path (the
+   * content changed since), false for a first-ever approval. */
+  confirm?(info: {
+    name: string;
+    path: string;
+    changed: boolean;
+  }): Promise<boolean>;
   /** Overrides for tests. */
   userDir?: string;
   projectDir?: string;
@@ -43,14 +49,17 @@ async function readTrust(path: string): Promise<Record<string, string>> {
   return {};
 }
 
+/** Persist the trust store. Returns false on failure so the caller can warn
+ * (a silently unwritable ~/.cc means eternal unexplained re-prompting). */
 async function writeTrust(
   path: string,
   store: Record<string, string>,
-): Promise<void> {
+): Promise<boolean> {
   try {
     await Bun.write(path, `${JSON.stringify(store, null, 2)}\n`);
+    return true;
   } catch {
-    // Best-effort; worst case the user is re-prompted next launch.
+    return false;
   }
 }
 
@@ -71,6 +80,11 @@ function sha256(text: string): string {
   return createHash("sha256").update(text).digest("hex");
 }
 
+/** Human-readable message for any thrown value (`throw "oops"` included). */
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 /** Shape-check a dynamically imported module's default export. */
 function validate(
   mod: unknown,
@@ -78,9 +92,34 @@ function validate(
   const ext = (mod as { default?: unknown })?.default;
   if (ext === null || typeof ext !== "object")
     return { ok: false, reason: "default export is not an object" };
-  const e = ext as Partial<Extension>;
+  const e = ext as Record<string, unknown>;
   if (typeof e.description !== "string")
     return { ok: false, reason: "missing string `description`" };
+  // Wrong-typed capabilities would crash LATER (assembly/dispatch), outside
+  // the loader's try/catch — reject them here with a precise reason.
+  for (const key of ["startup", "session", "providerPresets"] as const) {
+    if (e[key] !== undefined && typeof e[key] !== "function")
+      return { ok: false, reason: `\`${key}\` is not a function` };
+  }
+  if (e.commands !== undefined) {
+    if (!Array.isArray(e.commands))
+      return { ok: false, reason: "`commands` is not an array" };
+    for (const [i, c] of (e.commands as unknown[]).entries()) {
+      const cmd = c as Record<string, unknown> | null;
+      if (cmd === null || typeof cmd !== "object")
+        return { ok: false, reason: `\`commands[${i}]\` is not an object` };
+      if (typeof cmd.name !== "string")
+        return {
+          ok: false,
+          reason: `\`commands[${i}]\` is missing a string name`,
+        };
+      if (typeof cmd.run !== "function")
+        return {
+          ok: false,
+          reason: `\`commands[${i}]\` is missing a run() function`,
+        };
+    }
+  }
   if (!e.startup && !e.commands && !e.session && !e.providerPresets) {
     return {
       ok: false,
@@ -137,26 +176,40 @@ export async function loadUserExtensions(
         });
         continue;
       }
-      if (!trusted) {
-        trust ??= await readTrust(trustFile);
-        const hash = sha256(await Bun.file(path).text());
-        if (trust[path] !== hash) {
-          const approved = opts.confirm
-            ? await opts.confirm({ name, path })
-            : false;
-          if (!approved) {
-            opts.note(
-              opts.confirm
-                ? `note: project extension "${name}" not approved — skipped`
-                : `note: project extension "${name}" (${path}) is not approved — launch cc interactively once to approve it`,
-            );
-            continue;
-          }
-          trust[path] = hash;
-          await writeTrust(trustFile, trust);
-        }
-      }
+      // Everything that touches the disk or runs extension code lives in ONE
+      // try/catch: a directory named `foo.ts`, an unreadable file, or a module
+      // that throws can each skip only its own file, never crash the loader.
       try {
+        if (!trusted) {
+          trust ??= await readTrust(trustFile);
+          const hash = sha256(await Bun.file(path).text());
+          if (trust[path] !== hash) {
+            const changed = trust[path] !== undefined;
+            const approved = opts.confirm
+              ? await opts.confirm({ name, path, changed })
+              : false;
+            if (!approved) {
+              opts.note(
+                opts.confirm
+                  ? `note: project extension "${name}" not approved — skipped`
+                  : `note: project extension "${name}" (${path}) is not approved — launch cc interactively once to approve it`,
+              );
+              continue;
+            }
+            // The confirm prompt blocks unbounded — re-read and re-hash so we
+            // persist (and import) what's on disk NOW, not what was shown
+            // before the wait. The remaining gap between this hash and
+            // import()'s own disk read is irreducible without import-from-
+            // string (which would break the extension's relative imports);
+            // accepted for the local-attacker model.
+            trust[path] = sha256(await Bun.file(path).text());
+            if (!(await writeTrust(trustFile, trust))) {
+              opts.note(
+                "note: could not persist extension approval — you may be re-prompted next launch",
+              );
+            }
+          }
+        }
         const checked = validate((await import(path)) as unknown);
         if (!checked.ok) {
           opts.note(
@@ -179,8 +232,10 @@ export async function loadUserExtensions(
         // the config toggle, the file, and the registry can never disagree.
         out.push({ ...checked.ext, name, commands });
       } catch (err) {
+        // Backstop for unexpected I/O and import errors (the specific
+        // untrusted/denied/invalid-shape cases note-and-continue above).
         opts.note(
-          `note: extension "${name}" (${path}) failed to load — ${(err as Error).message}`,
+          `note: extension "${name}" (${path}) failed to load — ${errorMessage(err)}`,
         );
       }
     }

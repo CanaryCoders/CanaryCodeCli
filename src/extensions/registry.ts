@@ -103,9 +103,19 @@ export function listExtensions(
 }
 
 /** Commands from ENABLED extensions only — a disabled extension's command is
- * an unknown command everywhere (help, autocomplete, dispatch, CLI). */
+ * an unknown command everywhere (help, autocomplete, dispatch, CLI).
+ * Deduped by name, first occurrence wins (registry order = built-ins first),
+ * so a user extension duplicating a built-in's command name can't list the
+ * same command twice in help/autocomplete. */
 export function availableCommands(config: Config): ExtensionCommand[] {
-  return enabledExtensions(config).flatMap((e) => e.commands ?? []);
+  const seen = new Set<string>();
+  return enabledExtensions(config)
+    .flatMap((e) => e.commands ?? [])
+    .filter((c) => {
+      if (seen.has(c.name)) return false;
+      seen.add(c.name);
+      return true;
+    });
 }
 
 export function findCommand(

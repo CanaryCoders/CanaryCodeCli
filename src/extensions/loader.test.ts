@@ -58,9 +58,13 @@ export default { description: "spy", commands: [] };`,
   test("project extensions need approval; approval persists by content hash", async () => {
     const dirs = await setup();
     await writeFile(join(dirs.projectDir, "proj.ts"), EXT_SOURCE);
-    const asked: string[] = [];
-    const confirm = async (info: { name: string; path: string }) => {
-      asked.push(info.name);
+    const asked: { name: string; path: string; changed: boolean }[] = [];
+    const confirm = async (info: {
+      name: string;
+      path: string;
+      changed: boolean;
+    }) => {
+      asked.push(info);
       return true;
     };
     const first = await loadUserExtensions(defaultConfig(), {
@@ -69,14 +73,15 @@ export default { description: "spy", commands: [] };`,
       confirm,
     });
     expect(first.map((e) => e.name)).toEqual(["proj"]);
-    expect(asked).toEqual(["proj"]);
+    expect(asked.map((i) => i.name)).toEqual(["proj"]);
+    expect(asked[0].changed).toBe(false); // first-ever approval
     // Second load: hash unchanged → trusted, no re-prompt.
     await loadUserExtensions(defaultConfig(), {
       ...dirs,
       note: () => {},
       confirm,
     });
-    expect(asked).toEqual(["proj"]);
+    expect(asked.map((i) => i.name)).toEqual(["proj"]);
     // Content change → re-prompt. (Module cache means the OLD module is
     // returned in-process; only the prompt behavior is asserted here.)
     await writeFile(
@@ -88,7 +93,8 @@ export default { description: "spy", commands: [] };`,
       note: () => {},
       confirm,
     });
-    expect(asked).toEqual(["proj", "proj"]);
+    expect(asked.map((i) => i.name)).toEqual(["proj", "proj"]);
+    expect(asked[1].changed).toBe(true); // a previous approval exists
   });
 
   test("with no confirm (headless) an unapproved project extension is skipped", async () => {
@@ -159,6 +165,50 @@ export default { description: "spy", commands: [] };`,
     });
     expect(exts.map((e) => e.name)).toEqual(["dup"]);
     expect(exts[0].description).toBe("a test extension");
+  });
+
+  test("a directory named dir.ts in the project dir is skipped, not thrown", async () => {
+    const dirs = await setup();
+    await mkdir(join(dirs.projectDir, "dir.ts"));
+    await writeFile(join(dirs.projectDir, "good.ts"), EXT_SOURCE);
+    const notes: string[] = [];
+    const exts = await loadUserExtensions(defaultConfig(), {
+      ...dirs,
+      note: (t) => notes.push(t),
+      confirm: async () => true,
+    });
+    expect(exts.map((e) => e.name)).toEqual(["good"]);
+    expect(notes.join("\n")).toContain("dir.ts");
+  });
+
+  test("a .js extension file in the user dir loads", async () => {
+    const dirs = await setup();
+    await writeFile(join(dirs.userDir, "jsext.js"), EXT_SOURCE);
+    const exts = await loadUserExtensions(defaultConfig(), {
+      ...dirs,
+      note: () => {},
+    });
+    expect(exts.map((e) => e.name)).toEqual(["jsext"]);
+    expect(exts[0].description).toBe("a test extension");
+  });
+
+  test("a disabled project extension stubs without ever prompting", async () => {
+    const dirs = await setup();
+    await writeFile(join(dirs.projectDir, "proj.ts"), EXT_SOURCE);
+    const asked: unknown[] = [];
+    const config = defaultConfig();
+    config.extensions.proj = false;
+    const exts = await loadUserExtensions(config, {
+      ...dirs,
+      note: () => {},
+      confirm: async (info) => {
+        asked.push(info);
+        return true;
+      },
+    });
+    expect(exts.map((e) => e.name)).toEqual(["proj"]);
+    expect(exts[0].description).toContain("disabled");
+    expect(asked).toEqual([]); // disabled is decided BEFORE the trust gate
   });
 
   test("an extension command shadowing a built-in is dropped with a note", async () => {
