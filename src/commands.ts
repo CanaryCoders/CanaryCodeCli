@@ -1,11 +1,11 @@
 // commands.ts — slash-command parsing and dispatch.
 //
-// Slash commands are how the interactive TUI (Phase 4) drives the session at
-// runtime: switch model/mode, set thinking, clear or resume, show cost, etc.
-// This module is deliberately pure — it parses an input line into a structured
-// `CommandAction` that the host executes against its own state. Keeping the
-// side effects out of here means it is fully testable now, before the TUI
-// exists, and both the TUI and a future REPL can share one dispatcher.
+// A pure module whose `makeCommandSet(extensionCommands)` factory builds the
+// config-aware command set: the static base commands plus the commands of
+// currently-enabled extensions. Hosts (TUI, CLI) rebuild it whenever the
+// extension set may change — it is cheap (a map over ~25 specs). Parsing stays
+// side-effect-free, so both frontends share one dispatcher without coupling to
+// each other's state.
 //
 // A line that does not start with "/" is not a command — it is a normal prompt,
 // returned as a `message` action so the host has a single thing to switch on.
@@ -107,6 +107,15 @@ const TAIL_COMMANDS: CommandSpec[] = [
   { name: "help", aliases: ["?"], description: "show this command list" },
   { name: "exit", aliases: ["quit", "q"], description: "exit cc" },
 ];
+
+/** Command words owned by the base command set (names and aliases). An
+ * extension command with one of these names is ignored — built-ins win. */
+export const RESERVED_COMMAND_NAMES: ReadonlySet<string> = new Set(
+  [...BASE_COMMANDS, ...TAIL_COMMANDS].flatMap((c) => [
+    c.name,
+    ...(c.aliases ?? []),
+  ]),
+);
 
 /** Whether a raw input line is a slash command (vs. an ordinary prompt). */
 function isCommand(input: string): boolean {
@@ -362,9 +371,12 @@ export function makeCommandSet(
     description: string;
   }[] = [],
 ): CommandSet {
+  const safeExtensions = extensionCommands.filter(
+    (c) => !RESERVED_COMMAND_NAMES.has(c.name),
+  );
   const specs: CommandSpec[] = [
     ...BASE_COMMANDS,
-    ...extensionCommands.map((c) => ({
+    ...safeExtensions.map((c) => ({
       name: c.name,
       usage: c.usage,
       description: c.description,
@@ -376,7 +388,7 @@ export function makeCommandSet(
     byName.set(spec.name, spec);
     for (const alias of spec.aliases ?? []) byName.set(alias, spec);
   }
-  const extensionNames = new Set(extensionCommands.map((c) => c.name));
+  const extensionNames = new Set(safeExtensions.map((c) => c.name));
 
   /**
    * Parse and dispatch an input line into a `CommandAction`. Non-command lines

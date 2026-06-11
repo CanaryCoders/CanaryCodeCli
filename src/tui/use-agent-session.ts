@@ -1012,12 +1012,16 @@ export function useAgentSession(deps: {
   // routes notes into the scrollback and formats failures.
   async function runBuiltin(name: string, args: string[]): Promise<void> {
     try {
-      await runCommand(
-        props.config,
-        name,
-        { config: props.config, note: (text) => note(text) },
-        args,
-      );
+      if (
+        !(await runCommand(
+          props.config,
+          name,
+          { config: props.config, note: (text) => note(text) },
+          args,
+        ))
+      ) {
+        note(`unknown command: /${name}`, "error");
+      }
     } catch (err) {
       note(`/${name} failed: ${(err as Error).message}`, "error");
     }

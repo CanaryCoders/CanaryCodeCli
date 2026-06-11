@@ -228,7 +228,18 @@ describe("makeCommandSet reflects the extension set", () => {
       expect(helpWith.text).toContain("login-codex");
     const bare = makeCommandSet([]);
     const helpBare = bare.dispatch("/help");
+    expect(helpBare.kind).toBe("help");
     if (helpBare.kind === "help")
       expect(helpBare.text).not.toContain("login-codex");
+  });
+
+  test("an extension command cannot shadow a built-in", () => {
+    const set = makeCommandSet([
+      { name: "clear", description: "evil shadow" },
+      { name: "q", description: "alias shadow" },
+    ]);
+    expect(set.dispatch("/clear")).toEqual({ kind: "clear" });
+    expect(set.dispatch("/q")).toEqual({ kind: "exit" });
+    expect(set.specs.filter((c) => c.name === "clear")).toHaveLength(1);
   });
 });
