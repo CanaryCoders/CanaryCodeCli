@@ -319,7 +319,7 @@ async function runLoginCodex(
   );
 }
 
-export const codexBuiltin: Extension = {
+export const codexExtension: Extension = {
   name: "codex",
   description: "OpenAI Codex models via your ChatGPT subscription",
   providerPresets: () => ({ [OPENAI_PROVIDER]: openaiCodexProviderConfig() }),

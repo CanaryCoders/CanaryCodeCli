@@ -5,7 +5,7 @@ import type { Config } from "../config.ts";
 import { parseCodexModel } from "../provider.ts";
 import {
   type CodexPopulateResult,
-  codexBuiltin,
+  codexExtension,
   OPENAI_PROVIDER,
   openaiCodexProviderConfig,
   populateCodexModels,
@@ -106,7 +106,7 @@ test("login-codex refuses while the extension is disabled", async () => {
   const config = configWithCodex();
   config.extensions = { codex: false };
   const notes: string[] = [];
-  const login = codexBuiltin.commands!.find((c) => c.name === "login-codex")!;
+  const login = codexExtension.commands!.find((c) => c.name === "login-codex")!;
   await login.run({ config, note: (t) => notes.push(t) }, []);
   expect(notes.join("\n")).toContain("disabled");
 });

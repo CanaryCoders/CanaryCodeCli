@@ -9,7 +9,7 @@ import {
   discoverZenKey,
   gateZenModels,
   OPENCODE_PROVIDER,
-  opencodeBuiltin,
+  opencodeExtension,
   populateZenModels,
   zenModels,
 } from "./opencode.ts";
@@ -129,7 +129,7 @@ test("login-opencode refuses while the extension is disabled", async () => {
   config.extensions = { opencode: false };
   config.providers[OPENCODE_PROVIDER]!.models = [{ id: "stale" }];
   const notes: string[] = [];
-  const login = opencodeBuiltin.commands!.find(
+  const login = opencodeExtension.commands!.find(
     (c) => c.name === "login-opencode",
   )!;
   await login.run({ config, note: (t) => notes.push(t) }, []);
@@ -145,7 +145,7 @@ test("startup gates the preset while the extension is disabled", async () => {
   config.extensions = { opencode: false };
   config.providers[OPENCODE_PROVIDER]!.apiKey = "k";
   config.providers[OPENCODE_PROVIDER]!.models = [{ id: "x" }];
-  expect(await opencodeBuiltin.startup!(config, "fast")).toBeUndefined();
+  expect(await opencodeExtension.startup!(config, "fast")).toBeUndefined();
   expect(config.providers[OPENCODE_PROVIDER]!.models).toEqual([]);
 });
 

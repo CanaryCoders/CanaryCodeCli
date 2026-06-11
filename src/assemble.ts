@@ -20,30 +20,25 @@ import type {
   ExtensionHost,
   SessionExtension,
 } from "./extension.ts";
-import { composeExtensions, extensionEnabled } from "./extension.ts";
-import { agentsExtension } from "./extensions/agents.ts";
+import { composeExtensions } from "./extension.ts";
 import {
   type AskAnswer,
   type AskQuestion,
   type AskUserFn,
   askUserExtension,
 } from "./extensions/askuser.ts";
-import { TOGGLEABLE_SESSION_EXTENSIONS } from "./extensions/builtin.ts";
-import { hooksExtension } from "./extensions/hooks.ts";
-import { mcpExtension } from "./extensions/mcp.ts";
 import {
   buildPermissionGate,
   composeGates,
   type FrontendGate,
 } from "./extensions/permission.ts";
-import { skillsExtension } from "./extensions/skills.ts";
+import { sessionExtensions } from "./extensions/registry.ts";
 import {
   type Task,
   type TaskStatus,
   type TaskUpdateFn,
   tasksExtension,
 } from "./extensions/tasks.ts";
-import { webSearchExtension } from "./extensions/websearch.ts";
 import type { Tool } from "./tools.ts";
 import { tools as allTools } from "./tools.ts";
 
@@ -56,12 +51,20 @@ export { extensionEnabled } from "./extension.ts";
 // startup discovery, login-style commands, and `/extensions` toggles through
 // the assembly boundary instead of importing feature modules directly.
 export {
+  availableCommands,
   builtinCommands,
   findBuiltinCommand,
+  findCommand,
+  findCommandAnywhere,
+  foldPresets,
+  listExtensions,
   runBuiltinCommand,
+  runCommand,
+  setUserExtensions,
   startupBuiltins,
+  startupExtensions,
   toggleableExtensions,
-} from "./extensions/builtin.ts";
+} from "./extensions/registry.ts";
 // Frontend-facing feature types re-exported through the assembly boundary, so a
 // frontend (TUI component / headless formatter) never has to reach into a feature
 // module just to name a type. These are the only feature surfaces the frontends
@@ -135,25 +138,20 @@ export async function assembleSession(
       : undefined;
   const gate = composeGates(aiGate, opts.gate);
 
-  // `/extensions disable <name>` drops a toggleable feature here, whole: no
-  // tools, no prompt section, no startup work. Non-toggleable plumbing (core
-  // tools, ask_user, tasks; permission via permission.mode) always assembles.
-  const toggleable = new Set<string>(TOGGLEABLE_SESSION_EXTENSIONS);
+  // Feature extensions come from the registry, which yields only the ENABLED
+  // ones — `/extensions disable <name>` drops a feature here, whole: no tools,
+  // no prompt section, no startup work. The plumbing every run needs (core
+  // tools, ask_user, tasks; permission via permission.mode) is not an
+  // extension and always assembles.
   const extensions: SessionExtension[] = opts.noTools
     ? []
     : [
         { name: "core", tools: () => allTools },
-        webSearchExtension(),
-        skillsExtension(),
+        ...sessionExtensions(opts.config),
         askUserExtension(opts.askUser),
-        mcpExtension(),
-        agentsExtension(),
-        hooksExtension(),
         // MUST be last: update_tasks always sits at the end of the tool set.
         tasksExtension(opts.onTasks),
-      ].filter(
-        (e) => !toggleable.has(e.name) || extensionEnabled(opts.config, e.name),
-      );
+      ];
 
   const composed = await composeExtensions(extensions, { ...opts, gate });
 

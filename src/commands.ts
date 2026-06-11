@@ -12,7 +12,10 @@
 
 import type { AgentMode } from "./agent.ts";
 import { CONFIG_PATHS } from "./config.ts";
-import { builtinCommands, toggleableExtensions } from "./extensions/builtin.ts";
+import {
+  builtinCommands,
+  toggleableExtensions,
+} from "./extensions/registry.ts";
 import { fuzzyRank, fuzzyScore } from "./fuzzy.ts";
 import { parseLevel, type ThinkingLevel } from "./thinking.ts";
 
@@ -100,7 +103,7 @@ export const COMMANDS: CommandSpec[] = [
     usage: "[enable|disable <name>]",
     description: "toggle extensions (bare: interactive checkbox picker)",
   },
-  // Login-style commands contributed by built-in extensions (extensions/builtin.ts).
+  // Login-style commands contributed by built-in extensions (extensions/registry.ts).
   ...builtinCommands().map((c) => ({
     name: c.name,
     usage: c.usage,

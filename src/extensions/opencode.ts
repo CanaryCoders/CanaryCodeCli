@@ -209,7 +209,7 @@ async function runLoginOpencode(ctx: ExtensionCommandContext): Promise<void> {
   );
 }
 
-export const opencodeBuiltin: Extension = {
+export const opencodeExtension: Extension = {
   name: "opencode",
   description: "OpenCode Zen models via opencode's credentials",
   providerPresets: () => ({
