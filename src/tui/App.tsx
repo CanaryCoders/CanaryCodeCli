@@ -37,7 +37,7 @@ import { useTuiInput } from "./keyboard.ts";
 import { ItemView } from "./Message.tsx";
 import { statusVerb } from "./message-helpers.ts";
 import { planChoiceForKey } from "./plan-helpers.ts";
-import { Box } from "./primitives.tsx";
+import { Box, ScrollBox } from "./primitives.tsx";
 import { type TuiRuntime, TuiRuntimeContext } from "./runtime.tsx";
 import { Tasks } from "./Tasks.tsx";
 import { modeColor as themeModeColor } from "./theme.ts";
@@ -291,22 +291,35 @@ function App(props: AppProps): React.ReactNode {
   return (
     <TuiRuntimeContext.Provider value={runtime}>
       <IconProvider config={props.config}>
-        <Box flexDirection="column">
-          {/* Initial OpenTUI parity uses an append-only history area matching Ink's
-            non-interactive <Static> behavior. A scrollbox with manual scrollback is
-            a follow-up once root rendering is stable. */}
-          <Box flexDirection="column" width={columns}>
-            {transcript.history.map(renderHistoryItem)}
-          </Box>
+        {/* Viewport-height column: the transcript scrolls inside a flexGrow
+            scrollbox while the tasks panel, input box, and footer stay pinned to
+            the bottom of the terminal (they were scrolling off-screen when a long
+            conversation overflowed a plain column). */}
+        <Box flexDirection="column" height={rows}>
+          {/* Transcript (finished history + the in-flight turn). `stickyScroll`
+              keeps the newest output in view; older turns scroll up. */}
+          <ScrollBox
+            flexGrow={1}
+            flexShrink={1}
+            minHeight={0}
+            width={columns}
+            stickyScroll
+            stickyStart="bottom"
+            scrollY
+          >
+            <Box flexDirection="column" width={columns}>
+              {transcript.history.map(renderHistoryItem)}
+            </Box>
 
-          <LiveRegion
-            live={transcript.live}
-            history={transcript.history}
-            verbose={session.verbose}
-            firstToolId={firstToolId}
-            liveCap={liveCap}
-            liveContentWidth={liveContentWidth}
-          />
+            <LiveRegion
+              live={transcript.live}
+              history={transcript.history}
+              verbose={session.verbose}
+              firstToolId={firstToolId}
+              liveCap={liveCap}
+              liveContentWidth={liveContentWidth}
+            />
+          </ScrollBox>
 
           <Tasks tasks={session.tasks} />
 

@@ -369,28 +369,30 @@ export function ItemView({
       // A user message starts a new turn → one blank line above its cyan card.
       return <UserView text={item.text} />;
     case "assistant":
-      // The model's answer is a green titled card. Each contiguous answer is a
-      // single transcript item (the engine no longer peels it into chunks), so it
-      // renders as one card rather than a stack of boxes.
+      // The model's answer is plain prose — no box. Only tool calls (and the
+      // user's message) get the filled-block treatment; the assistant's text reads
+      // as the main thread of the conversation. Inset by one column so it lines up
+      // with the boxed content around it.
       return (
-        <Card
-          color={CARD.assistant.color}
-          bg={CARD.assistant.bg}
-          title={CARD.assistant.title}
+        <Box
+          flexDirection="column"
+          paddingX={SPACING.boxPadX}
           marginTop={Math.max(1, topGap(item, prevKind))}
         >
           <Markdown text={item.text} />
-        </Card>
+        </Box>
       );
     case "thinking":
+      // Thinking is plain dim+italic prose, same layout as the assistant answer so
+      // it reads as a quieter part of the same thread rather than a separate block.
       return (
-        <Gutter
-          speaker="thinking"
-          glyphless={item.continuation}
-          marginTop={topGap(item, prevKind)}
+        <Box
+          flexDirection="column"
+          paddingX={SPACING.boxPadX}
+          marginTop={Math.max(1, topGap(item, prevKind))}
         >
           <Markdown text={item.text} dim />
-        </Gutter>
+        </Box>
       );
     case "tool":
       // Every tool call is its own titled card (its own colour), so the actions a

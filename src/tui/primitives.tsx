@@ -93,6 +93,36 @@ export function Text(props: TextProps): ReactElement {
   return <OpenTuiText {...props} />;
 }
 
+export interface ScrollBoxProps {
+  children?: ReactNode;
+  /** Grow to fill the remaining height in a flex column (the transcript area). */
+  flexGrow?: number;
+  /** Allow shrinking below content height so siblings stay pinned (needs
+   * `minHeight: 0` too — the flexbox scroll idiom). */
+  flexShrink?: number;
+  minHeight?: number;
+  width?: number | string;
+  /** Keep the view pinned to the newest content as children are appended. */
+  stickyScroll?: boolean;
+  /** Which edge new content sticks to ("bottom" for a chat-style log). */
+  stickyStart?: "bottom" | "top" | "left" | "right";
+  scrollY?: boolean;
+  scrollX?: boolean;
+}
+
+/**
+ * A vertically-scrolling region (OpenTUI's native `scrollbox`). Used for the
+ * transcript so a long conversation scrolls instead of pushing the input box off
+ * the bottom of the terminal; `stickyScroll`/`stickyStart="bottom"` keep the
+ * newest output in view while older turns scroll up.
+ */
+export function ScrollBox({
+  children,
+  ...props
+}: ScrollBoxProps): ReactElement {
+  return createElement("scrollbox", props, children);
+}
+
 export function useTerminalColumns(fallback = 80): number {
   const dimensions = useTerminalDimensions();
   return dimensions.width ?? fallback;
