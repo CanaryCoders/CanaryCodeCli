@@ -5,11 +5,13 @@
   "license": "PolyForm-Noncommercial-1.0.0",
   "type": "module",
   "bin": {
-    "cc": "./src/index.ts"
+    "cc": "./src/index.ts",
+    "ccode": "./src/index.ts"
   },
   "scripts": {
     "dev": "bun run src/index.ts",
     "cc": "bun run src/index.ts",
+    "ccode": "bun run src/index.ts",
     "typecheck": "tsc --noEmit",
     "lint": "biome lint ./src",
     "format": "biome format --write ./src",
