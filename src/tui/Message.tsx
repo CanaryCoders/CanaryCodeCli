@@ -32,6 +32,7 @@ import {
   ROLE,
   type Role,
   SPACING,
+  SURFACE,
   TOOL_STATUS,
   tint,
   toolStatus,
@@ -199,8 +200,8 @@ function abbreviateCwd(cwd: string): string {
 
 /**
  * The one-time launch banner: app name + version, the `~`-abbreviated cwd, and the
- * active model/provider — a slim, dim rounded box. Rendered as the first `<Static>`
- * scrollback item so it scrolls away naturally as the session grows.
+ * active model/provider — a slim filled chip in the same soft-block family as the
+ * cards. Rendered as the first scrollback item so it scrolls away naturally.
  */
 function BannerView({
   appName,
@@ -210,18 +211,16 @@ function BannerView({
   provider,
 }: Extract<Item, { kind: "banner" }>): React.ReactElement {
   return (
-    // alignSelf="flex-start" keeps this a slim box hugging its content. Without it,
-    // a flex column's default `alignItems: stretch` blows the box out to the full
-    // terminal width, whose right border then soft-wraps onto its own physical line
-    // (and, while the banner lived in the dynamic region, that phantom row desynced
-    // Ink's eraser into a pile of duplicate top borders).
+    // alignSelf="flex-start" keeps this a slim chip hugging its content; without
+    // it a flex column's default `alignItems: stretch` blows the fill out to the
+    // full terminal width.
     <Box
-      borderStyle="round"
-      borderColor={tint("gray")}
-      paddingX={1}
+      backgroundColor={tint(SURFACE.banner)}
+      paddingX={SPACING.boxPadX}
+      paddingY={SPACING.boxPadY}
       alignSelf="flex-start"
     >
-      <Text bold dimColor>{`${appName} v${version}`}</Text>
+      <Text bold>{`${appName} v${version}`}</Text>
       <Text
         dimColor
       >{`  ${abbreviateCwd(cwd)}  ·  ${model} · ${provider}`}</Text>
@@ -290,6 +289,7 @@ function UserView({ text }: { text: string }): React.ReactElement {
   return (
     <Card
       color={CARD.user.color}
+      bg={CARD.user.bg}
       title={CARD.user.title}
       marginTop={SPACING.turnGap}
     >
@@ -375,8 +375,9 @@ export function ItemView({
       return (
         <Card
           color={CARD.assistant.color}
+          bg={CARD.assistant.bg}
           title={CARD.assistant.title}
-          marginTop={topGap(item, prevKind)}
+          marginTop={Math.max(1, topGap(item, prevKind))}
         >
           <Markdown text={item.text} />
         </Card>
@@ -402,7 +403,7 @@ export function ItemView({
           compact={compact}
           width={width}
           columns={columns}
-          marginTop={topGap(item, prevKind)}
+          marginTop={Math.max(1, topGap(item, prevKind))}
         />
       );
     case "note": {
@@ -411,16 +412,18 @@ export function ItemView({
       const text = compact && width ? truncate(item.text, width) : item.text;
       const marginTop =
         prevKind === "note" ? SPACING.groupGap : SPACING.blockGap;
+      const cardMarginTop = Math.max(1, marginTop);
       // Error notes get a red card for emphasis; ordinary info notes stay flat and
       // dim behind their gutter glyph so routine context doesn't add box clutter.
       if (item.tone === "error") {
         return (
           <Card
             color={CARD.error.color}
+            bg={CARD.error.bg}
             title={CARD.error.title}
-            marginTop={marginTop}
+            marginTop={cardMarginTop}
           >
-            <Text color={tint("red")} wrap="wrap">
+            <Text color={tint(CARD.error.color)} wrap="wrap">
               {text}
             </Text>
           </Card>
@@ -467,10 +470,11 @@ function ToolView({
   const statusColor = TOOL_STATUS[status].color;
   const summary = summarizeToolInput(item.name, item.input);
   const name = displayToolName(item.name);
-  // The card border/title is blue for an ordinary call and red for an error, so a
-  // failed tool jumps out while still reading as a tool (distinct from user/cyan
-  // and assistant/green). The status mark (…/✓/✗) carries pending-vs-ok.
+  // The block accent/fill is the soft tool tone for an ordinary call and the soft
+  // error tone for a failure, so a failed tool jumps out while still reading as a
+  // tool. The status mark (…/✓/✗) carries pending-vs-ok.
   const cardColor = item.isError ? CARD.error.color : CARD.tool.color;
+  const cardBg = item.isError ? CARD.error.bg : CARD.tool.bg;
 
   // `bash` shows the FULL command; every other tool keeps the short summary. Both
   // are truncated for the title so it always fits on the border run.
@@ -508,7 +512,7 @@ function ToolView({
     !item.pending && !item.isError && item.diff && item.diff.hunks.length > 0;
 
   return (
-    <Card color={cardColor} title={title} marginTop={marginTop}>
+    <Card color={cardColor} bg={cardBg} title={title} marginTop={marginTop}>
       {expanded && summary ? (
         <Text dimColor wrap="truncate">
           {truncate(fmtInput(item.input), 200)}

@@ -9,13 +9,13 @@ import { AskUserView } from "./AskUser.tsx";
 import { Complete } from "./Complete.tsx";
 import { ConfirmView } from "./Confirm.tsx";
 import { ExtensionsView } from "./Extensions.tsx";
-import { useIcon } from "./Icon.tsx";
+import { useIcon, useSpinnerFrame } from "./Icon.tsx";
 import { MultilineInput } from "./Input.tsx";
 import { type Item, ItemView } from "./Message.tsx";
 import { clampLineWidth, tailLines } from "./message-helpers.ts";
 import { PlanView } from "./Plan.tsx";
 import { Box, Text } from "./primitives.tsx";
-import { SPACING, tint } from "./theme.ts";
+import { SPACING, SURFACE, tint } from "./theme.ts";
 import type { AgentSession } from "./use-agent-session.ts";
 import type { Approvals } from "./use-approvals.ts";
 import type { Autocomplete } from "./use-autocomplete.ts";
@@ -128,6 +128,9 @@ export function PromptArea({
   const checkpointIcon = useIcon("checkpoint");
   const promptIcon = useIcon("prompt");
   const queuedIcon = useIcon("queued");
+  // Called unconditionally (before the early-return overlays) per the rules of
+  // hooks; it only animates while the turn is busy.
+  const spinner = useSpinnerFrame(session.busy);
 
   if (approvals.pendingConfirm) {
     return (
@@ -209,17 +212,17 @@ export function PromptArea({
       {/* Live status: spinner + verb sit on their own row just above the input
           frame while busy (so they never share the prompt line). */}
       {session.busy ? (
-        <Text color={tint("yellow")}>
-          {"…"}
+        <Text color={tint(modeColor)}>
+          {spinner}
           <Text dimColor>{` ${verb}`}</Text>
         </Text>
       ) : null}
-      {/* Framed input: rounded border tinted by mode, dimmed while busy. */}
+      {/* Input bar: a soft filled block in the same family as the cards (no
+          border), with the prompt glyph tinted by the active mode. */}
       <Box
-        borderStyle="round"
-        borderColor={tint(modeColor)}
-        borderDimColor={session.busy}
+        backgroundColor={tint(SURFACE.input)}
         paddingX={SPACING.boxPadX}
+        paddingY={SPACING.boxPadY}
         flexDirection="row"
       >
         <Box width={1} marginRight={1}>
@@ -236,10 +239,9 @@ export function PromptArea({
             onHistoryNext={promptHistory.historyNext}
             registerPaste={registerPaste}
             pastes={pasteMap}
-            // Inner content width = terminal − border (2) − paddingX (2) − the
-            // Prompt prefix + 1 spare so the EOL cursor block never pushes a row
-            // past the border (which smears on redraw).
-            width={Math.max(1, columns - 2 - 2 * SPACING.boxPadX - 2 - 1)}
+            // Inner content width = terminal − paddingX (2) − the prompt prefix +
+            // 1 spare so the EOL cursor block never pushes a row past the edge.
+            width={Math.max(1, columns - 2 * SPACING.boxPadX - 2 - 1)}
             placeholder={
               session.busy
                 ? "Enter to queue · Esc to cancel"

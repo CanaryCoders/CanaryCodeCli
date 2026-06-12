@@ -80,3 +80,23 @@ const NERD_FONT_ICONS: IconSet = {
 export function iconFor(name: IconName, nerdFont = false): string {
   return (nerdFont ? NERD_FONT_ICONS : ASCII_ICONS)[name];
 }
+
+// Animated "busy" spinner frames, cycled by `useSpinnerFrame`. Braille dots —
+// standard Unicode that virtually every modern terminal renders — give the
+// smoothest motion, so they're used regardless of the nerd-font setting.
+const SPINNER_FRAMES = [
+  "⠋",
+  "⠙",
+  "⠹",
+  "⠸",
+  "⠼",
+  "⠴",
+  "⠦",
+  "⠧",
+  "⠇",
+  "⠏",
+] as const;
+
+export function spinnerFrames(): readonly string[] {
+  return SPINNER_FRAMES;
+}

@@ -280,23 +280,24 @@ export function useAgentSession(deps: {
       // and corrupt its terminal handshake (fish's OSC 11 background probe renders
       // its reply as literal `]11;rgb:…` at the prompt).
       await drainInputQuiet(process.stdin);
-      // Unmount the UI first so the terminal is restored to cooked mode
-      // immediately, then tear down the rest of the process. The runtime exit only
-      // unmounts the UI — it does NOT end the process, and the live MCP clients
-      // (their child processes and sockets) keep the event loop alive, so without an
-      // explicit exit the process lingers after the UI is gone: the now-cooked
-      // terminal echoes any further keystrokes as raw `^[`/`^C` until a signal kills
-      // it.
-      runtime.exit();
       // Abort the session-scoped signal (cancels any in-flight AI permission
       // check) and dispose the assembled session — its dispose() closes MCP
       // transports (killing spawned servers like puppeteer's browser). Capped so a
       // wedged transport can't block the quit, then exit hard.
+      //
+      // Keep the renderer mounted during this wait. OpenTUI leaves stdin in raw mode
+      // until runtime.exit(); if we restore cooked mode first, a user still tapping
+      // Esc/Ctrl+C during the dispose window can echo `^[` into the parent shell and
+      // corrupt fish's OSC 11 colour probe into a visible `]11;rgb:…` reply.
       sessionAbortRef.current.abort();
       await Promise.race([
         (assembledRef.current?.dispose() ?? Promise.resolve()).catch(() => {}),
         new Promise((resolve) => setTimeout(resolve, 1000)),
       ]);
+      // One final short drain catches keys or terminal replies that arrived while
+      // disposal was running, immediately before cooked mode is restored.
+      await drainInputQuiet(process.stdin, 75, 250);
+      runtime.exit();
       process.exit(0);
     }
   }

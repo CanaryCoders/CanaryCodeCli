@@ -54,28 +54,45 @@ export const ROLE: Record<Role, RoleStyle> = {
 
 // ── Cards (boxed transcript units) ──────────────────────────────────────────────
 // Each conversational unit — the user's message, the assistant's answer, every
-// tool call — renders as a slim titled box so the eye reads the transcript as a
-// stack of distinct units. Colours are ANSI names so the terminal's *active
-// theme* (Catppuccin on Ghostty, Solarized, …) maps them; the border + embedded
-// title carry the distinction while the box itself stays transparent, so a
-// transparent terminal background shows straight through. Each speaker type gets
-// its own colour for instant separation (user/assistant/tool requested distinct).
+// tool call — renders as a soft filled block so the eye reads the transcript as a
+// stack of distinct units (OpenCode / badlogic-pi style). Each block carries a
+// muted background fill plus a gentle accent on its border + title; the colours
+// are deliberately desaturated truecolor (not the bright ANSI 16) so the bars
+// stay soft rather than neon. `tint` strips both fill and accent under NO_COLOR,
+// and the fills are scoped to the blocks — the CLI's own root background is never
+// painted, so a transparent terminal stays transparent around the cards.
+//
+// These are fixed muted tones (they don't track the terminal theme); tweak the
+// hex values here to taste.
 
 export type CardKind = "user" | "assistant" | "tool" | "error";
 
 export interface CardStyle {
-  /** Border + title colour (ANSI name → remapped by the terminal theme). */
+  /** Soft accent for the border + title (muted truecolor hex). */
   color: string;
+  /** Muted background fill painted behind the whole block. */
+  bg: string;
   /** Title rendered into the top border. */
   title: string;
 }
 
 export const CARD: Record<CardKind, CardStyle> = {
-  user: { color: "cyan", title: "you" },
-  assistant: { color: "green", title: "assistant" },
-  tool: { color: "blue", title: "tool" },
-  error: { color: "red", title: "error" },
+  user: { color: "#a9b1d6", bg: "#2a2e42", title: "you" },
+  assistant: { color: "#9ece9a", bg: "#222a28", title: "assistant" },
+  tool: { color: "#89a8d8", bg: "#1f2733", title: "tool" },
+  error: { color: "#e09aa0", bg: "#34232a", title: "error" },
 };
+
+// Soft neutral fills for the non-conversational chrome — the launch banner and
+// the input bar — so they read as the same family of filled blocks as the cards
+// without competing for a speaker colour. Muted truecolor; stripped under
+// NO_COLOR. The CLI's own root background is still never painted.
+export const SURFACE = {
+  /** Fill behind the launch banner chip. */
+  banner: "#222530",
+  /** Fill behind the prompt input bar. */
+  input: "#262a36",
+} as const;
 
 // ── Modes (border + accent colour) ─────────────────────────────────────────────
 // The active mode tints the input frame border, the plan box, and the footer pill.
@@ -150,8 +167,11 @@ export const SPACING = {
   groupGap: 0,
   /** Top margin above the input frame. */
   inputGap: 1,
-  /** Horizontal padding inside bordered boxes (input frame, plan, confirm). */
+  /** Horizontal padding inside filled blocks / bordered boxes. */
   boxPadX: 1,
+  /** Vertical padding inside filled blocks (cards, input bar, banner) so content
+   * gets a row of breathing room above and below the fill. */
+  boxPadY: 1,
 } as const;
 
 // ── Colour degradation ─────────────────────────────────────────────────────────

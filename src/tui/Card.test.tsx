@@ -1,7 +1,8 @@
-// Card.test.tsx — guards the slim titled card used for each transcript unit.
-// The card must (a) embed its title in the border, (b) colour the border + title
-// from the same ANSI token (which the terminal theme remaps), and (c) NEVER set a
-// background, so a transparent terminal shows straight through.
+// Card.test.tsx — guards the soft filled block used for each transcript unit.
+// The card is borderless: (a) it paints the muted background fill behind the whole
+// block (the fill is scoped to the block; only the CLI's own root background must
+// stay transparent), and (b) it renders the title as a bold accent label on the
+// block's first line (no border title).
 
 import { expect, test } from "bun:test";
 import type { ReactElement } from "react";
@@ -12,28 +13,35 @@ function props(el: ReactElement): Record<string, unknown> {
   return el.props as Record<string, unknown>;
 }
 
-test("Card renders a titled, column box", () => {
-  const p = props(Card({ color: "cyan", title: "you", children: null }));
-  expect(p.title).toBe(" you ");
-  expect(p.titleAlignment).toBe("left");
+test("Card renders a borderless filled column block", () => {
+  const p = props(
+    Card({ color: "#a9b1d6", bg: "#2a2e42", title: "you", children: null }),
+  );
   expect(p.flexDirection).toBe("column");
-  expect(p.borderStyle).toBe("round");
+  expect(p.backgroundColor).toBe("#2a2e42");
+  expect(p.borderStyle).toBeUndefined();
 });
 
-test("Card colours the border and title from one token", () => {
-  const p = props(Card({ color: "blue", title: "tool", children: null }));
-  expect(p.borderColor).toBe("blue");
-  expect(p.titleColor).toBe("blue");
-});
-
-test("Card never paints a background (terminal shows through)", () => {
-  const p = props(Card({ color: "green", title: "assistant", children: null }));
-  expect(p.backgroundColor).toBeUndefined();
+test("Card renders the title as a bold accent label on the first line", () => {
+  const p = props(
+    Card({ color: "#89a8d8", bg: "#1f2733", title: "tool", children: null }),
+  );
+  const label = (p.children as ReactElement[])[0];
+  const lp = props(label);
+  expect(lp.children).toBe("tool");
+  expect(lp.color).toBe("#89a8d8");
+  expect(lp.bold).toBe(true);
 });
 
 test("Card forwards turn/group spacing", () => {
   const p = props(
-    Card({ color: "red", title: "error", marginTop: 1, children: null }),
+    Card({
+      color: "#e09aa0",
+      bg: "#34232a",
+      title: "error",
+      marginTop: 1,
+      children: null,
+    }),
   );
   expect(p.marginTop).toBe(1);
 });
