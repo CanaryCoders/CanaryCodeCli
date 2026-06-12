@@ -11,8 +11,15 @@
 // tool's output. Errors always show their first line even when collapsed.
 
 import { type Diff, type DiffLine, diffStat } from "../diff.ts";
-import { parseMarkdownWithFlags, type Span } from "../markdown.ts";
+import {
+  type MdLine,
+  parseMarkdownBlocks,
+  parseMarkdownWithFlags,
+  type Span,
+} from "../markdown.ts";
 import { Card } from "./Card.tsx";
+import { useTuiRuntime } from "./runtime.tsx";
+import { getHighlightedCode } from "./syntax-highlight.ts";
 import { useIcon } from "./Icon.tsx";
 import {
   displayToolName,
@@ -143,6 +150,96 @@ function spanProps(span: Span): {
  * never throws on a partial marker, so the live region can grow delta-by-delta.
  * Exported for the other markdown-bearing surfaces (the plan review box).
  */
+function LineSpans({
+  line,
+  dim,
+  bold,
+}: {
+  line: MdLine;
+  dim?: boolean;
+  bold?: boolean;
+}): React.ReactElement {
+  const spans = line.spans.map((span, si) => (
+    <Text
+      key={rowKey(si, span.text)}
+      {...spanProps(span)}
+      {...(dim ? { dimColor: true, italic: true } : {})}
+      {...(bold ? { bold: true } : {})}
+    >
+      {span.text}
+    </Text>
+  ));
+  return <Text wrap="wrap">{spans}</Text>;
+}
+
+function CodeBlock({
+  code,
+  language,
+}: {
+  code: string;
+  language?: string;
+}): React.ReactElement {
+  const runtime = useTuiRuntime();
+  const highlighted = getHighlightedCode(code, language, runtime.clear);
+  const title = language ? ` ${language} ` : " code ";
+  return (
+    <Box flexDirection="column" marginTop={1} marginBottom={1}>
+      <RuleRow>
+        <Text color={tint(DIFF.gutter)} dimColor>{title}</Text>
+      </RuleRow>
+      {highlighted.map((spans, li) => (
+        <RuleRow key={rowKey(li, spans.map((span) => span.text).join(""))}>
+          <Text wrap="truncate">
+            {spans.map((span, si) => (
+              <Text key={rowKey(si, span.text)} {...spanProps(span)}>
+                {span.text}
+              </Text>
+            ))}
+          </Text>
+        </RuleRow>
+      ))}
+    </Box>
+  );
+}
+
+function TableBlock({
+  headers,
+  rows,
+  widths,
+}: Extract<ReturnType<typeof parseMarkdownBlocks>[number], { kind: "table" }>): React.ReactElement {
+  const separator = widths.map((width) => "─".repeat(width)).join("─┼─");
+  const renderCells = (
+    cells: MdLine[],
+    keyPrefix: string,
+    bold = false,
+  ): React.ReactElement => (
+    <RuleRow key={keyPrefix}>
+      <Text>
+        {cells.map((cell, col) => (
+          <Text key={`${keyPrefix}:${col}`} {...(bold ? { bold: true } : {})}>
+            {col > 0 ? " │ " : ""}
+            {cell.spans.map((span, si) => (
+              <Text key={rowKey(si, span.text)} {...spanProps(span)}>
+                {span.text}
+              </Text>
+            ))}
+          </Text>
+        ))}
+      </Text>
+    </RuleRow>
+  );
+
+  return (
+    <Box flexDirection="column" marginTop={1} marginBottom={1}>
+      {renderCells(headers, "table:header", true)}
+      <RuleRow>
+        <Text color={tint(DIFF.gutter)} dimColor>{separator}</Text>
+      </RuleRow>
+      {rows.map((row, i) => renderCells(row, `table:row:${i}`))}
+    </Box>
+  );
+}
+
 export function Markdown({
   text,
   dim,
@@ -157,30 +254,32 @@ export function Markdown({
   // newline is a separator, not content, so trimming one keeps prose tight while
   // leaving genuine `\n\n` paragraph gaps intact.
   const body = text.endsWith("\n") ? text.slice(0, -1) : text;
-  // Code-fence/indented lines get a faint left gutter rule so the block reads as
-  // a distinct unit (`code` aligns 1:1 with `lines` — single-pass parse).
-  const { lines, code } = parseMarkdownWithFlags(body);
+  const blocks = parseMarkdownBlocks(body);
   return (
     <Box flexDirection="column">
-      {lines.map((line, li) => {
-        const spans = line.spans.map((span, si) => (
-          <Text
-            key={rowKey(si, span.text)}
-            {...spanProps(span)}
-            {...(dim ? { dimColor: true, italic: true } : {})}
-          >
-            {span.text}
-          </Text>
-        ));
-        const lineText = line.spans.map((s) => s.text).join("");
-        return code[li] ? (
-          <RuleRow key={rowKey(li, lineText)}>
-            <Text wrap="wrap">{spans}</Text>
-          </RuleRow>
-        ) : (
-          <Text key={rowKey(li, lineText)} wrap="wrap">
-            {spans}
-          </Text>
+      {blocks.map((block, bi) => {
+        if (block.kind === "code") {
+          return (
+            <CodeBlock
+              key={`code:${bi}:${block.language ?? ""}:${block.code.slice(0, 16)}`}
+              code={block.code}
+              language={block.language}
+            />
+          );
+        }
+        if (block.kind === "table") {
+          return <TableBlock key={`table:${bi}`} {...block} />;
+        }
+        return (
+          <Box key={`lines:${bi}`} flexDirection="column">
+            {block.lines.map((line, li) => (
+              <LineSpans
+                key={rowKey(li, line.spans.map((s) => s.text).join(""))}
+                line={line}
+                dim={dim}
+              />
+            ))}
+          </Box>
         );
       })}
     </Box>

@@ -32,6 +32,19 @@ export interface MdLine {
   spans: Span[];
 }
 
+export type TableAlign = "left" | "center" | "right" | null;
+
+export type MdBlock =
+  | { kind: "lines"; lines: MdLine[] }
+  | { kind: "code"; language?: string; code: string; lines: string[] }
+  | {
+      kind: "table";
+      headers: MdLine[];
+      rows: MdLine[][];
+      align: TableAlign[];
+      widths: number[];
+    };
+
 // ── Inline parsing ─────────────────────────────────────────────────────────────────
 
 /** The styling carried into a nested inline span (bold containing italic, etc.). */
@@ -149,8 +162,9 @@ const HEADING = /^(#{1,6})\s+(.*)$/;
 const QUOTE = /^\s*>\s?(.*)$/;
 const BULLET = /^(\s*)[-*+]\s+(.*)$/;
 const NUMBERED = /^(\s*)(\d+)([.)])\s+(.*)$/;
-const FENCE = /^\s*(?:```|~~~)/;
+const FENCE = /^\s*(```|~~~)\s*(.*?)\s*$/;
 const INDENT_CODE = /^(?: {4}|\t)/;
+const TABLE_SEPARATOR_CELL = /^:?-{3,}:?$/;
 
 /**
  * Parse a markdown document into styled lines AND per-line code flags in a
@@ -248,6 +262,160 @@ export function parseMarkdownWithFlags(src: string): {
  */
 export function parseMarkdown(src: string): MdLine[] {
   return parseMarkdownWithFlags(src).lines;
+}
+
+function splitTableRow(raw: string): string[] | null {
+  const trimmed = raw.trim();
+  if (!trimmed.includes("|")) return null;
+  const body = trimmed.startsWith("|") ? trimmed.slice(1) : trimmed;
+  const withoutEnd = body.endsWith("|") ? body.slice(0, -1) : body;
+  const cells: string[] = [];
+  let buf = "";
+  let escaped = false;
+  for (const ch of withoutEnd) {
+    if (escaped) {
+      buf += ch;
+      escaped = false;
+    } else if (ch === "\\") {
+      escaped = true;
+    } else if (ch === "|") {
+      cells.push(buf.trim());
+      buf = "";
+    } else {
+      buf += ch;
+    }
+  }
+  cells.push(buf.trim());
+  return cells.length > 1 ? cells : null;
+}
+
+function parseTableSeparator(raw: string, columns: number): TableAlign[] | null {
+  const cells = splitTableRow(raw);
+  if (!cells || cells.length !== columns) return null;
+  const align = cells.map((cell) => {
+    const compact = cell.replace(/\s+/g, "");
+    if (!TABLE_SEPARATOR_CELL.test(compact)) return undefined;
+    const left = compact.startsWith(":");
+    const right = compact.endsWith(":");
+    if (left && right) return "center" as const;
+    if (right) return "right" as const;
+    if (left) return "left" as const;
+    return null;
+  });
+  return align.some((a) => a === undefined)
+    ? null
+    : (align as TableAlign[]);
+}
+
+function lineText(line: MdLine): string {
+  return line.spans.map((span) => span.text).join("");
+}
+
+function cellWidth(cell: MdLine): number {
+  return lineText(cell).length;
+}
+
+function padCell(text: string, width: number, align: TableAlign): string {
+  const extra = Math.max(0, width - text.length);
+  if (align === "right") return `${" ".repeat(extra)}${text}`;
+  if (align === "center") {
+    const left = Math.floor(extra / 2);
+    return `${" ".repeat(left)}${text}${" ".repeat(extra - left)}`;
+  }
+  return `${text}${" ".repeat(extra)}`;
+}
+
+export function parseMarkdownBlocks(src: string): MdBlock[] {
+  const blocks: MdBlock[] = [];
+  let pending: MdLine[] = [];
+  const flushPending = () => {
+    if (pending.length > 0) {
+      blocks.push({ kind: "lines", lines: pending });
+      pending = [];
+    }
+  };
+
+  const rawLines = src.split("\n");
+  let i = 0;
+  while (i < rawLines.length) {
+    const raw = rawLines[i]!;
+    const fence = FENCE.exec(raw);
+    if (fence) {
+      flushPending();
+      const marker = fence[1]!;
+      const language = fence[2]!.trim().split(/\s+/)[0] || undefined;
+      const codeLines: string[] = [];
+      i++;
+      while (i < rawLines.length) {
+        const candidate = rawLines[i]!;
+        const close = FENCE.exec(candidate);
+        if (close && close[1] === marker) break;
+        codeLines.push(candidate);
+        i++;
+      }
+      if (i < rawLines.length) i++;
+      blocks.push({
+        kind: "code",
+        language,
+        code: codeLines.join("\n"),
+        lines: codeLines,
+      });
+      continue;
+    }
+
+    const headerCells = splitTableRow(raw);
+    const separator =
+      headerCells && i + 1 < rawLines.length
+        ? parseTableSeparator(rawLines[i + 1]!, headerCells.length)
+        : null;
+    if (headerCells && separator) {
+      flushPending();
+      i += 2;
+      const bodyRows: string[][] = [];
+      while (i < rawLines.length) {
+        const cells = splitTableRow(rawLines[i]!);
+        if (!cells) break;
+        bodyRows.push(cells);
+        i++;
+      }
+      const normalize = (cells: string[]) =>
+        Array.from({ length: headerCells.length }, (_, col) =>
+          parseInline(cells[col] ?? "", {}),
+        ).map((spans) => ({ spans }));
+      const headers = normalize(headerCells);
+      const rows = bodyRows.map((cells) => normalize(cells));
+      const widths = headers.map((header, col) =>
+        Math.max(
+          3,
+          cellWidth(header),
+          ...rows.map((row) => cellWidth(row[col]!)),
+        ),
+      );
+      blocks.push({
+        kind: "table",
+        headers: headers.map((cell, col) => ({
+          spans: [{ text: padCell(lineText(cell), widths[col]!, separator[col]) }],
+        })),
+        rows: rows.map((row) =>
+          row.map((cell, col) => ({
+            spans: [
+              { text: padCell(lineText(cell), widths[col]!, separator[col]) },
+            ],
+          })),
+        ),
+        align: separator,
+        widths,
+      });
+      continue;
+    }
+
+    const parsed = parseMarkdownWithFlags(raw).lines[0]!;
+    pending.push(parsed);
+    i++;
+  }
+
+  flushPending();
+  return blocks.length > 0 ? blocks : [{ kind: "lines", lines: [] }];
 }
 
 /**
