@@ -1,10 +1,11 @@
 node_modules/
-.ralph-logs/
-docs/superpowers/plans/
-docs/superpowers/specs/
+dist/
 *.log
 .DS_Store
 .cc/
-dist/
 result
 result-*
+
+# local agent skills (installed per-machine, not part of the repo)
+.agents/skills/improve/
+skills-lock.json

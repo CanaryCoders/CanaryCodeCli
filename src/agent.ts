@@ -4,7 +4,7 @@
 // text / thinking / tool_use, executes any tool calls, appends the results, and
 // loops until the model stops asking for tools (or a turn cap / abort). Callers
 // consume the yielded `AgentEvent`s to render however they like — stdout in
-// headless mode, Ink components in the TUI. The conversation `messages` array is
+// headless mode, React components in the TUI. The conversation `messages` array is
 // mutated in place so the caller keeps the full transcript for persistence.
 
 import type { ModelRole } from "./config.ts";
@@ -21,7 +21,7 @@ export type AgentMode = "normal" | "plan" | "auto";
  * THEN emit ONE structured plan grounded in what it read and stop — it does not
  * implement. The prompt forbids investigation-as-plan-steps so the output is an
  * implementation plan, not a plan to explore. The TUI renders this plan with
- * accept/edit/reject (Phase 4); in headless it simply prints and exits. The fixed
+ * accept/edit/reject; in headless it simply prints and exits. The fixed
  * section headings make the output easy to parse and present.
  */
 const PLAN_SYSTEM_PROMPT = [

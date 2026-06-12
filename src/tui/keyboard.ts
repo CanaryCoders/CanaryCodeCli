@@ -1,9 +1,8 @@
-// tui/keyboard.ts — renderer-neutral keyboard event shape and current Ink adapter.
+// tui/keyboard.ts — renderer-neutral keyboard event shape and OpenTUI adapter.
 //
-// Components should depend on `useTuiInput` and `TuiKey` rather than importing
-// Ink's `useInput` directly. During the staged OpenTUI port this hook delegates to
-// Ink; the OpenTUI normalizer below documents the future event mapping so the root
-// switch can replace only this boundary.
+// Components depend on `useTuiInput` and `TuiKey` rather than importing
+// OpenTUI's `useKeyboard` directly, so the renderer's event model stays behind
+// this one boundary and the normalizer below is the only place that maps it.
 
 import type { KeyEvent as OpenTuiKeyEvent } from "@opentui/core";
 import { useKeyboard, usePaste } from "@opentui/react";

@@ -1,16 +1,13 @@
-// tui/theme.ts — the central palette + spacing tokens for the Ink TUI.
+// tui/theme.ts — the central palette + spacing tokens for the TUI.
 //
-// Phase 4.8 ("the pretty pass") pulls every glyph, colour, and spacing decision
-// into one place so the look lives here, not scattered across components. The
-// values capture the conventions the TUI already grew organically — the orange `›`
-// user gutter, mode-coloured borders (normal=brand orange / plan=cyan / auto=yellow), the
-// green/red/yellow tool-status marks, and the green/red/cyan diff palette — and
-// give the remaining 4.8 tasks (speaker gutters, framed input, footer pill,
-// code/diff gutters) a shared vocabulary to draw from instead of re-deriving it.
+// Every glyph, colour, and spacing decision lives here so the look is defined
+// in one place, not scattered across components: the orange `›` user gutter,
+// mode-coloured borders (normal=brand orange / plan=cyan / auto=yellow), the
+// green/red/yellow tool-status marks, and the green/red/cyan diff palette.
 //
-// Colours are Ink colour names (strings). `NO_COLOR` degradation is a render-time
-// concern handled by a later task; the constants here stay pure data so they can
-// be read in tests and mapped to Ink `<Text>`/`<Box>` props at the call site.
+// Colours are terminal colour names (strings). `NO_COLOR` degradation is a
+// render-time concern; the constants here stay pure data so they can be read in
+// tests and mapped to `<Text>`/`<Box>` props at the call site.
 
 import type { AgentMode } from "../agent.ts";
 import type { IconName } from "../icons.ts";

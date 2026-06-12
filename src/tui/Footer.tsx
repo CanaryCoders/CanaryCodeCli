@@ -1,15 +1,13 @@
 // tui/Footer.tsx — the bottom status bar: a mode pill, model, thinking, tokens,
 // cost, and a verbose indicator, above a subtle separator rule.
 //
-// Phase 4.8 promotes the old `model · mode · thinking · $cost` text line to a
-// proper footer bar: the mode renders as a coloured **pill** (background-tinted,
-// black text), the live **token count** sits beside the running **cost**, a
-// `⏵ verbose` indicator shows when expanded tool output is on, and a faint
-// full-width **separator rule** divides it from the scrollback. The width comes
-// from `useStdout` (never a hard-coded 80); on a narrow terminal the lowest-value
-// segments (model → thinking → tokens → verbose) drop out one at a time so the bar
-// never overflows. Colours pass through `tint` so `NO_COLOR` keeps the pill's
-// spacing + the rule but drops the colour.
+// The mode renders as a coloured pill (background-tinted, black text), the live
+// token count sits beside the running cost, and a `⏵ verbose` indicator shows
+// when expanded tool output is on. The width comes from the terminal (never a
+// hard-coded 80); on a narrow terminal the lowest-value segments
+// (model → thinking → tokens → verbose) drop out one at a time so the bar never
+// overflows. Colours pass through `tint` so `NO_COLOR` keeps the pill's spacing
+// + the rule but drops the colour.
 
 import { useRef, useState } from "react";
 import type { AgentMode } from "../agent.ts";

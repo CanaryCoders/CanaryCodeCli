@@ -6,7 +6,7 @@
 // is ephemeral (it lives in the front-end for the session, never persisted).
 //
 // Like askuser.ts this module is framework-agnostic on purpose: the pure helpers
-// (validation, formatting) and the tool factory live here so both the Ink TUI
+// (validation, formatting) and the tool factory live here so both the TUI
 // and the headless CLI share them. The TUI wires `onUpdate` to React state that
 // renders a panel; headless wires it to a compact stderr checklist.
 //

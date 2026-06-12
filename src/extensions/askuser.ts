@@ -7,7 +7,7 @@
 //
 // This module is framework-agnostic on purpose: the pure helpers (validation,
 // the recommended-option pick, answer formatting) and the tool factory live here
-// so both the Ink TUI and the headless CLI share them. The interactive box is the
+// so both the TUI and the headless CLI share them. The interactive box is the
 // only React piece (tui/AskUser.tsx); headless supplies a resolver that auto-picks
 // each question's recommended option, so the model can't tell the difference and
 // never gets a lever to "skip" a genuine question.

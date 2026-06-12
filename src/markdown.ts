@@ -4,7 +4,7 @@
 // fences print literally in a raw terminal. This tokenizes the common subset the
 // model actually emits and maps it to terminal styling, producing a neutral
 // "span" model that both front-ends consume:
-//   - the TUI (Message.tsx) maps each span to an Ink `<Text>` (bold/italic/...),
+//   - the TUI (Message.tsx) maps each span to `<Text>` props (bold/italic/...),
 //   - headless maps each span to ANSI escapes via `renderAnsi` (TTY only).
 //
 // It is deliberately NOT a full CommonMark engine — it handles ~90% of what the
@@ -13,8 +13,8 @@
 // unbalanced inline markers stay literal until their closer arrives, and lines
 // after an unclosed fence render as code.
 
-/** An inline run of text with terminal styling. Field names match Ink `<Text>`
- * props so the TUI can spread them; `renderAnsi` maps them to SGR codes. */
+/** An inline run of text with terminal styling. Field names match the TUI's
+ * `<Text>` props so it can spread them; `renderAnsi` maps them to SGR codes. */
 export interface Span {
   text: string;
   bold?: boolean;
@@ -23,7 +23,7 @@ export interface Span {
   strikethrough?: boolean;
   /** Dim (faint) — used for code blocks, quotes, and link URLs. */
   dim?: boolean;
-  /** An Ink colour name (e.g. "cyan"); `renderAnsi` maps the common ones. */
+  /** A terminal colour name (e.g. "cyan"); `renderAnsi` maps the common ones. */
   color?: string;
 }
 

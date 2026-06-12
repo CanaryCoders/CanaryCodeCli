@@ -10,8 +10,8 @@
 import type { SessionRow } from "./session.ts";
 
 // CanaryCoders brand orange (see tui/theme.ts BRAND) as a raw ANSI truecolor
-// sequence — this module renders before the TUI exists, so it can't use Ink
-// color props.
+// sequence — this module renders before the TUI exists, so it can't use the
+// TUI's color props.
 const ORANGE = "\x1b[38;2;255;127;50m";
 const DIM = "\x1b[2m";
 const RESET = "\x1b[0m";

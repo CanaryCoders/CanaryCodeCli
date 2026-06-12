@@ -69,6 +69,13 @@ cc update     # or /update inside the TUI
 
 Auto-update never mutates anything on its own — it only checks and notifies. Disable the check entirely with `autoUpdate.enabled: false` in `~/.cc/config.json` or by setting `CC_DISABLE_UPDATE=1`. Source checkouts (update with `git`) and Nix installs never self-update.
 
+Release notes live in [CHANGELOG.md](CHANGELOG.md) and are published with each GitHub release. After an update lands, the next launch shows a one-line what's-new notice; read the full notes anytime with:
+
+```bash
+cc changelog          # notes for the version you're running
+cc changelog 0.1.0    # or any released version — /changelog inside the TUI
+```
+
 ## Usage
 
 ```bash
@@ -385,7 +392,7 @@ Auto mode and `--yolo` bypass the gate. Plan mode never reaches mutating tools. 
 
 ## Slash commands (TUI)
 
-`/model`, `/think`, `/plan`, `/auto`, `/normal`, `/config`, `/extensions`, `/login-codex`, `/logout-codex`, `/login-opencode`, `/logout-opencode`, `/clear`, `/resume`, `/cost`, `/init`, `/update`, `/help`, `/exit`.
+`/model`, `/think`, `/plan`, `/auto`, `/normal`, `/config`, `/extensions`, `/login-codex`, `/logout-codex`, `/login-opencode`, `/logout-opencode`, `/clear`, `/compact`, `/resume`, `/cost`, `/copy`, `/copy-last`, `/init`, `/update`, `/changelog`, `/help`, `/exit`.
 
 `/config` supports `/config` (show effective config), `/config get <path>`, `/config set <path> <value>`, `/config unset <path>`, `/config reload`, and `/config reload mcp` (reload config and reconnect MCP servers).
 
