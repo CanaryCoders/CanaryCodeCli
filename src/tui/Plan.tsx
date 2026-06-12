@@ -6,10 +6,10 @@
 // box; the a/e/r keys are handled in App.tsx's `useInput` while the prompt
 // `TextInput` is unmounted, so the keystrokes can't leak into the input line.
 
-import { Box, Text } from "ink";
 import type { AgentMode } from "../agent.ts";
 import { useIcon } from "./Icon.tsx";
 import { Markdown } from "./Message.tsx";
+import { Box, Text } from "./primitives.tsx";
 import { modeColor, SPACING, tint } from "./theme.ts";
 
 export function PlanView({

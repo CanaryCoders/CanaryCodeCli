@@ -12,6 +12,18 @@ import {
 } from "./tui/input-helpers.ts";
 
 describe("reduceInput", () => {
+  test("backspace deletes before the cursor and delete deletes at the cursor", () => {
+    expect(
+      reduceInput({ value: "abcd", cursor: 2 }, "", { backspace: true }),
+    ).toEqual({ type: "update", value: "acd", cursor: 1 });
+    expect(
+      reduceInput({ value: "abcd", cursor: 2 }, "", { delete: true }),
+    ).toEqual({ type: "update", value: "abd", cursor: 2 });
+    expect(
+      reduceInput({ value: "abcd", cursor: 4 }, "", { delete: true }),
+    ).toEqual({ type: "none" });
+  });
+
   test("ignores raw escape bytes instead of inserting visible ^[ text", () => {
     expect(reduceInput({ value: "", cursor: 0 }, "\x1b", {})).toEqual({
       type: "none",

@@ -5,7 +5,6 @@
 // width-capped so it never overflows Ink's dynamic region); `PromptArea` renders
 // whichever pause-and-ask overlay is active, or the framed input box when none is.
 
-import { Box, Text } from "ink";
 import Spinner from "ink-spinner";
 import { AskUserView } from "./AskUser.tsx";
 import { Complete } from "./Complete.tsx";
@@ -16,6 +15,7 @@ import { MultilineInput } from "./Input.tsx";
 import { type Item, ItemView } from "./Message.tsx";
 import { clampLineWidth, tailLines } from "./message-helpers.ts";
 import { PlanView } from "./Plan.tsx";
+import { Box, Text } from "./primitives.tsx";
 import { SPACING, tint } from "./theme.ts";
 import type { AgentSession } from "./use-agent-session.ts";
 import type { Approvals } from "./use-approvals.ts";

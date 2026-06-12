@@ -11,9 +11,9 @@
 // never overflows. Colours pass through `tint` so `NO_COLOR` keeps the pill's
 // spacing + the rule but drops the colour.
 
-import { Box, Text, useStdout } from "ink";
 import type { AgentMode } from "../agent.ts";
 import { useIcon } from "./Icon.tsx";
+import { Box, Text, useTerminalColumns } from "./primitives.tsx";
 import { tint } from "./theme.ts";
 
 export interface FooterProps {
@@ -75,8 +75,8 @@ function fitSegments(segs: Seg[], cols: number): Seg[] {
 }
 
 export function Footer(props: FooterProps): React.ReactElement {
-  const { stdout } = useStdout();
-  const cols = props.columns ?? stdout?.columns ?? 80;
+  const measuredColumns = useTerminalColumns();
+  const cols = props.columns ?? measuredColumns;
 
   const tokText = `${formatTokens(props.tokens)} tok`;
   const costText = props.costKnown ? `$${props.cost.toFixed(4)}` : null;

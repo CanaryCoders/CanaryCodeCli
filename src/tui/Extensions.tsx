@@ -8,9 +8,10 @@
 // handler) closes without applying. Like AskUserView, this component owns its
 // own keys via `useInput`; App's handler bows out while the picker is open.
 
-import { Box, Text, useInput } from "ink";
 import { useState } from "react";
 import { useIcon } from "./Icon.tsx";
+import { useTuiInput } from "./keyboard.ts";
+import { Box, Text } from "./primitives.tsx";
 import { SPACING, tint } from "./theme.ts";
 
 const ACCENT = "magenta";
@@ -40,7 +41,7 @@ export function ExtensionsView({
     () => new Set(items.filter((i) => i.enabled).map((i) => i.name)),
   );
 
-  useInput((input, key) => {
+  useTuiInput((input, key) => {
     if (key.upArrow)
       return setCursor((c) => (c - 1 + items.length) % items.length);
     if (key.downArrow) return setCursor((c) => (c + 1) % items.length);

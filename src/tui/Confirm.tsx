@@ -8,10 +8,10 @@
 // disables the gate for the rest of the session. Auto mode and `--yolo` never
 // reach here — they bypass the gate by design.
 
-import { Box, Text } from "ink";
 import type { ConfirmPreview } from "./confirm-helpers.ts";
 import { useIcon } from "./Icon.tsx";
 import { DiffView } from "./Message.tsx";
+import { Box, Text } from "./primitives.tsx";
 import { SPACING, tint } from "./theme.ts";
 
 // Re-export the preview/choice types and helpers' shapes for callers that still

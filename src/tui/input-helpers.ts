@@ -187,12 +187,20 @@ export function reduceInput(
       cursor: lineStart(value, target) + nextCol,
     };
   }
-  if (key.backspace || key.delete) {
+  if (key.backspace) {
     if (cursor === 0) return { type: "none" };
     return {
       type: "update",
       value: value.slice(0, cursor - 1) + value.slice(cursor),
       cursor: cursor - 1,
+    };
+  }
+  if (key.delete) {
+    if (cursor >= value.length) return { type: "none" };
+    return {
+      type: "update",
+      value: value.slice(0, cursor) + value.slice(cursor + 1),
+      cursor,
     };
   }
 

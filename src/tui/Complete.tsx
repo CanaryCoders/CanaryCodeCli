@@ -7,9 +7,9 @@
 // floods the terminal. All key handling (move / accept / dismiss) lives in App —
 // this only draws the current state.
 
-import { Box, Text } from "ink";
 import type { Completion } from "../commands.ts";
 import { useIcon } from "./Icon.tsx";
+import { Box, Text } from "./primitives.tsx";
 import { SPACING, tint } from "./theme.ts";
 
 /** Most rows to show at once; the window scrolls to keep `selected` visible. */

@@ -14,7 +14,6 @@
 // MultilineInput; while it's active this box's own `useInput` is disabled so the
 // two never fight over a keypress.
 
-import { Box, Text, useInput } from "ink";
 import { useReducer, useRef } from "react";
 import type { AskAnswer, AskQuestion } from "../assemble.ts";
 // recommendedIndex is a pure presentation helper (which option to pre-select);
@@ -23,6 +22,8 @@ import type { AskAnswer, AskQuestion } from "../assemble.ts";
 import { recommendedIndex } from "../extensions/askuser.ts";
 import { useIcon } from "./Icon.tsx";
 import { MultilineInput } from "./Input.tsx";
+import { useTuiInput } from "./keyboard.ts";
+import { Box, Text } from "./primitives.tsx";
 import { SPACING, tint } from "./theme.ts";
 
 const CUSTOM_LABEL = "Write my own answer";
@@ -137,7 +138,7 @@ export function AskUserView({
     }
   };
 
-  useInput(
+  useTuiInput(
     (input, key) => {
       if (key.upArrow)
         return dispatch({ type: "moveCursor", rowCount, delta: -1 });

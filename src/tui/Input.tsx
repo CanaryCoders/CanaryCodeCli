@@ -18,7 +18,6 @@
 // tested without a render; this component is a thin shell that mirrors the cursor
 // in state and renders the value with a fake inverse-block cursor (no chalk dep).
 
-import { Box, Text, useInput } from "ink";
 import { useEffect, useRef, useState } from "react";
 import {
   cursorLineCol,
@@ -30,6 +29,8 @@ import {
   stripEscapes,
   wrapDisplayLine,
 } from "./input-helpers.ts";
+import { useTuiInput } from "./keyboard.ts";
+import { Box, Text } from "./primitives.tsx";
 
 // ── the component ─────────────────────────────────────────────────────────────
 
@@ -153,7 +154,7 @@ export function MultilineInput({
     );
   };
 
-  useInput(
+  useTuiInput(
     (input, key) => {
       // Raw Esc bursts can arrive with key.escape missing when the key is spammed.
       // They are handled by App's global cancel listener; never buffer/render them.

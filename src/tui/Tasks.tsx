@@ -5,9 +5,9 @@
 // dimmed, the in-progress one is tinted and shows its `activeForm` label, pending
 // tasks are plain. Presentation only — state lives in App.
 
-import { Box, Text } from "ink";
 import type { Task, TaskStatus } from "../assemble.ts";
 import { useIcon } from "./Icon.tsx";
+import { Box, Text } from "./primitives.tsx";
 import { SPACING, tint } from "./theme.ts";
 
 interface TasksProps {

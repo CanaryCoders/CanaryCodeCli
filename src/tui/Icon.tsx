@@ -1,9 +1,9 @@
 // tui/Icon.tsx — React helpers for semantic TUI icons.
 
-import { Text } from "ink";
 import { createContext, useContext } from "react";
 import type { Config } from "../config.ts";
 import { iconFor as baseIconFor, type IconName } from "../icons.ts";
+import { Text } from "./primitives.tsx";
 
 function useNerdFont(config: Config | undefined): boolean {
   return config?.ui?.nerdFont === true;

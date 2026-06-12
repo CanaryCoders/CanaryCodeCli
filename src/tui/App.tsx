@@ -17,7 +17,7 @@
 // step needs a second press). Ctrl+R toggles verbose tool output; Shift+Tab cycles
 // the mode (normal → plan → auto → normal).
 
-import { Box, render, Static, useApp, useInput, useStdout } from "ink";
+import { render, Static, useApp, useStdout } from "ink";
 import { useEffect, useMemo, useReducer, useRef } from "react";
 import { describeLevel } from "../thinking.ts";
 import { LiveRegion, PromptArea } from "./AppViews.tsx";
@@ -26,9 +26,11 @@ import { confirmChoiceForKey } from "./confirm-helpers.ts";
 import { Footer } from "./Footer.tsx";
 import { IconProvider } from "./Icon.tsx";
 import { isRawEscapeInput } from "./input-helpers.ts";
+import { useTuiInput } from "./keyboard.ts";
 import { ItemView } from "./Message.tsx";
 import { statusVerb } from "./message-helpers.ts";
 import { planChoiceForKey } from "./plan-helpers.ts";
+import { Box } from "./primitives.tsx";
 import { type TuiRuntime, TuiRuntimeContext } from "./runtime.tsx";
 import { Tasks } from "./Tasks.tsx";
 import { modeColor as themeModeColor } from "./theme.ts";
@@ -186,7 +188,7 @@ function App(props: AppProps): React.ReactElement {
   // the prompt). Pending gates own the keyboard until answered. The handler reads
   // live state via refs (Ink rebinds it each render, but the async loop mutates
   // state between renders).
-  useInput((_input, key) => {
+  useTuiInput((_input, key) => {
     if (key.ctrl && _input === "c") {
       session.handleCancel("Ctrl+C");
       return;

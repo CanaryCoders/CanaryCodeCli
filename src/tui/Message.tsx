@@ -10,7 +10,6 @@
 // `expanded` (or an errored result) reveals the full input and the head of the
 // tool's output. Errors always show their first line even when collapsed.
 
-import { Box, Text } from "ink";
 import { type Diff, type DiffLine, diffStat } from "../diff.ts";
 import { parseMarkdownWithFlags, type Span } from "../markdown.ts";
 import { useIcon } from "./Icon.tsx";
@@ -25,6 +24,7 @@ import {
   truncateWidth,
   wrapWords,
 } from "./message-helpers.ts";
+import { Box, Text } from "./primitives.tsx";
 import {
   DIFF,
   GUTTER_RULE_ICON,
