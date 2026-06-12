@@ -17,8 +17,8 @@
 // step needs a second press). Ctrl+R toggles verbose tool output; Shift+Tab cycles
 // the mode (normal → plan → auto → normal).
 
-import { Box, render, Static, useInput, useStdout } from "ink";
-import { useEffect, useReducer, useRef } from "react";
+import { Box, render, Static, useApp, useInput, useStdout } from "ink";
+import { useEffect, useMemo, useReducer, useRef } from "react";
 import { describeLevel } from "../thinking.ts";
 import { LiveRegion, PromptArea } from "./AppViews.tsx";
 import type { AppProps } from "./app-types.ts";
@@ -29,6 +29,7 @@ import { isRawEscapeInput } from "./input-helpers.ts";
 import { ItemView } from "./Message.tsx";
 import { statusVerb } from "./message-helpers.ts";
 import { planChoiceForKey } from "./plan-helpers.ts";
+import { type TuiRuntime, TuiRuntimeContext } from "./runtime.tsx";
 import { Tasks } from "./Tasks.tsx";
 import { modeColor as themeModeColor } from "./theme.ts";
 import { useAgentSession } from "./use-agent-session.ts";
@@ -44,7 +45,13 @@ import { useTranscript } from "./use-transcript.ts";
 // Finished items live in the `<Static>` scrollback; the in-flight turn accumulates
 // in `live` and is moved into the scrollback when the turn completes.
 
+const inkRuntimeInstanceRef: { current: { clear: () => void } | null } = {
+  current: null,
+};
+
 function App(props: AppProps): React.ReactElement {
+  const app = useApp();
+
   // Terminal size, used to cap the live (in-flight) region so it never grows past
   // the viewport — overflowing the dynamic region desyncs Ink's redraw and
   // duplicates lines into the scrollback. `<Static>` scrollback is printed once
@@ -69,14 +76,14 @@ function App(props: AppProps): React.ReactElement {
       // Erase only the visible screen (not the scrollback buffer — no \x1b[3J — so
       // history the user scrolled past is preserved) and home the cursor.
       stdout.write("\x1b[2J\x1b[H");
-      props.inkInstance?.current?.clear();
+      inkRuntimeInstanceRef.current?.clear();
       bumpResize();
     };
     stdout.on("resize", onResize);
     return () => {
       stdout.off("resize", onResize);
     };
-  }, [stdout, props.inkInstance]);
+  }, [stdout]);
 
   // The in-flight request's abort controller is shared between the agent session
   // (which creates/aborts it) and the approval gate (whose AI safety check reads
@@ -131,6 +138,16 @@ function App(props: AppProps): React.ReactElement {
     store: props.store,
   });
 
+  const runtime = useMemo<TuiRuntime>(
+    () => ({
+      clear: () => inkRuntimeInstanceRef.current?.clear(),
+      exit: () => app.exit(),
+      columns: () => stdout?.columns ?? 80,
+      rows: () => stdout?.rows ?? 24,
+    }),
+    [app, stdout],
+  );
+
   // The agent-session controller: run state + every turn-driving action.
   const session = useAgentSession({
     props,
@@ -140,6 +157,7 @@ function App(props: AppProps): React.ReactElement {
     promptHistory,
     pasteMap,
     controllerRef,
+    runtime,
   });
 
   // Assemble the session once the UI has painted — runTui defers it here (rather
@@ -275,8 +293,8 @@ function App(props: AppProps): React.ReactElement {
   // text still lands in the scrollback when the block finalises. Reserve rows for
   // the input frame, footer, gaps, and the trim marker; over-reserving only trims
   // a little more tail, which is harmless.
-  const rows = stdout?.rows ?? 24;
-  const columns = stdout?.columns ?? 80;
+  const rows = runtime.rows();
+  const columns = runtime.columns();
   const liveCap = Math.max(3, rows - 10);
   // Reserve for the *deepest* nested gutter a live line can sit behind: the 3-cell
   // speaker gutter, plus the 2-cell `│ ` markdown rule that code-fence/indented
@@ -287,66 +305,65 @@ function App(props: AppProps): React.ReactElement {
   const liveContentWidth = Math.max(1, columns - 5);
 
   return (
-    <IconProvider config={props.config}>
-      <Box flexDirection="column">
-        {/* Ink's <Static> box is position:absolute with NO width, so Yoga sizes it
+    <TuiRuntimeContext.Provider value={runtime}>
+      <IconProvider config={props.config}>
+        <Box flexDirection="column">
+          {/* Ink's <Static> box is position:absolute with NO width, so Yoga sizes it
             to its content instead of the terminal — text then wraps a couple of
             columns too wide and the terminal hard-wraps the spill to column 0
             (orphan letters with no gutter indent). Pin it to the terminal width. */}
-        <Static items={transcript.history} style={{ width: columns }}>
-          {renderHistoryItem}
-        </Static>
+          <Static items={transcript.history} style={{ width: columns }}>
+            {renderHistoryItem}
+          </Static>
 
-        <LiveRegion
-          live={transcript.live}
-          history={transcript.history}
-          verbose={session.verbose}
-          firstToolId={firstToolId}
-          liveCap={liveCap}
-          liveContentWidth={liveContentWidth}
-        />
+          <LiveRegion
+            live={transcript.live}
+            history={transcript.history}
+            verbose={session.verbose}
+            firstToolId={firstToolId}
+            liveCap={liveCap}
+            liveContentWidth={liveContentWidth}
+          />
 
-        <Tasks tasks={session.tasks} />
+          <Tasks tasks={session.tasks} />
 
-        <PromptArea
-          approvals={approvals}
-          session={session}
-          autocomplete={autocomplete}
-          promptInput={promptInput}
-          promptHistory={promptHistory}
-          registerPaste={registerPaste}
-          pasteMap={pasteMap}
-          modeColor={modeColor}
-          verb={verb}
-          columns={columns}
-        />
+          <PromptArea
+            approvals={approvals}
+            session={session}
+            autocomplete={autocomplete}
+            promptInput={promptInput}
+            promptHistory={promptHistory}
+            registerPaste={registerPaste}
+            pasteMap={pasteMap}
+            modeColor={modeColor}
+            verb={verb}
+            columns={columns}
+          />
 
-        <Footer
-          modelLabel={session.modelLabel}
-          mode={session.mode}
-          modeColor={modeColor}
-          thinkLabel={thinkLabel}
-          cost={session.cost}
-          costKnown={session.costKnown}
-          tokens={session.tokens}
-          verbose={session.verbose}
-        />
-      </Box>
-    </IconProvider>
+          <Footer
+            modelLabel={session.modelLabel}
+            mode={session.mode}
+            modeColor={modeColor}
+            thinkLabel={thinkLabel}
+            cost={session.cost}
+            costKnown={session.costKnown}
+            tokens={session.tokens}
+            verbose={session.verbose}
+          />
+        </Box>
+      </IconProvider>
+    </TuiRuntimeContext.Provider>
   );
 }
 
 /** Launch the Ink TUI. The caller resolves config/provider/system and passes them in. */
 export function startTui(props: AppProps): void {
   // exitOnCtrlC:false — the App handles Ctrl+C itself (abort once, quit twice).
-  // The instance ref lets the App clear the screen via Ink's own clear() (see
-  // the /clear handler) instead of writing raw escape sequences, which desync
-  // Ink's renderer and cause duplicated lines / runaway layout.
-  const inkInstance: { current: { clear: () => void } | null } = {
-    current: null,
-  };
-  const instance = render(<App {...props} inkInstance={inkInstance} />, {
+  // The runtime ref lets the App clear the screen via Ink's own clear() (see the
+  // /clear handler) instead of writing raw escape sequences, which desync Ink's
+  // renderer and cause duplicated lines / runaway layout.
+  const instance = render(<App {...props} />, {
     exitOnCtrlC: false,
   });
-  inkInstance.current = instance;
+  inkRuntimeInstanceRef.current = instance;
 }

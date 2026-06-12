@@ -29,6 +29,4 @@ export interface AppProps {
   resumedMessages?: Message[];
   /** Startup notes (context/skills/mcp) to show in the scrollback. */
   startupNotes: string[];
-  /** Ink render instance (populated after render); used to clear the screen. */
-  inkInstance?: { current: { clear: () => void } | null };
 }

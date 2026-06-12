@@ -12,7 +12,6 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { useApp } from "ink";
 import { useRef, useState } from "react";
 import { type AgentMode, roleForMode, runAgent } from "../agent.ts";
 import {
@@ -76,6 +75,7 @@ import type { ExtensionToggle } from "./Extensions.tsx";
 import { drainInputQuiet, expandPastes } from "./input-helpers.ts";
 import type { Item } from "./Message.tsx";
 import { stablePrefixLen } from "./message-helpers.ts";
+import type { TuiRuntime } from "./runtime.tsx";
 import type { Approvals } from "./use-approvals.ts";
 import type { PasteChips } from "./use-paste-chips.ts";
 import type { PromptHistory } from "./use-prompt-history.ts";
@@ -145,14 +145,21 @@ export function useAgentSession(deps: {
   pasteMap: PasteChips["pasteMap"];
   /** Shared abort controller (also read by the approval gate's safety check). */
   controllerRef: React.MutableRefObject<AbortController | null>;
+  runtime: TuiRuntime;
 }): AgentSession {
-  const { props, transcript, approvals, promptInput, promptHistory, pasteMap } =
-    deps;
+  const {
+    props,
+    transcript,
+    approvals,
+    promptInput,
+    promptHistory,
+    pasteMap,
+    runtime,
+  } = deps;
   const { setHistory, setLive, updateBanner, push, note, nextId } = transcript;
   const { setInput, inputRef, bumpCursor } = promptInput;
   const controllerRef = deps.controllerRef;
   const nerdFont = props.config.ui.nerdFont === true;
-  const app = useApp();
 
   // Mutable engine state lives in refs (read inside async loops); React state
   // mirrors what the UI shows.
@@ -268,19 +275,20 @@ export function useAgentSession(deps: {
       }
     } finally {
       props.store.close();
-      // Absorb the tail of an Esc/Ctrl+C spam before releasing the tty: while Ink
-      // is still mounted the terminal is raw and reads here drain the buffered
-      // keystrokes. Without this, the leftovers spill into the parent shell and
-      // corrupt its terminal handshake (fish's OSC 11 background probe renders
+      // Absorb the tail of an Esc/Ctrl+C spam before releasing the tty: while the
+      // renderer is still mounted the terminal is raw and reads here drain the
+      // buffered keystrokes. Without this, the leftovers spill into the parent shell
+      // and corrupt its terminal handshake (fish's OSC 11 background probe renders
       // its reply as literal `]11;rgb:…` at the prompt).
       await drainInputQuiet(process.stdin);
-      // Unmount Ink first so the terminal is restored to cooked mode immediately,
-      // then tear down the rest of the process. `app.exit()` only unmounts the UI —
-      // it does NOT end the process, and the live MCP clients (their child
-      // processes and sockets) keep the event loop alive, so without an explicit
-      // exit the process lingers after the UI is gone: the now-cooked terminal
-      // echoes any further keystrokes as raw `^[`/`^C` until a signal kills it.
-      app.exit();
+      // Unmount the UI first so the terminal is restored to cooked mode
+      // immediately, then tear down the rest of the process. The runtime exit only
+      // unmounts the UI — it does NOT end the process, and the live MCP clients
+      // (their child processes and sockets) keep the event loop alive, so without an
+      // explicit exit the process lingers after the UI is gone: the now-cooked
+      // terminal echoes any further keystrokes as raw `^[`/`^C` until a signal kills
+      // it.
+      runtime.exit();
       // Abort the session-scoped signal (cancels any in-flight AI permission
       // check) and dispose the assembled session — its dispose() closes MCP
       // transports (killing spawned servers like puppeteer's browser). Capped so a
@@ -1074,15 +1082,14 @@ export function useAgentSession(deps: {
         if (props.config.hooks.SessionStart?.length) {
           void runSessionStartHooks(props.config.hooks, "clear", hookContext());
         }
-        // Ink's <Static> prints scrollback permanently — resetting React state
-        // alone leaves the old transcript on screen. We must clear via Ink's own
-        // instance.clear() so Ink resets its internal cursor/output bookkeeping;
-        // writing a raw clear escape (\x1b[2J…) out-of-band desyncs Ink and causes
-        // duplicated re-renders and a runaway layout. Reset history first, then
-        // clear on the next tick so the <Static> count is in sync.
+        // The current Ink renderer prints scrollback permanently via <Static> —
+        // resetting React state alone leaves the old transcript on screen. Clear
+        // through the host runtime so the renderer can reset its own bookkeeping.
+        // Reset history first, then clear on the next tick so the scrollback count is
+        // in sync.
         setHistory([]);
         setTasks([]);
-        queueMicrotask(() => props.inkInstance?.current?.clear());
+        queueMicrotask(() => runtime.clear());
         setCost(0);
         setTokens(0);
         note("conversation cleared");
