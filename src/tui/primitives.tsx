@@ -9,8 +9,18 @@
 import { createTextAttributes } from "@opentui/core";
 import { useTerminalDimensions } from "@opentui/react";
 import type { ReactElement, ReactNode } from "react";
-import { createElement } from "react";
+import { createContext, createElement, useContext } from "react";
 import { tint } from "./theme.ts";
+
+// OpenTUI splits Ink's single <Text> into two host elements: a block-level
+// <text> (a TextRenderable) and inline <span> runs (TextNodeRenderable). A
+// <text> only accepts string / span / StyledText children — appending another
+// <text> to it throws ("TextNodeRenderable only accepts strings, …"). Ink code
+// freely nests <Text> inside <Text> for styled runs, so we map that idiom by
+// tracking nesting: the outermost Text emits <text> and marks its subtree as
+// "inside text"; any Text rendered within emits <span> instead. Box resets the
+// flag so block layout always starts a fresh text context.
+const InsideText = createContext(false);
 
 export interface BoxProps {
   children?: ReactNode;
@@ -102,7 +112,9 @@ export function OpenTuiBox({
       borderStyle: mapBorderStyle(borderStyle),
       borderColor,
     },
-    children,
+    // A box is block-level layout: its subtree starts outside any text node, so
+    // a Text inside it emits a fresh <text>, not a <span>.
+    createElement(InsideText.Provider, { value: false }, children),
   );
 }
 
@@ -112,37 +124,65 @@ function mapWrapMode(wrap: TextProps["wrap"]): "none" | "char" | "word" {
   return "none";
 }
 
-/** Adapter: maps Text props onto OpenTUI's native <text> element. */
-export function OpenTuiText({
-  children,
-  color,
-  backgroundColor,
-  dimColor,
-  bold,
-  italic,
-  underline,
-  strikethrough,
-  inverse,
-  wrap,
-  ...props
-}: TextProps): ReactElement {
+/** Adapter: maps Text props onto OpenTUI's native <text>/<span> element. */
+export function OpenTuiText(props: TextProps): ReactElement {
+  return buildTextElement(props, useContext(InsideText));
+}
+
+/**
+ * Pure builder for a Text primitive's host element, split out so the
+ * <text>-vs-<span> decision can be tested without a renderer.
+ *
+ * `insideText` is true when this Text is nested within another Text. In that
+ * case it must emit an inline <span> (a TextNodeRenderable the parent <text>
+ * accepts) — emitting a nested <text> throws at render. At the top level it
+ * emits a block <text> and flags its subtree inside-text so descendant Text
+ * runs become spans. Block-only props (truncate/wrapMode) apply to <text> only.
+ */
+export function buildTextElement(
+  {
+    children,
+    color,
+    backgroundColor,
+    dimColor,
+    bold,
+    italic,
+    underline,
+    strikethrough,
+    inverse,
+    wrap,
+    ...props
+  }: TextProps,
+  insideText: boolean,
+): ReactElement {
+  const fg = dimColor ? tint("gray") : color;
+  const attributes = createTextAttributes({
+    bold,
+    italic,
+    underline,
+    strikethrough,
+    inverse,
+    dim: dimColor && tint("gray") === undefined,
+  });
+
+  if (insideText) {
+    return createElement(
+      "span",
+      { ...props, fg, bg: backgroundColor, attributes },
+      children as ReactNode,
+    );
+  }
+
   return createElement(
     "text",
     {
       ...props,
-      fg: dimColor ? tint("gray") : color,
+      fg,
       bg: backgroundColor,
-      attributes: createTextAttributes({
-        bold,
-        italic,
-        underline,
-        strikethrough,
-        inverse,
-        dim: dimColor && tint("gray") === undefined,
-      }),
+      attributes,
       truncate: wrap === "truncate",
       wrapMode: mapWrapMode(wrap),
     },
-    children as ReactNode,
+    createElement(InsideText.Provider, { value: true }, children as ReactNode),
   );
 }

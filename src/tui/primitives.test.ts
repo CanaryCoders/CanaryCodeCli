@@ -1,0 +1,54 @@
+// primitives.test.ts — guards the <text>-vs-<span> decision in the Text
+// primitive. OpenTUI's <text> (a TextRenderable) rejects a nested <text> child
+// ("TextNodeRenderable only accepts strings, …"), which crashed the whole TUI at
+// first paint. A Text nested inside another Text must therefore emit an inline
+// <span>. These tests exercise the pure builder so no live renderer is needed.
+
+import { expect, test } from "bun:test";
+import type { ReactElement } from "react";
+import { buildTextElement } from "./primitives.tsx";
+
+/** React 19 types element props as `unknown`; read them through a known shape. */
+function props(el: ReactElement): Record<string, unknown> {
+  return el.props as Record<string, unknown>;
+}
+
+test("top-level Text emits a block <text> element", () => {
+  expect(buildTextElement({ children: "hi" }, false).type).toBe("text");
+});
+
+test("nested Text emits an inline <span> (never a nested <text>)", () => {
+  expect(buildTextElement({ children: "run" }, true).type).toBe("span");
+});
+
+test("a block <text> flags its subtree inside-text so children become spans", () => {
+  const el = buildTextElement({ children: "x" }, false);
+  // The single child is a context provider carrying value=true; any Text
+  // rendered within it reads that and switches to <span>.
+  const child = props(el).children as ReactElement;
+  expect(props(child).value).toBe(true);
+});
+
+test("styling props pass through on both block and inline variants", () => {
+  const block = buildTextElement(
+    { color: "cyan", backgroundColor: "black" },
+    false,
+  );
+  expect(props(block).fg).toBe("cyan");
+  expect(props(block).bg).toBe("black");
+  const inline = buildTextElement(
+    { color: "cyan", backgroundColor: "black" },
+    true,
+  );
+  expect(props(inline).fg).toBe("cyan");
+  expect(props(inline).bg).toBe("black");
+});
+
+test("block-only wrap props apply to <text> but not <span>", () => {
+  expect(props(buildTextElement({ wrap: "truncate" }, false)).truncate).toBe(
+    true,
+  );
+  expect(
+    props(buildTextElement({ wrap: "truncate" }, true)).truncate,
+  ).toBeUndefined();
+});
