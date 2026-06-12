@@ -71,11 +71,11 @@ import {
 } from "../thinking.ts";
 import { applyUpdate, updateDisabledReason } from "../update.ts";
 import type { AppProps } from "./app-types.ts";
-import type { ExtensionToggle } from "./Extensions.tsx";
 import {
   copyTargetToClipboard,
   lastAssistantCopyTarget,
 } from "./copy-targets.ts";
+import type { ExtensionToggle } from "./Extensions.tsx";
 import { drainInputQuiet, expandPastes } from "./input-helpers.ts";
 import type { Item } from "./Message.tsx";
 import type { TuiRuntime } from "./runtime.tsx";
