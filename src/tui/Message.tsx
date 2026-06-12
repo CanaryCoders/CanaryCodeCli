@@ -211,14 +211,11 @@ function BannerView({
   provider,
 }: Extract<Item, { kind: "banner" }>): React.ReactElement {
   return (
-    // alignSelf="flex-start" keeps this a slim chip hugging its content; without
-    // it a flex column's default `alignItems: stretch` blows the fill out to the
-    // full terminal width.
     <Box
       backgroundColor={tint(SURFACE.banner)}
       paddingX={SPACING.boxPadX}
       paddingY={SPACING.boxPadY}
-      alignSelf="flex-start"
+      width="100%"
     >
       <Text bold>{`${appName} v${version}`}</Text>
       <Text

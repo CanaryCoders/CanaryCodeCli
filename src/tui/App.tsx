@@ -310,23 +310,23 @@ function App(props: AppProps): React.ReactNode {
           >
             <Box flexDirection="column" width={columns}>
               {transcript.history.map(renderHistoryItem)}
+              <LiveRegion
+                live={transcript.live}
+                history={transcript.history}
+                verbose={session.verbose}
+                firstToolId={firstToolId}
+                liveCap={liveCap}
+                liveContentWidth={liveContentWidth}
+              />
             </Box>
           </ScrollBox>
 
-          {/* Bottom chrome — the in-flight turn, tasks, input box, and footer —
-              pinned to the terminal bottom. flexShrink:0 keeps it at full height
-              (it was getting compacted/clipped when the scrollbox grew). The live
-              region's own height cap (liveCap) keeps this within the viewport. */}
+          {/* Bottom chrome — tasks, input box, and footer — pinned to the terminal
+              bottom. flexShrink:0 keeps it at full height (it was getting
+              compacted/clipped when the scrollbox grew). The in-flight turn renders
+              in the transcript scrollbox above, so the toolbar top stays reserved for
+              queue/spinner/status rows only. */}
           <Box flexDirection="column" flexShrink={0}>
-            <LiveRegion
-              live={transcript.live}
-              history={transcript.history}
-              verbose={session.verbose}
-              firstToolId={firstToolId}
-              liveCap={liveCap}
-              liveContentWidth={liveContentWidth}
-            />
-
             <Tasks tasks={session.tasks} />
 
             <PromptArea
