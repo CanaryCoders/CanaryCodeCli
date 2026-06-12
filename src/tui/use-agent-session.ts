@@ -323,6 +323,22 @@ export function useAgentSession(deps: {
       // disposal was running, immediately before cooked mode is restored.
       await drainInputQuiet(process.stdin, 75, 250);
       runtime.exit();
+      // OpenTUI's native layer probes the terminal background (OSC 11 — the
+      // dylib emits `]11;?`), and teardown can leave that reply still in
+      // flight. Once cooked mode is restored it would be delivered to the
+      // parent shell instead and render at the prompt as literal
+      // `]11;rgb:…`. Re-enter raw mode briefly and absorb whatever trickles
+      // in before handing the tty back.
+      try {
+        const stdin = process.stdin;
+        stdin.setRawMode?.(true);
+        stdin.resume();
+        await drainInputQuiet(stdin, 100, 300);
+        stdin.setRawMode?.(false);
+        stdin.pause();
+      } catch {
+        // best-effort — never block the exit on tty state
+      }
       process.exit(0);
     }
   }
