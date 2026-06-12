@@ -296,8 +296,9 @@ function App(props: AppProps): React.ReactNode {
             the bottom of the terminal (they were scrolling off-screen when a long
             conversation overflowed a plain column). */}
         <Box flexDirection="column" height={rows}>
-          {/* Transcript (finished history + the in-flight turn). `stickyScroll`
-              keeps the newest output in view; older turns scroll up. */}
+          {/* Finished transcript scrolls inside the flexGrow scrollbox; it's the
+              only flexible child (flexShrink + minHeight:0), so it gives up height
+              first and the bottom chrome below it never gets squeezed. */}
           <ScrollBox
             flexGrow={1}
             flexShrink={1}
@@ -310,7 +311,13 @@ function App(props: AppProps): React.ReactNode {
             <Box flexDirection="column" width={columns}>
               {transcript.history.map(renderHistoryItem)}
             </Box>
+          </ScrollBox>
 
+          {/* Bottom chrome — the in-flight turn, tasks, input box, and footer —
+              pinned to the terminal bottom. flexShrink:0 keeps it at full height
+              (it was getting compacted/clipped when the scrollbox grew). The live
+              region's own height cap (liveCap) keeps this within the viewport. */}
+          <Box flexDirection="column" flexShrink={0}>
             <LiveRegion
               live={transcript.live}
               history={transcript.history}
@@ -319,33 +326,33 @@ function App(props: AppProps): React.ReactNode {
               liveCap={liveCap}
               liveContentWidth={liveContentWidth}
             />
-          </ScrollBox>
 
-          <Tasks tasks={session.tasks} />
+            <Tasks tasks={session.tasks} />
 
-          <PromptArea
-            approvals={approvals}
-            session={session}
-            autocomplete={autocomplete}
-            promptInput={promptInput}
-            promptHistory={promptHistory}
-            registerPaste={registerPaste}
-            pasteMap={pasteMap}
-            modeColor={modeColor}
-            verb={verb}
-            columns={columns}
-          />
+            <PromptArea
+              approvals={approvals}
+              session={session}
+              autocomplete={autocomplete}
+              promptInput={promptInput}
+              promptHistory={promptHistory}
+              registerPaste={registerPaste}
+              pasteMap={pasteMap}
+              modeColor={modeColor}
+              verb={verb}
+              columns={columns}
+            />
 
-          <Footer
-            modelLabel={session.modelLabel}
-            mode={session.mode}
-            modeColor={modeColor}
-            thinkLabel={thinkLabel}
-            cost={session.cost}
-            costKnown={session.costKnown}
-            tokens={session.tokens}
-            verbose={session.verbose}
-          />
+            <Footer
+              modelLabel={session.modelLabel}
+              mode={session.mode}
+              modeColor={modeColor}
+              thinkLabel={thinkLabel}
+              cost={session.cost}
+              costKnown={session.costKnown}
+              tokens={session.tokens}
+              verbose={session.verbose}
+            />
+          </Box>
         </Box>
       </IconProvider>
     </TuiRuntimeContext.Provider>
