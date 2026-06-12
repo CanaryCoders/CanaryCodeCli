@@ -99,6 +99,8 @@ const TOOL_SUMMARY_FIELD: Record<string, string> = {
   edit_file: "path",
   list_dir: "path",
   grep: "pattern",
+  web_fetch: "url",
+  github_read_file: "repo_url",
   web_search: "query",
   read_skill: "name",
   spawn_agent: "task",

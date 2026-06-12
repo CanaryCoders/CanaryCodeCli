@@ -45,7 +45,7 @@ export const BUILTIN_EXTENSIONS: Extension[] = [
   opencodeExtension,
   {
     name: "websearch",
-    description: "the web_search tool",
+    description: "web_fetch, github_read_file, and web_search tools",
     session: () => webSearchExtension(),
   },
   {

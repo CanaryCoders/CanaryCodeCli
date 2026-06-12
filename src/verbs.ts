@@ -16,6 +16,8 @@
 /** Tool → present-tense contextual verb shown while that tool runs. */
 export const TOOL_VERB: Record<string, string> = {
   bash: "running bash",
+  web_fetch: "fetching a URL",
+  github_read_file: "reading GitHub",
   web_search: "searching the web",
   grep: "grepping",
   read_file: "reading",

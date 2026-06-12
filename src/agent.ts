@@ -28,7 +28,7 @@ const PLAN_SYSTEM_PROMPT = [
   "",
   "── PLAN MODE ──",
   "You are in read-only planning mode. Write, edit, and bash tools are disabled and will",
-  "return an error if called; you have read_file, list_dir, grep, and web_search.",
+  "return an error if called; you have read_file, list_dir, grep, web_fetch, github_read_file, and web_search.",
   "",
   "FIRST, investigate. Actually read the relevant code now — open the files you would",
   "change, trace how they work, and confirm the real names, signatures, and line numbers",
