@@ -1,6 +1,7 @@
 // hooks.ts — Claude Code-compatible lifecycle hooks.
 //
-// Hooks are shell commands run via `bash -c` at agent lifecycle events. cc accepts
+// Hooks are shell commands run via the system shell (see shell.ts) at agent
+// lifecycle events. cc accepts
 // Claude Code's nested matcher-group schema and the older cc flat shorthand. Hook
 // commands receive a JSON payload on stdin with Claude-style field names
 // (`hook_event_name`, `tool_name`, `tool_input`, etc.) plus legacy aliases
@@ -8,6 +9,7 @@
 
 import type { HookConfig, HooksConfig } from "../config.ts";
 import type { SessionExtension } from "../extension.ts";
+import { systemShell } from "../shell.ts";
 
 export type HookEventName = keyof HooksConfig;
 
@@ -125,7 +127,7 @@ async function runHook(
   payload: unknown,
 ): Promise<HookRun> {
   try {
-    const proc = Bun.spawn(["bash", "-c", hook.command], {
+    const proc = Bun.spawn(systemShell().argv(hook.command), {
       stdin: new TextEncoder().encode(`${JSON.stringify(payload)}\n`),
       stdout: "pipe",
       stderr: "pipe",

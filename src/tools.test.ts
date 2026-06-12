@@ -33,3 +33,34 @@ describe("read_file with images", () => {
     expect(content).toContain('"name": "cc"');
   });
 });
+
+describe("bash", () => {
+  const bash = tools.find((t) => t.name === "bash")!;
+
+  test("returns combined output and exit-code marker", async () => {
+    const ok = await bash.run({ command: "echo hi" });
+    expect(typeof ok === "string" ? ok : ok.content).toBe("hi\n");
+    const fail = await bash.run({ command: "echo oops; exit 3" });
+    expect(typeof fail === "string" ? fail : fail.content).toContain(
+      "[exit 3]",
+    );
+    expect(typeof fail === "string" ? fail : fail.content).toContain("oops");
+  });
+
+  test("a surviving background child does not hang the tool", async () => {
+    // `sleep 5 &` inherits the stdout pipe and holds it open after the shell
+    // exits; the tool must return the captured output promptly regardless.
+    const started = Date.now();
+    const out = await bash.run({ command: "echo started; sleep 5 &" });
+    expect(typeof out === "string" ? out : out.content).toContain("started");
+    expect(Date.now() - started).toBeLessThan(3000);
+  });
+
+  test("times out and reports partial output", async () => {
+    const started = Date.now();
+    await expect(
+      bash.run({ command: "echo partial; sleep 10", timeout: 500 }),
+    ).rejects.toThrow(/timed out.*partial/s);
+    expect(Date.now() - started).toBeLessThan(5000);
+  });
+});

@@ -10,6 +10,7 @@ import { readdir } from "node:fs/promises";
 import { relative, resolve, sep } from "node:path";
 import { computeDiff, type Diff } from "./diff.ts";
 import { type ImageData, isImagePath, readImageFile } from "./image.ts";
+import { systemShell } from "./shell.ts";
 
 /**
  * A tool's result. Tools may simply return the string that becomes the
@@ -261,8 +262,9 @@ function capOutput(text: string, limit = BASH_OUTPUT_LIMIT): string {
 
 const bash: Tool = {
   name: "bash",
-  description:
-    "Run a shell command via `bash -c` and return combined stdout+stderr. Times out (default 30s). Use for builds, tests, git, etc.",
+  // The shell is resolved per-system (bash → sh → cmd.exe; see shell.ts), so the
+  // description names what the command will ACTUALLY run in.
+  description: `Run a shell command via \`${systemShell().name} -c\` and return combined stdout+stderr. Times out (default 30s). Use for builds, tests, git, etc.`,
   readOnly: false,
   schema: {
     type: "object",
@@ -281,38 +283,75 @@ const bash: Tool = {
       typeof input.timeout === "number" && input.timeout > 0
         ? input.timeout
         : 30_000;
-    const proc = Bun.spawn(["bash", "-c", command], {
+    const proc = Bun.spawn(systemShell().argv(command), {
       stdout: "pipe",
       stderr: "pipe",
     });
 
+    // Drain both pipes incrementally, with the reads in flight while the
+    // process runs (a full pipe buffer would otherwise deadlock it). Buffering
+    // ourselves — rather than awaiting whole-stream `Response.text()` — means
+    // we can return the output captured so far even when a pipe never reaches
+    // EOF: a backgrounded child (`server & echo ok`) inherits the pipe and
+    // holds it open long after the shell exits.
+    const out = { text: "" };
+    const errOut = { text: "" };
+    const reads = Promise.all([
+      drainStream(proc.stdout, out),
+      drainStream(proc.stderr, errOut),
+    ]);
+
     let timedOut = false;
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
     const timer = setTimeout(() => {
       timedOut = true;
       proc.kill();
+      // SIGKILL backstop: a shell that ignores/blocks SIGTERM must not hang
+      // the agent loop forever.
+      killTimer = setTimeout(() => {
+        try {
+          proc.kill(9);
+        } catch {}
+      }, 2000);
     }, timeoutMs);
 
-    // Drain both pipes *and* await exit together. The reads must be in flight
-    // before/while the process exits or a full pipe buffer deadlocks it, so these
-    // are not "sequential independent awaits" — racing them in one Promise.all is
-    // exactly the deadlock-safe ordering.
-    const [stdout, stderr, code] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
+    const code = await proc.exited;
+    // Give still-open pipes a short grace to flush (the remaining buffered
+    // bytes arrive instantly; only a surviving background child keeps a pipe
+    // open past this), then return what we have instead of hanging.
+    await Promise.race([reads, new Promise((r) => setTimeout(r, 250))]);
     clearTimeout(timer);
+    if (killTimer) clearTimeout(killTimer);
 
-    const out = [stdout, stderr].filter((s) => s.length > 0).join("");
+    const combined = [out.text, errOut.text]
+      .filter((s) => s.length > 0)
+      .join("");
     if (timedOut) {
       throw new Error(
-        `command timed out after ${timeoutMs}ms${out ? `\n${out}` : ""}`,
+        `command timed out after ${timeoutMs}ms${combined ? `\n${combined}` : ""}`,
       );
     }
-    const trimmed = capOutput(out.length ? out : "(no output)");
+    const trimmed = capOutput(combined.length ? combined : "(no output)");
     return code === 0 ? trimmed : `[exit ${code}]\n${trimmed}`;
   },
 };
+
+/** Append a stream's bytes to `sink.text` as they arrive (best-effort: a
+ * stream error after a kill just stops the capture, never throws). */
+async function drainStream(
+  stream: ReadableStream<Uint8Array>,
+  sink: { text: string },
+): Promise<void> {
+  const decoder = new TextDecoder();
+  try {
+    for await (const chunk of stream) {
+      sink.text += decoder.decode(chunk, { stream: true });
+    }
+    sink.text += decoder.decode();
+  } catch {
+    // partial output already captured
+  }
+}
 
 // ── grep ──────────────────────────────────────────────────────────────────────
 
