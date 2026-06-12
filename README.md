@@ -86,8 +86,8 @@ cc                 # interactive TUI in the current directory
 | `--plan` | Planning mode: investigate read-only, emit a structured plan, then stop |
 | `--auto, --yolo` | Autonomous mode: run to completion with no confirmations (capped at `autoMaxTurns`, default 25) |
 | `--no-tools` | Disable tools for read-only quick Q&A |
-| `--resume [id]` | Continue a saved session (most recent when you omit the id). Opens the TUI when interactive; runs headless with `-p` |
-| `-c, --continue` | Shorthand for `--resume` (reopen the most recent session) |
+| `--resume [id]` | Continue a saved session: bare `--resume` opens an interactive picker, an id resumes directly. Opens the TUI when interactive; runs headless with `-p` |
+| `-c, --continue` | Continue the most recent session directly (no picker) |
 | `--json` | Stream structured JSON events (JSONL) on stdout, one event per line, for scripting |
 | `--no-color` | Force raw markdown to stdout even on a TTY (also honors `NO_COLOR`) |
 | `-h, --help` | Show help |
@@ -102,9 +102,10 @@ git diff | cc -p "write a commit message"
 Resume a conversation:
 
 ```bash
-cc --resume                   # reopen the most recent session in the TUI
+cc --resume                   # pick a recent session to reopen in the TUI
 cc --resume 1a2b3c4d          # reopen a session by id (prefix is fine)
-cc --resume -p "and now?"     # continue the most recent session headless
+cc --continue                 # reopen the most recent session
+cc -c -p "and now?"           # continue the most recent session headless
 ```
 
 Inside the TUI, `/resume` lists recent sessions and `/resume <id>` switches to one in place (transcript, model, mode, and thinking level all restore).

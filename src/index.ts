@@ -43,6 +43,7 @@ import {
 } from "./file-mentions.ts";
 import { extractImagePaths, readImageFile } from "./image.ts";
 import { renderAnsi } from "./markdown.ts";
+import { pickSession } from "./session-picker.ts";
 import type { ContentBlock, Message, Provider } from "./provider.ts";
 import { createProvider } from "./provider.ts";
 import {
@@ -88,10 +89,12 @@ interface Args {
   think?: string;
   /**
    * --resume: a session id (or id prefix) to continue, or `true` for a bare
-   * `--resume`/`--continue` (resume the most recent session). Interactive
-   * launches resume into the TUI; with -p the run is headless.
+   * `--resume` (interactive: opens the session picker; headless: most recent).
+   * Interactive launches resume into the TUI; with -p the run is headless.
    */
   resume?: string | boolean;
+  /** -c/--continue: resume the most recent session directly (no picker). */
+  continueLatest: boolean;
 }
 
 /** Parse argv into a small, explicit shape. Unknown flags are ignored for now. */
@@ -104,6 +107,7 @@ function parseArgs(argv: string[]): Args {
     json: false,
     plan: false,
     auto: false,
+    continueLatest: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -160,9 +164,9 @@ function parseArgs(argv: string[]): Args {
       }
       case "-c":
       case "--continue":
-        // Claude Code-style shorthand: continue the most recent session. An
-        // explicit `--resume <id>` elsewhere in argv keeps its id.
-        out.resume ??= true;
+        // Claude Code-style shorthand: continue the most recent session
+        // directly, without the `--resume` picker.
+        out.continueLatest = true;
         break;
       default:
         // A bare positional after no recognized flag is treated as the prompt.
@@ -204,9 +208,9 @@ function printUsage(
       "  --no-tools         disable tools (read-only quick Q&A)",
       "  --no-color         raw markdown to stdout even on a TTY (also: NO_COLOR)",
       "  --json             stream structured JSON events (JSONL) on stdout",
-      "  --resume [id]      continue a saved session (most recent if id omitted):",
-      "                     opens the TUI when interactive, runs headless with -p",
-      "  -c, --continue     shorthand for --resume (most recent session)",
+      "  --resume [id]      continue a saved session: bare --resume opens a picker,",
+      "                     an id resumes directly; runs headless with -p",
+      "  -c, --continue     continue the most recent session (no picker)",
       "  -h, --help         show this help",
       "  --version          show version",
       "",
@@ -214,9 +218,10 @@ function printUsage(
       '  git diff | cc -p "write a commit message"',
       "",
       "Resume a conversation:",
-      "  cc --resume                 reopen the most recent session in the TUI",
+      "  cc --resume                 pick a recent session to reopen in the TUI",
       "  cc --resume 1a2b3c4d        reopen a session by id (prefix ok)",
-      '  cc --resume -p "and now?"   continue the most recent session headless',
+      "  cc --continue               reopen the most recent session",
+      '  cc -c -p "and now?"         continue the most recent session headless',
       "  (inside the TUI, /resume lists sessions and /resume <id> switches)",
     ].join("\n"),
   );
@@ -323,8 +328,10 @@ async function runHeadless(args: Args): Promise<number> {
   let sessionId: string;
   const messages: Message[] = [];
 
-  if (args.resume) {
-    // Resume an explicit id/prefix, or the most recent session for bare --resume.
+  const wantsResume = Boolean(args.resume) || args.continueLatest;
+  if (wantsResume) {
+    // Resume an explicit id/prefix, or the most recent session for a bare
+    // --resume/--continue (headless has no picker).
     const target =
       typeof args.resume === "string"
         ? resolveSession(store, args.resume)
@@ -355,7 +362,7 @@ async function runHeadless(args: Args): Promise<number> {
   if (config.hooks.SessionStart?.length) {
     await runSessionStartHooks(
       config.hooks,
-      args.resume ? "resume" : "startup",
+      wantsResume ? "resume" : "startup",
       hookContext,
     );
   }
@@ -731,22 +738,42 @@ async function runTui(args: Args): Promise<number> {
   const store = SessionStore.open();
   let resumedSession: SessionRow | undefined;
   let resumedMessages: Message[] | undefined;
-  if (args.resume !== undefined) {
-    const target =
-      typeof args.resume === "string"
-        ? resolveSession(store, args.resume)
-        : store.listSessions(1)[0];
+  if (typeof args.resume === "string") {
+    const target = resolveSession(store, args.resume);
     if (!target) {
       store.close();
-      console.error(
-        typeof args.resume === "string"
-          ? `cc: no session matching "${args.resume}"`
-          : "cc: no sessions to resume",
-      );
+      console.error(`cc: no session matching "${args.resume}"`);
       return 1;
     }
     resumedSession = target;
-    resumedMessages = store.loadMessages(target.id);
+  } else if (args.continueLatest) {
+    // -c/--continue: straight to the most recent session, no picker.
+    const target = store.listSessions(1)[0];
+    if (!target) {
+      store.close();
+      console.error("cc: no sessions to resume");
+      return 1;
+    }
+    resumedSession = target;
+  } else if (args.resume === true) {
+    // Bare `--resume`: open the interactive picker over recent sessions
+    // (most recent preselected at the top).
+    const rows = store.listSessions(15);
+    if (rows.length === 0) {
+      store.close();
+      console.error("cc: no sessions to resume");
+      return 1;
+    }
+    const picked = await pickSession(rows);
+    if (!picked) {
+      store.close();
+      console.log("cc: resume cancelled");
+      return 0;
+    }
+    resumedSession = picked;
+  }
+  if (resumedSession) {
+    resumedMessages = store.loadMessages(resumedSession.id);
   }
 
   // An explicit --model wins; otherwise a resumed session restores its model
@@ -974,7 +1001,8 @@ async function main(): Promise<void> {
   // `cc --resume [id]` with no prompt reopens the session in the TUI instead.
   if (
     args.prompt !== undefined ||
-    (args.resume !== undefined && !process.stdin.isTTY)
+    ((args.resume !== undefined || args.continueLatest) &&
+      !process.stdin.isTTY)
   ) {
     process.exit(await runHeadless(args));
   }
