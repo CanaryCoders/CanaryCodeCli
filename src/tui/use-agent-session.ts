@@ -72,6 +72,10 @@ import {
 import { applyUpdate, updateDisabledReason } from "../update.ts";
 import type { AppProps } from "./app-types.ts";
 import type { ExtensionToggle } from "./Extensions.tsx";
+import {
+  copyTargetToClipboard,
+  lastAssistantCopyTarget,
+} from "./copy-targets.ts";
 import { drainInputQuiet, expandPastes } from "./input-helpers.ts";
 import type { Item } from "./Message.tsx";
 import type { TuiRuntime } from "./runtime.tsx";
@@ -156,6 +160,11 @@ export function useAgentSession(deps: {
     runtime,
   } = deps;
   const { setHistory, setLive, updateBanner, push, note, nextId } = transcript;
+  // `onSubmit` is invoked from the keyboard adapter's latest-committed closure,
+  // so it sees this render's `transcript.history`. Mirror it into a ref anyway so
+  // /copy-last reads the freshest committed scrollback even if that ever changes.
+  const historyRef = useRef(transcript.history);
+  historyRef.current = transcript.history;
   const { setInput, inputRef, bumpCursor } = promptInput;
   const controllerRef = deps.controllerRef;
   const nerdFont = props.config.ui.nerdFont === true;
@@ -981,7 +990,24 @@ export function useAgentSession(deps: {
       case "help":
         note(action.text);
         break;
+      case "copy-last":
+        copyLast();
+        break;
     }
+  }
+
+  // /copy-last — write the most recent assistant message to the clipboard and
+  // note the outcome. Reads the freshest committed scrollback via historyRef so
+  // a just-finished turn's answer is included; safe to run mid-turn.
+  function copyLast(): void {
+    const target = lastAssistantCopyTarget(historyRef.current);
+    if (!target) {
+      note("no assistant message to copy yet");
+      return;
+    }
+    copyTargetToClipboard(target)
+      .then((msg) => note(msg))
+      .catch((err) => note(`/copy-last failed: ${(err as Error).message}`));
   }
 
   // Build the QueuedItem for a queueable action, or null to skip queueing.
@@ -1083,6 +1109,9 @@ export function useAgentSession(deps: {
         note(
           "resume from the TUI isn't supported yet — start with `cc --resume`",
         );
+        break;
+      case "copy-last":
+        copyLast();
         break;
       case "init":
         doInit();

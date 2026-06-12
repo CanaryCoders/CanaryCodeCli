@@ -16,11 +16,7 @@ import { SPACING, tint } from "./theme.ts";
 
 type CardMouseProps = Pick<
   BoxProps,
-  | "cursor"
-  | "onMouseOver"
-  | "onMouseOut"
-  | "onMouseDown"
-  | "onMouseUp"
+  "cursor" | "onMouseOver" | "onMouseOut" | "onMouseDown" | "onMouseUp"
 >;
 
 export function Card({
@@ -28,6 +24,7 @@ export function Card({
   bg,
   title,
   marginTop = 0,
+  headerRight,
   children,
   ...mouseProps
 }: {
@@ -39,6 +36,10 @@ export function Card({
   title: string;
   /** Blank rows above the card (turn/group spacing from the caller). */
   marginTop?: number;
+  /** Right-aligned content on the title row (e.g. a copy chip). The caller gates
+   * its visibility — pass null when not wanted (e.g. only while hovered) — so the
+   * Card stays a pure, hook-free layout component. */
+  headerRight?: ReactNode;
   children: ReactNode;
 } & CardMouseProps): ReactElement {
   return (
@@ -50,9 +51,14 @@ export function Card({
       marginTop={marginTop}
       {...mouseProps}
     >
-      <Text color={tint(color)} bold wrap="truncate">
-        {title}
-      </Text>
+      <Box flexDirection="row">
+        <Box flexGrow={1} flexShrink={1} minWidth={0}>
+          <Text color={tint(color)} bold wrap="truncate">
+            {title}
+          </Text>
+        </Box>
+        {headerRight ? <Box flexShrink={0}>{headerRight}</Box> : null}
+      </Box>
       {children}
     </Box>
   );

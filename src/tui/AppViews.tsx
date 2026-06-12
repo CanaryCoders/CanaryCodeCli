@@ -5,18 +5,19 @@
 // width-capped so it never overflows Ink's dynamic region); `PromptArea` renders
 // whichever pause-and-ask overlay is active, or the framed input box when none is.
 
-import { ActionChip } from "./Interactive.tsx";
 import { AskUserView } from "./AskUser.tsx";
 import { Complete } from "./Complete.tsx";
 import { ConfirmView } from "./Confirm.tsx";
 import { ExtensionsView } from "./Extensions.tsx";
 import { useIcon, useSpinnerFrame } from "./Icon.tsx";
 import { MultilineInput } from "./Input.tsx";
+import { ActionChip } from "./Interactive.tsx";
 import { type Item, ItemView } from "./Message.tsx";
 import { clampLineWidth, tailLines } from "./message-helpers.ts";
 import { PlanView } from "./Plan.tsx";
 import { Box, Text } from "./primitives.tsx";
 import { SPACING, SURFACE, tint } from "./theme.ts";
+import { isItemExpanded } from "./tool-expansion.ts";
 import type { AgentSession } from "./use-agent-session.ts";
 import type { Approvals } from "./use-approvals.ts";
 import type { Autocomplete } from "./use-autocomplete.ts";
@@ -35,6 +36,9 @@ export function LiveRegion({
   firstToolId,
   liveCap,
   liveContentWidth,
+  expandedToolIds,
+  onToggleTool,
+  onCopyItem,
 }: {
   live: Item[];
   history: Item[];
@@ -42,6 +46,9 @@ export function LiveRegion({
   firstToolId: number | undefined;
   liveCap: number;
   liveContentWidth: number;
+  expandedToolIds: ReadonlySet<number>;
+  onToggleTool: (id: number) => void;
+  onCopyItem?: (item: Item, kind?: "default" | "command" | "output") => void;
 }): React.ReactElement | null {
   if (live.length === 0) return null;
   return (
@@ -76,8 +83,10 @@ export function LiveRegion({
               <ItemView
                 item={{ ...item, text }}
                 prevKind={prevKind}
-                expanded={verbose}
+                expanded={isItemExpanded(item, verbose, expandedToolIds)}
                 showExpandHint={item.id === firstToolId}
+                onToggleTool={onToggleTool}
+                onCopyItem={onCopyItem}
               />
             </Box>
           );
@@ -89,8 +98,10 @@ export function LiveRegion({
             key={item.id}
             item={item}
             prevKind={prevKind}
-            expanded={verbose}
+            expanded={isItemExpanded(item, verbose, expandedToolIds)}
             showExpandHint={item.id === firstToolId}
+            onToggleTool={onToggleTool}
+            onCopyItem={onCopyItem}
             compact
             width={liveContentWidth}
           />

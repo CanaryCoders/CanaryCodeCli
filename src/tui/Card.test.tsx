@@ -26,7 +26,11 @@ test("Card renders the title as a bold accent label on the first line", () => {
   const p = props(
     Card({ color: "#89a8d8", bg: "#1f2733", title: "tool", children: null }),
   );
-  const label = (p.children as ReactElement[])[0];
+  // The first line is a header row: a flex-grow title box (+ an optional
+  // right-aligned slot). Drill into the row to reach the title label itself.
+  const header = (p.children as ReactElement[])[0];
+  const titleBox = (props(header).children as ReactElement[])[0];
+  const label = props(titleBox).children as ReactElement;
   const lp = props(label);
   expect(lp.children).toBe("tool");
   expect(lp.color).toBe("#89a8d8");

@@ -134,12 +134,18 @@ export function ExtensionsView({
           <ChoiceRow
             key={item.name}
             selected={isSel}
-            accentColor={ACCENT}
             onHover={() =>
-              setState((s) => reduceExtensionPicker(s, items, { kind: "setCursor", index: i }))
+              setState((s) =>
+                reduceExtensionPicker(s, items, {
+                  kind: "setCursor",
+                  index: i,
+                }),
+              )
             }
             onAction={() =>
-              setState((s) => reduceExtensionPicker(s, items, { kind: "toggle", index: i }))
+              setState((s) =>
+                reduceExtensionPicker(s, items, { kind: "toggle", index: i }),
+              )
             }
           >
             <Box width={1} marginRight={1}>

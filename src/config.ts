@@ -228,7 +228,7 @@ export function defaultConfig(): Config {
 }
 
 /** Recursively replace "${VAR}" string values with the matching env var. */
-function interpolateEnv<T>(
+export function interpolateEnv<T>(
   value: T,
   env: Record<string, string | undefined> = process.env,
 ): T {

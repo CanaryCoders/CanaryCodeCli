@@ -25,28 +25,43 @@ import {
   useOnResize,
   useTerminalDimensions,
 } from "@opentui/react";
-import { useEffect, useMemo, useReducer, useRef } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import { describeLevel } from "../thinking.ts";
 import { LiveRegion, PromptArea } from "./AppViews.tsx";
 import type { AppProps } from "./app-types.ts";
 import { confirmChoiceForKey } from "./confirm-helpers.ts";
+import {
+  copyTargetToClipboard,
+  resolveItemCopyTarget,
+  writeTextToClipboard,
+} from "./copy-targets.ts";
 import { Footer } from "./Footer.tsx";
 import { IconProvider } from "./Icon.tsx";
+import { ActionChip } from "./Interactive.tsx";
 import { isRawEscapeInput } from "./input-helpers.ts";
 import { useTuiInput } from "./keyboard.ts";
-import { ItemView } from "./Message.tsx";
+import { type Item, ItemView } from "./Message.tsx";
 import { statusVerb } from "./message-helpers.ts";
 import { planChoiceForKey } from "./plan-helpers.ts";
 import { Box, ScrollBox } from "./primitives.tsx";
 import { type TuiRuntime, TuiRuntimeContext } from "./runtime.tsx";
 import { Tasks } from "./Tasks.tsx";
 import { modeColor as themeModeColor } from "./theme.ts";
+import { isItemExpanded, toggleToolExpanded } from "./tool-expansion.ts";
 import { useAgentSession } from "./use-agent-session.ts";
 import { useApprovals } from "./use-approvals.ts";
 import { useAutocomplete } from "./use-autocomplete.ts";
 import { usePasteChips } from "./use-paste-chips.ts";
 import { usePromptHistory } from "./use-prompt-history.ts";
 import { usePromptInput } from "./use-prompt-input.ts";
+import { useScrollFollow } from "./use-scroll-follow.ts";
 import { useTranscript } from "./use-transcript.ts";
 
 // ── The component ────────────────────────────────────────────────────────────────
@@ -87,6 +102,11 @@ function App(props: AppProps): React.ReactNode {
 
   // The prompt buffer + its cursor nonce (bumped on out-of-band sets).
   const promptInput = usePromptInput();
+
+  // Transcript scroll-follow: tracks whether the scrollbox is pinned to the
+  // newest content (drives the "jump to latest" banner) and exposes the jump
+  // actions the banner click and End/Home keys route to.
+  const scrollFollow = useScrollFollow();
 
   // Pasted-text chips: a large paste is stored by id and embedded in the input
   // buffer as a single sentinel char (see Input.tsx). The buffer carries sentinels;
@@ -207,6 +227,23 @@ function App(props: AppProps): React.ReactNode {
       else if (k === "n") approvals.resolveCheckpoint(false);
       return;
     }
+    // End/Home scroll the transcript when nothing else owns those keys: the
+    // autocomplete popover is closed, no plan review is pending, and the prompt is
+    // empty (so they still move the cursor while typing). End jumps to the newest
+    // output and re-engages sticky-follow; Home jumps to the oldest. PageUp/PageDown
+    // are left to the scrollbox's own native handling.
+    if (
+      (key.end || key.home) &&
+      !key.ctrl &&
+      !key.meta &&
+      !autocomplete.completeOpenRef.current &&
+      !approvals.pendingPlanRef.current &&
+      promptInput.inputRef.current === ""
+    ) {
+      if (key.end) scrollFollow.jumpToLatest();
+      else scrollFollow.jumpToOldest();
+      return;
+    }
     // Autocomplete popover navigation: ↑/↓ or Ctrl-P/Ctrl-N move, Tab/Enter accept.
     // Other keys fall through so typing keeps filtering the list.
     if (autocomplete.completeOpenRef.current) {
@@ -247,6 +284,34 @@ function App(props: AppProps): React.ReactNode {
     (i) => i.kind === "tool",
   )?.id;
 
+  // Per-tool expansion: clicking one tool card toggles just that tool, tracked
+  // by id. This is independent of `session.verbose` (Ctrl+R = expand all) —
+  // `isItemExpanded` ORs the two together.
+  const [expandedToolIds, setExpandedToolIds] = useState<Set<number>>(
+    () => new Set(),
+  );
+  const toggleTool = useCallback((id: number) => {
+    setExpandedToolIds((s) => toggleToolExpanded(s, id));
+  }, []);
+
+  // Copy a transcript item (or one of a tool card's command/output chips) to the
+  // system clipboard, falling back to a temp file when no clipboard tool exists.
+  // Either way the outcome is surfaced as a scrollback note. transcript.note is
+  // read through a ref so this callback stays stable across renders.
+  const copyItem = useCallback(
+    async (item: Item, kind: "default" | "command" | "output" = "default") => {
+      const target = resolveItemCopyTarget(item, kind);
+      if (!target) {
+        noteRef.current("nothing to copy", "info");
+        return;
+      }
+      // Success and the temp-file fallback are both informative outcomes, so
+      // both land as info notes — copyTargetToClipboard frames the wording.
+      noteRef.current(await copyTargetToClipboard(target), "info");
+    },
+    [],
+  );
+
   // Short status verb shown beside the busy spinner ("thinking…", "running
   // bash…", "searching…"), derived from the live transcript's most recent item.
   const verb = statusVerb(transcript.live);
@@ -265,9 +330,11 @@ function App(props: AppProps): React.ReactNode {
       key={item.id}
       item={item}
       prevKind={index > 0 ? transcript.history[index - 1]!.kind : undefined}
-      expanded={session.verbose}
+      expanded={isItemExpanded(item, session.verbose, expandedToolIds)}
       showExpandHint={item.id === firstToolId}
       columns={columns}
+      onToggleTool={toggleTool}
+      onCopyItem={copyItem}
     />
   );
 
@@ -304,6 +371,7 @@ function App(props: AppProps): React.ReactNode {
               first and the bottom chrome below it never gets squeezed. */}
           <ScrollBox
             key={`transcript-${resizeNonce}`}
+            ref={scrollFollow.ref}
             flexGrow={1}
             flexShrink={1}
             minHeight={0}
@@ -321,16 +389,33 @@ function App(props: AppProps): React.ReactNode {
                 firstToolId={firstToolId}
                 liveCap={liveCap}
                 liveContentWidth={liveContentWidth}
+                expandedToolIds={expandedToolIds}
+                onToggleTool={toggleTool}
+                onCopyItem={copyItem}
               />
             </Box>
           </ScrollBox>
 
-          {/* Bottom chrome — tasks, input box, and footer — pinned to the terminal
-              bottom. flexShrink:0 keeps it at full height (it was getting
-              compacted/clipped when the scrollbox grew). The in-flight turn renders
-              in the transcript scrollbox above, so the toolbar top stays reserved for
-              queue/spinner/status rows only. */}
+          {/* Bottom chrome — the jump-to-latest banner, tasks, input box, and footer
+              — pinned to the terminal bottom. flexShrink:0 keeps it at full height
+              (it was getting compacted/clipped when the scrollbox grew). The
+              in-flight turn renders in the transcript scrollbox above, so the
+              toolbar top stays reserved for queue/spinner/status rows only. */}
           <Box flexDirection="column" flexShrink={0}>
+            {/* Shown only while the user has scrolled up away from the newest
+                content. It lives OUTSIDE the scrollbox so its click isn't swallowed
+                by the scroll region's mouse handling. Clicking it (or pressing End)
+                jumps to the latest output and re-engages sticky-follow. */}
+            {!scrollFollow.atBottom && (
+              <Box paddingLeft={1}>
+                <ActionChip
+                  label="↓ new messages · jump to latest"
+                  color="gray"
+                  onAction={scrollFollow.jumpToLatest}
+                />
+              </Box>
+            )}
+
             <Tasks tasks={session.tasks} />
 
             <PromptArea
@@ -372,6 +457,19 @@ export function startTui(props: AppProps): void {
     enableMouseMovement: true,
   }).then((renderer) => {
     openTuiRenderer = renderer;
+    // Select-to-copy (every message kind): the renderer emits "selection" once,
+    // on drag release (finishSelection). Copy the highlighted text to the system
+    // clipboard, then clear the highlight so the copy "consumes" the selection.
+    renderer.on(
+      "selection",
+      (selection: { getSelectedText(): string } | null) => {
+        const text = selection?.getSelectedText() ?? "";
+        if (text.length > 0) {
+          void writeTextToClipboard(text);
+          renderer.clearSelection();
+        }
+      },
+    );
     openTuiRoot = createRoot(renderer);
     openTuiRoot.render(<App {...props} />);
   });

@@ -21,8 +21,8 @@ import type { AskAnswer, AskQuestion } from "../assemble.ts";
 // imports the helper directly. The runtime answer flow goes through assembly.
 import { recommendedIndex } from "../extensions/askuser.ts";
 import { useIcon } from "./Icon.tsx";
-import { ChoiceRow } from "./Interactive.tsx";
 import { MultilineInput } from "./Input.tsx";
+import { ChoiceRow } from "./Interactive.tsx";
 import { useTuiInput } from "./keyboard.ts";
 import { Box, Text } from "./primitives.tsx";
 import { SPACING, tint } from "./theme.ts";
@@ -231,7 +231,6 @@ export function AskUserView({
               <ChoiceRow
                 key={`${i}:${o.label}`}
                 selected={isSel}
-                accentColor={ACCENT}
                 onHover={() =>
                   dispatch({ type: "setCursor", index: i, rowCount })
                 }
@@ -262,7 +261,6 @@ export function AskUserView({
           })}
           <ChoiceRow
             selected={cursor === customRow}
-            accentColor={ACCENT}
             onHover={() =>
               dispatch({ type: "setCursor", index: customRow, rowCount })
             }

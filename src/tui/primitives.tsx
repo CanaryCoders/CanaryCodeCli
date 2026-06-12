@@ -10,6 +10,7 @@ import {
   createTextAttributes,
   type MouseEvent,
   type MousePointerStyle,
+  type ScrollBoxRenderable,
 } from "@opentui/core";
 import { useTerminalDimensions } from "@opentui/react";
 import type { ReactElement, ReactNode } from "react";
@@ -114,6 +115,9 @@ export function Text(props: TextProps): ReactElement {
 
 export interface ScrollBoxProps {
   children?: ReactNode;
+  /** Ref to the underlying renderable, so the host can read scroll position and
+   * call `scrollTo`/`scrollBy` (the transcript's "jump to latest" affordance). */
+  ref?: React.Ref<ScrollBoxRenderable>;
   /** Grow to fill the remaining height in a flex column (the transcript area). */
   flexGrow?: number;
   /** Allow shrinking below content height so siblings stay pinned (needs

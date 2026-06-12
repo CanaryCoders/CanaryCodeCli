@@ -102,6 +102,8 @@ export function normalizeOpenTuiKey(event: OpenTuiKeyEvent): {
     delete: name === "delete",
     escape: name === "escape",
     tab: name === "tab",
+    home: name === "home",
+    end: name === "end",
   };
 
   return { input: printableOpenTuiInput(event, key), key };

@@ -60,11 +60,23 @@ export function PlanView({
         <Markdown text={plan.trim()} />
       </Box>
       <Box marginTop={SPACING.inputGap}>
-        <ActionChip label="[a]" color={modeColor(mode)} onAction={() => onAccept?.()} />
+        <ActionChip
+          label="[a]"
+          color={modeColor(mode)}
+          onAction={() => onAccept?.()}
+        />
         <Text dimColor>{"ccept · "}</Text>
-        <ActionChip label="[e]" color={modeColor(mode)} onAction={() => onEdit?.()} />
+        <ActionChip
+          label="[e]"
+          color={modeColor(mode)}
+          onAction={() => onEdit?.()}
+        />
         <Text dimColor>{"dit · "}</Text>
-        <ActionChip label="[r]" color={modeColor(mode)} onAction={() => onReject?.()} />
+        <ActionChip
+          label="[r]"
+          color={modeColor(mode)}
+          onAction={() => onReject?.()}
+        />
         <Text dimColor>{"eject"}</Text>
       </Box>
     </Box>

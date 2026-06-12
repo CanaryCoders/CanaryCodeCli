@@ -37,6 +37,7 @@ export type CommandAction =
   | { kind: "clear" }
   | { kind: "resume"; id?: string }
   | { kind: "cost" }
+  | { kind: "copy-last" }
   | { kind: "init" }
   /** A command contributed by an extension (built-in or user-loaded). */
   | { kind: "extension-command"; name: string; args: string[] }
@@ -69,6 +70,7 @@ export function classifyBusyAction(
     case "set-mode":
     case "list-models":
     case "cost":
+    case "copy-last":
     case "help":
       return "live";
     case "message":
@@ -120,6 +122,10 @@ const BASE_COMMANDS: CommandSpec[] = [
     description: "list saved sessions, or resume <id>",
   },
   { name: "cost", description: "show token usage and cost so far" },
+  {
+    name: "copy-last",
+    description: "copy the last assistant message to the clipboard",
+  },
   {
     name: "config",
     usage: "[get|set|unset|reload]",
@@ -482,6 +488,8 @@ export function makeCommandSet(
           : { kind: "resume" };
       case "cost":
         return { kind: "cost" };
+      case "copy-last":
+        return { kind: "copy-last" };
       case "config":
         return parseConfigAction(parsed.arg);
       case "init":

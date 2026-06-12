@@ -126,10 +126,45 @@ export function copyTargetsForItem(item: Item): CopyTarget[] {
       text: fmtInput(item.input),
     });
     if (item.result !== undefined) {
-      targets.push({ kind: "tool-output", label: "tool output", text: item.result });
+      targets.push({
+        kind: "tool-output",
+        label: "tool output",
+        text: item.result,
+      });
     }
   }
   return targets.filter((target) => target.text.length > 0);
+}
+
+/**
+ * Resolve the CopyTarget a transcript copy chip should write, given the chip's
+ * `kind`. Tool cards expose two chips ("command"/"output"); every other item has
+ * a single default chip. Returns null when there is nothing to copy.
+ */
+export function resolveItemCopyTarget(
+  item: Item,
+  kind: "default" | "command" | "output" = "default",
+): CopyTarget | null {
+  if (kind === "command" || kind === "output") {
+    const wanted = kind === "command" ? "tool-command" : "tool-output";
+    return copyTargetsForItem(item).find((t) => t.kind === wanted) ?? null;
+  }
+  const base = copyTargetForItem(item);
+  return base && base.text.length > 0 ? base : null;
+}
+
+/**
+ * Write a copy target to the clipboard and return a human status note: a success
+ * line on a clean copy, or — when no clipboard tool exists — the temp-file path
+ * the text was spilled to instead (still informative, not an error).
+ */
+export async function copyTargetToClipboard(
+  target: CopyTarget,
+): Promise<string> {
+  const result = await writeTextToClipboard(target.text);
+  return result.ok
+    ? `copied ${target.label} to clipboard`
+    : `clipboard unavailable — wrote ${target.label} to ${result.path}`;
 }
 
 export function lastAssistantCopyTarget(items: Item[]): CopyTarget | null {
@@ -150,12 +185,19 @@ export async function writeTextToClipboard(
       ? ["pbcopy"]
       : platform === "win32"
         ? ["clip"]
-        : ["sh", "-c", "command -v wl-copy >/dev/null && wl-copy || xclip -selection clipboard"];
+        : [
+            "sh",
+            "-c",
+            "command -v wl-copy >/dev/null && wl-copy || xclip -selection clipboard",
+          ];
   try {
-    const proc = Bun.spawn(command, { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
-    const writer = proc.stdin.getWriter();
-    await writer.write(new TextEncoder().encode(text));
-    await writer.close();
+    const proc = Bun.spawn(command, {
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    proc.stdin.write(text);
+    await proc.stdin.end();
     if ((await proc.exited) === 0) return { ok: true };
   } catch {
     // Fall through to temp-file fallback.

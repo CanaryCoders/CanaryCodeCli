@@ -6,7 +6,7 @@
 // same actions their keyboard handlers already perform.
 
 import { useRef, useState } from "react";
-import { Box, type BoxProps } from "./primitives.tsx";
+import { Box, type BoxProps, Text } from "./primitives.tsx";
 import { INTERACTIVE, tint } from "./theme.ts";
 
 export interface ActionChipProps {
@@ -81,7 +81,6 @@ export interface ChoiceRowProps {
   disabled?: boolean;
   onHover?: () => void;
   onAction?: () => void;
-  accentColor?: string;
 }
 
 /** Basic selectable row for later picker/autocomplete phases. */
@@ -91,7 +90,6 @@ export function ChoiceRow({
   disabled = false,
   onHover,
   onAction,
-  accentColor = "cyan",
 }: ChoiceRowProps): React.ReactElement {
   const [hovered, setHovered] = useState(false);
   const [pressed, setPressed] = useState(false);
@@ -112,7 +110,11 @@ export function ChoiceRow({
   > = {
     cursor: interactive ? "pointer" : "default",
     backgroundColor: tint(
-      pressed ? INTERACTIVE.activeBg : hovered ? INTERACTIVE.hoverBg : undefined,
+      pressed
+        ? INTERACTIVE.activeBg
+        : hovered || selected
+          ? INTERACTIVE.hoverBg
+          : undefined,
     ),
     onMouseOver: () => {
       if (!interactive) return;
@@ -137,5 +139,5 @@ export function ChoiceRow({
     },
   };
 
-  return <Box {...boxProps}>{children}</Box> as React.ReactElement;
+  return (<Box {...boxProps}>{children}</Box>) as React.ReactElement;
 }

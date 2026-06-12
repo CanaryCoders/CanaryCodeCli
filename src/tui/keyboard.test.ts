@@ -58,4 +58,13 @@ describe("normalizeOpenTuiKey", () => {
       normalizeOpenTuiKey(event({ name: "home", raw: "\x1b[H" })),
     ).toMatchObject({ input: "" });
   });
+
+  test("flags home/end without leaking their raw sequences", () => {
+    expect(
+      normalizeOpenTuiKey(event({ name: "home", raw: "\x1b[H" })),
+    ).toMatchObject({ input: "", key: { home: true, end: false } });
+    expect(
+      normalizeOpenTuiKey(event({ name: "end", raw: "\x1b[F" })),
+    ).toMatchObject({ input: "", key: { end: true, home: false } });
+  });
 });

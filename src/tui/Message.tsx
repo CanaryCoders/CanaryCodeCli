@@ -33,10 +33,10 @@ import {
   CARD,
   DIFF,
   GUTTER_RULE_ICON,
+  INTERACTIVE,
   ROLE,
   type Role,
   SPACING,
-  INTERACTIVE,
   SURFACE,
   TOOL_STATUS,
   tint,
@@ -428,14 +428,22 @@ function UserView({
   text: string;
   onCopy?: () => void;
 }): React.ReactElement {
+  // Hover is tracked here (not in Card) so Card stays a pure layout component.
+  // Over/out bubble up from the card's children, so hovering the text or the chip
+  // itself keeps `hovered` true — the chip doesn't flicker as you reach for it.
+  const [hovered, setHovered] = useState(false);
   return (
     <Card
       color={CARD.user.color}
       bg={CARD.user.bg}
       title={CARD.user.title}
       marginTop={SPACING.turnGap}
+      headerRight={
+        hovered ? <CopyActions onCopy={onCopy} label="copy" /> : null
+      }
+      onMouseOver={() => setHovered(true)}
+      onMouseOut={() => setHovered(false)}
     >
-      <CopyActions onCopy={onCopy} label="copy" />
       {text.split("\n").map((line, i) => (
         <Text
           key={rowKey(i, line)}
@@ -526,9 +534,9 @@ export function ItemView({
       // A user message starts a new turn → one blank line above its cyan card.
       return <UserView text={item.text} onCopy={() => onCopyItem?.(item)} />;
     case "assistant":
-      // The model's answer is plain prose — no box. Only tool calls (and the
-      // user's message) get the filled-block treatment; the assistant's text reads
-      // as the main thread of the conversation. Inset by one column so it lines up
+      // The model's answer is plain prose — no box, so no copy chip: it isn't a
+      // card like the user/tool blocks. Copying an LLM answer is selection-based
+      // (drag-select → auto-copies on release). Inset by one column so it lines up
       // with the boxed content around it.
       return (
         <Box
@@ -536,20 +544,19 @@ export function ItemView({
           paddingX={SPACING.boxPadX}
           marginTop={Math.max(1, topGap(item, prevKind))}
         >
-          <CopyActions onCopy={() => onCopyItem?.(item)} label="copy" />
           <Markdown text={item.text} />
         </Box>
       );
     case "thinking":
       // Thinking is plain dim+italic prose, same layout as the assistant answer so
       // it reads as a quieter part of the same thread rather than a separate block.
+      // Like the assistant answer, it's selection-copied, not chip-copied.
       return (
         <Box
           flexDirection="column"
           paddingX={SPACING.boxPadX}
           marginTop={Math.max(1, topGap(item, prevKind))}
         >
-          <CopyActions onCopy={() => onCopyItem?.(item)} label="copy" />
           <Markdown text={item.text} dim />
         </Box>
       );
@@ -706,6 +713,23 @@ function ToolView({
       title={title}
       marginTop={marginTop}
       cursor="pointer"
+      headerRight={
+        hovered ? (
+          <Box>
+            <ActionChip
+              label="[copy command]"
+              color="gray"
+              onAction={() => onCopyCommand?.()}
+            />
+            <Text dimColor> </Text>
+            <ActionChip
+              label="[copy output]"
+              color="gray"
+              onAction={() => onCopyOutput?.()}
+            />
+          </Box>
+        ) : null
+      }
       onMouseOver={() => {
         setHovered(true);
         onFocus?.();
@@ -727,13 +751,6 @@ function ToolView({
         if (wasPressed) onToggle?.();
       }}
     >
-      {expanded ? (
-        <Box>
-          <ActionChip label="[copy command]" color="gray" onAction={() => onCopyCommand?.()} />
-          <Text dimColor>{" "}</Text>
-          <ActionChip label="[copy output]" color="gray" onAction={() => onCopyOutput?.()} />
-        </Box>
-      ) : null}
       {expanded && summary ? (
         <Text
           dimColor
@@ -772,7 +789,7 @@ function ToolView({
         />
       ) : null}
       {showHint && !expanded ? (
-        <Text dimColor>{"(ctrl+r to expand)"}</Text>
+        <Text dimColor>{"click/enter expands · ctrl+r expands all"}</Text>
       ) : null}
     </Card>
   );

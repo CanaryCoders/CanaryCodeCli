@@ -87,6 +87,8 @@ export interface InputKey {
   delete?: boolean;
   escape?: boolean;
   tab?: boolean;
+  home?: boolean;
+  end?: boolean;
 }
 
 /** Map an absolute cursor offset to its {line, col} within the value. */

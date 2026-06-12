@@ -220,3 +220,20 @@ test("foldPresets skips disabled extensions' presets", () => {
   expect(config.providers.openai).toBeUndefined();
   expect(config.providers.canaryllm).toBeDefined();
 });
+
+test("foldPresets env-interpolates the apiKey placeholder in injected presets", () => {
+  // The canary preset carries apiKey "${CANARYLLM_API_KEY}". loadConfig's env
+  // interpolation runs BEFORE foldPresets, so foldPresets must expand the
+  // placeholder itself — otherwise the gateway gets the literal string as its
+  // Bearer token and never sees the user's key.
+  const prev = process.env.CANARYLLM_API_KEY;
+  process.env.CANARYLLM_API_KEY = "sk-canary-test";
+  try {
+    const config = defaultConfig();
+    foldPresets(config);
+    expect(config.providers.canaryllm?.apiKey).toBe("sk-canary-test");
+  } finally {
+    if (prev === undefined) delete process.env.CANARYLLM_API_KEY;
+    else process.env.CANARYLLM_API_KEY = prev;
+  }
+});
