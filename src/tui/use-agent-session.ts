@@ -932,11 +932,14 @@ export function useAgentSession(deps: {
     setQueued(queuedRef.current);
   }
 
-  // Drain the whole FIFO: clear it and return all items' `text` joined, or null when
-  // empty. Synchronous ref mutation → atomic; safe to call from runAgent's drainInput.
+  // Drain the whole FIFO: render the queued prompt(s) as user transcript rows, clear
+  // the queue, and return all items' `text` joined for runAgent's injection. This is
+  // only the mid-turn tool-result boundary path; leftover queued prompts that become
+  // fresh turns still render via submitPrompt(). Synchronous ref mutation → atomic.
   function drainQueue(): string | null {
     const items = queuedRef.current;
     if (items.length === 0) return null;
+    for (const item of items) push({ kind: "user", text: item.display });
     queuedRef.current = [];
     setQueued([]);
     return items.map((i) => i.text).join("\n\n");
