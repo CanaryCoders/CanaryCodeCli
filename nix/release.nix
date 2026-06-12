@@ -3,9 +3,9 @@
 {
   version = "0.1.0";
   hashes = {
-    "x86_64-linux" = "664608e4880d889948de4eedfb86330128389dea7a3b9146bc9b32f82cbff66b";
-    "aarch64-linux" = "e6981979b51ee55a9a59d47a3baa04c93a5f6f352fc90a071785b9e51929c4b3";
-    "x86_64-darwin" = "a20240986b46d13c2b7797155f89966049f381c4967be2f2803ee81132265eca";
-    "aarch64-darwin" = "273eedb53a82746e64e28a3f710e467ed8c95222ae70b1591320dc321ce3fb2a";
+    "x86_64-linux" = "a9489a1bb562492ecc64ee678efebbcd150c187576e73be2565218d341dd2c54";
+    "aarch64-linux" = "49ce2d1f5042e74ea6dacbecc7f35ebf1a7e6d5e33f241b3c8d768e79eaa9ef6";
+    "x86_64-darwin" = "cfe5c4d3e71351981a21709a3d53c8e1ffecdbf2da2a713063fb80447b4abbc3";
+    "aarch64-darwin" = "69089f9e682a822b8e80c07c9bab893c3bcf91fd9fd307c94281be5145cc6230";
   };
 }
