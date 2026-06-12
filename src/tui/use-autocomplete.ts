@@ -11,9 +11,10 @@ import { availableCommands, listExtensions } from "../assemble.ts";
 import {
   type Completion,
   type CompletionContext,
+  type ModelOption,
   makeCommandSet,
 } from "../commands.ts";
-import type { Config } from "../config.ts";
+import { type Config, providerDisplayName } from "../config.ts";
 import type { SessionStore } from "../session.ts";
 import {
   fileMentionCompletions,
@@ -25,9 +26,10 @@ function buildCompletionContext(
   config: Config,
   store: SessionStore,
 ): CompletionContext {
-  const models: string[] = [];
-  for (const pc of Object.values(config.providers)) {
-    for (const m of pc.models ?? []) models.push(m.id);
+  const models: ModelOption[] = [];
+  for (const [key, pc] of Object.entries(config.providers)) {
+    for (const m of pc.models ?? [])
+      models.push({ id: m.id, source: providerDisplayName(key) });
   }
   const sessions = store
     .listSessions(20)
@@ -57,8 +59,10 @@ export interface Autocomplete {
   moveSel: (delta: number) => void;
   /** Hide the popover until the input changes. */
   dismissComplete: () => void;
+  /** Select a suggestion row directly (mouse hover). */
+  selectCompletion: (index: number) => void;
   /** Accept the highlighted suggestion into the input. */
-  acceptCompletion: () => void;
+  acceptCompletion: (index?: number) => void;
 }
 
 export function useAutocomplete(opts: {
@@ -121,8 +125,14 @@ export function useAutocomplete(opts: {
     completeDismissedRef.current = true;
     setCompleteDismissed(true);
   }
-  function acceptCompletion(): void {
-    const choice = completionsRef.current[selRef.current];
+  function selectCompletion(index: number): void {
+    const n = completionsRef.current.length;
+    if (index < 0 || index >= n) return;
+    selRef.current = index;
+    setSelected(index);
+  }
+  function acceptCompletion(index = selRef.current): void {
+    const choice = completionsRef.current[index];
     if (!choice) return;
     setInput(choice.value);
     bumpCursor();
@@ -162,6 +172,7 @@ export function useAutocomplete(opts: {
     handleInputChange,
     moveSel,
     dismissComplete,
+    selectCompletion,
     acceptCompletion,
   };
 }

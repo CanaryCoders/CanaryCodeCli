@@ -12,9 +12,13 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { useApp } from "ink";
 import { useRef, useState } from "react";
-import { type AgentMode, roleForMode, runAgent } from "../agent.ts";
+import {
+  type AgentMode,
+  compactConversation,
+  roleForMode,
+  runAgent,
+} from "../agent.ts";
 import {
   type AssembledSession,
   assembleSession,
@@ -40,6 +44,7 @@ import {
   loadConfig,
   modelSupportsVision,
   parseConfigValue,
+  providerDisplayName,
   redactConfig,
   replaceConfigInPlace,
   resolveModel,
@@ -63,19 +68,30 @@ import { iconFor } from "../icons.ts";
 import { extractImagePaths, type ImageData, readImageFile } from "../image.ts";
 import type { ContentBlock, Message } from "../provider.ts";
 import { createProvider, type Provider } from "../provider.ts";
-import { hasPriceData } from "../session.ts";
+import { hasPriceData, resolveSession } from "../session.ts";
 import {
   budgetFor,
   describeLevel,
+  parseLevel,
   supportsThinking,
   type ThinkingLevel,
 } from "../thinking.ts";
-import { applyUpdate, updateDisabledReason } from "../update.ts";
+import {
+  applyUpdate,
+  fetchReleaseNotes,
+  updateDisabledReason,
+} from "../update.ts";
+import { VERSION } from "../version.ts";
 import type { AppProps } from "./app-types.ts";
+import {
+  copyTargetToClipboard,
+  lastAssistantCopyTarget,
+} from "./copy-targets.ts";
 import type { ExtensionToggle } from "./Extensions.tsx";
 import { drainInputQuiet, expandPastes } from "./input-helpers.ts";
 import type { Item } from "./Message.tsx";
-import { stablePrefixLen } from "./message-helpers.ts";
+import { itemsFromMessages } from "./message-helpers.ts";
+import type { TuiRuntime } from "./runtime.tsx";
 import type { Approvals } from "./use-approvals.ts";
 import type { PasteChips } from "./use-paste-chips.ts";
 import type { PromptHistory } from "./use-prompt-history.ts";
@@ -145,14 +161,33 @@ export function useAgentSession(deps: {
   pasteMap: PasteChips["pasteMap"];
   /** Shared abort controller (also read by the approval gate's safety check). */
   controllerRef: React.MutableRefObject<AbortController | null>;
+  runtime: TuiRuntime;
+  /** Enter keyboard transcript nav mode — nav state lives in App, so `/copy`
+   * routes here. Read through a ref so the latest App closure is always called. */
+  enterNavMode: () => void;
 }): AgentSession {
-  const { props, transcript, approvals, promptInput, promptHistory, pasteMap } =
-    deps;
+  const {
+    props,
+    transcript,
+    approvals,
+    promptInput,
+    promptHistory,
+    pasteMap,
+    runtime,
+  } = deps;
   const { setHistory, setLive, updateBanner, push, note, nextId } = transcript;
+  // `onSubmit` is invoked from the keyboard adapter's latest-committed closure,
+  // so it sees this render's `transcript.history`. Mirror it into a ref anyway so
+  // /copy-last reads the freshest committed scrollback even if that ever changes.
+  const historyRef = useRef(transcript.history);
+  historyRef.current = transcript.history;
   const { setInput, inputRef, bumpCursor } = promptInput;
   const controllerRef = deps.controllerRef;
+  // `/copy` enters nav mode (state lives in App). Mirror App's callback in a ref so
+  // onSubmit's latest-committed closure always reaches the freshest version.
+  const enterNavModeRef = useRef(deps.enterNavMode);
+  enterNavModeRef.current = deps.enterNavMode;
   const nerdFont = props.config.ui.nerdFont === true;
-  const app = useApp();
 
   // Mutable engine state lives in refs (read inside async loops); React state
   // mirrors what the UI shows.
@@ -241,9 +276,15 @@ export function useAgentSession(deps: {
     );
   };
   const [modelLabel, setModelLabel] = useState(props.modelLabel);
-  const [cost, setCost] = useState(0);
+  // A resumed session starts from its stored running totals, not zero.
+  const [cost, setCost] = useState(
+    () => props.store.getSession(props.sessionId)?.costUsd ?? 0,
+  );
   const [costKnown, setCostKnown] = useState(hasPriceData(props.modelName));
-  const [tokens, setTokens] = useState(0);
+  const [tokens, setTokens] = useState(() => {
+    const s = props.store.getSession(props.sessionId);
+    return s ? s.inputTokens + s.outputTokens : 0;
+  });
   // Verbose expands tool calls to show full input + output head (Ctrl+R toggles).
   const [verbose, setVerbose] = useState(false);
   // The agent's live task list (from the update_tasks tool), shown in the Tasks
@@ -268,29 +309,66 @@ export function useAgentSession(deps: {
       }
     } finally {
       props.store.close();
-      // Absorb the tail of an Esc/Ctrl+C spam before releasing the tty: while Ink
-      // is still mounted the terminal is raw and reads here drain the buffered
-      // keystrokes. Without this, the leftovers spill into the parent shell and
-      // corrupt its terminal handshake (fish's OSC 11 background probe renders
+      // Absorb the tail of an Esc/Ctrl+C spam before releasing the tty: while the
+      // renderer is still mounted the terminal is raw and reads here drain the
+      // buffered keystrokes. Without this, the leftovers spill into the parent shell
+      // and corrupt its terminal handshake (fish's OSC 11 background probe renders
       // its reply as literal `]11;rgb:…` at the prompt).
       await drainInputQuiet(process.stdin);
-      // Unmount Ink first so the terminal is restored to cooked mode immediately,
-      // then tear down the rest of the process. `app.exit()` only unmounts the UI —
-      // it does NOT end the process, and the live MCP clients (their child
-      // processes and sockets) keep the event loop alive, so without an explicit
-      // exit the process lingers after the UI is gone: the now-cooked terminal
-      // echoes any further keystrokes as raw `^[`/`^C` until a signal kills it.
-      app.exit();
       // Abort the session-scoped signal (cancels any in-flight AI permission
       // check) and dispose the assembled session — its dispose() closes MCP
       // transports (killing spawned servers like puppeteer's browser). Capped so a
       // wedged transport can't block the quit, then exit hard.
+      //
+      // Keep the renderer mounted during this wait. OpenTUI leaves stdin in raw mode
+      // until runtime.exit(); if we restore cooked mode first, a user still tapping
+      // Esc/Ctrl+C during the dispose window can echo `^[` into the parent shell and
+      // corrupt fish's OSC 11 colour probe into a visible `]11;rgb:…` reply.
       sessionAbortRef.current.abort();
       await Promise.race([
         (assembledRef.current?.dispose() ?? Promise.resolve()).catch(() => {}),
         new Promise((resolve) => setTimeout(resolve, 1000)),
       ]);
+      // One final short drain catches keys or terminal replies that arrived while
+      // disposal was running, immediately before cooked mode is restored.
+      await drainInputQuiet(process.stdin, 75, 250);
+      runtime.exit();
+      // OpenTUI's native layer probes the terminal background (OSC 11 — the
+      // dylib emits `]11;?`), and teardown can leave that reply still in
+      // flight. Once cooked mode is restored it would be delivered to the
+      // parent shell instead and render at the prompt as literal
+      // `]11;rgb:…`. Re-enter raw mode briefly and absorb whatever trickles
+      // in before handing the tty back.
+      try {
+        const stdin = process.stdin;
+        stdin.setRawMode?.(true);
+        stdin.resume();
+        await drainInputQuiet(stdin, 100, 300);
+        stdin.setRawMode?.(false);
+        stdin.pause();
+      } catch {
+        // best-effort — never block the exit on tty state
+      }
       process.exit(0);
+    }
+  }
+
+  function modelForRoleId(roleId?: string): {
+    provider: Provider;
+    model: string;
+    supportsVision: boolean;
+  } | null {
+    if (!roleId) return null;
+    const resolved = resolveModel(props.config, roleId);
+    if (!resolved) return null;
+    try {
+      return {
+        provider: createProvider(resolved.providerConfig),
+        model: resolved.model.name ?? resolved.model.id,
+        supportsVision: modelSupportsVision(resolved.model),
+      };
+    } catch {
+      return null;
     }
   }
 
@@ -301,21 +379,10 @@ export function useAgentSession(deps: {
     model: string;
     supportsVision: boolean;
   } {
-    const id = props.config.models?.[roleForMode(runMode)];
-    if (id) {
-      const resolved = resolveModel(props.config, id);
-      if (resolved) {
-        try {
-          return {
-            provider: createProvider(resolved.providerConfig),
-            model: resolved.model.name ?? resolved.model.id,
-            supportsVision: modelSupportsVision(resolved.model),
-          };
-        } catch {
-          // fall through to base refs
-        }
-      }
-    }
+    const roleModel = modelForRoleId(
+      props.config.models?.[roleForMode(runMode)],
+    );
+    if (roleModel) return roleModel;
     // Base-ref fallback has no ModelConfig in hand; assume vision-capable (the
     // built-in models all are) — a text-only model is opted out via config.
     const base = resolveModel(props.config);
@@ -337,6 +404,52 @@ export function useAgentSession(deps: {
       }
     }
     persistedRef.current = msgs.length;
+  }
+
+  function compactModelForSession(): { provider: Provider; model: string } {
+    const configured = modelForRoleId(props.config.models?.compact);
+    return configured
+      ? { provider: configured.provider, model: configured.model }
+      : { provider: providerRef.current, model: modelNameRef.current };
+  }
+
+  async function compactNow(): Promise<void> {
+    if (messagesRef.current.length === 0) {
+      note("nothing to compact yet");
+      return;
+    }
+    setBusy(true);
+    const controller = new AbortController();
+    controllerRef.current = controller;
+    try {
+      note("compacting context…");
+      const compact = compactModelForSession();
+      const result = await compactConversation({
+        provider: compact.provider,
+        model: compact.model,
+        messages: messagesRef.current,
+        keepRecent: 6,
+        signal: controller.signal,
+      });
+      if (result.summarized === 0) {
+        note("nothing compacted — not enough history yet");
+        return;
+      }
+      flush(true);
+      setHistory(
+        itemsFromMessages(messagesRef.current).map(
+          (it) => ({ ...it, id: nextId() }) as Item,
+        ),
+      );
+      setLive([]);
+      queueMicrotask(() => runtime.clear());
+      note(`⌘ compacted context: ${result.summarized} msgs`);
+    } catch (err) {
+      note(`compact failed: ${(err as Error).message}`, "error");
+    } finally {
+      controllerRef.current = null;
+      setBusy(false);
+    }
   }
 
   // A turn rejecting *outside* runTurn's own try (e.g. while building tools) would
@@ -386,7 +499,10 @@ export function useAgentSession(deps: {
     const preToolUse = assembled?.preToolUse;
     const postToolUse = assembled?.postToolUse;
 
-    const budget = supportsThinking(turnProvider.id) ? budgetFor(thinking) : 0;
+    const budget = supportsThinking(turnProvider.id)
+      ? budgetFor(thinkingRef.current)
+      : 0;
+    const compactRunModel = compactModelForSession();
     // Auto mode runs unattended → a hard cap (no human to ask). Normal/plan run
     // unbounded with a periodic "keep going?" checkpoint instead of a turn limit.
     const interactive = runMode !== "auto";
@@ -398,35 +514,19 @@ export function useAgentSession(deps: {
     // pending→done); every earlier item is final. So as the turn progresses we
     // move finalised items into the `<Static>` scrollback and keep just the live
     // (mutating) item in the dynamic region. This is what stops the dynamic region
-    // from growing past the terminal viewport — overflowing it desyncs Ink's
-    // redraw and duplicates lines into the scrollback. `committed` tracks how many
+    // from growing past the terminal viewport — overflowing it desyncs the
+    // renderer's redraw and duplicates lines into the scrollback. `committed` tracks how many
     // of `local` have already been handed to `<Static>`.
     const local: Item[] = [];
     let committed = 0;
-    // Ghost-free streaming: a growing assistant/thinking block is the one item that
-    // can outgrow the viewport. Before each commit, peel its *stable* prefix (whole
-    // lines, never inside an open code fence) into its own finalised chunk inserted
-    // just before it — the existing "commit all but last" pass then moves the chunk
-    // into `<Static>` permanently, leaving only the unstable tail in the live region.
-    // The tail is ≤ one logical line (plus any open fence), so it can't overflow.
-    const splitStableText = () => {
-      const last = local[local.length - 1];
-      if (!last || (last.kind !== "assistant" && last.kind !== "thinking"))
-        return;
-      const cut = stablePrefixLen(last.text, last.kind);
-      if (cut <= 0) return;
-      const chunk: Item = {
-        id: nextId(),
-        kind: last.kind,
-        text: last.text.slice(0, cut),
-        continuation: last.continuation,
-      };
-      last.text = last.text.slice(cut);
-      last.continuation = true; // its head was already committed above
-      local.splice(local.length - 1, 0, chunk); // insert the chunk before the tail
-    };
+    // A growing assistant/thinking block stays a single `local` item until the next
+    // item (a tool call, a note, the turn end) makes it non-last and `sync` commits
+    // it whole. We deliberately do NOT peel its stable prefix into separate chunks:
+    // OpenTUI is a retained-mode renderer, so the live region holding a growing box
+    // is safe, and `LiveRegion` already height-caps the displayed block via
+    // `tailLines`. Keeping one item per contiguous block is what lets the transcript
+    // render each answer as a single titled card instead of a stack of boxes.
     const sync = () => {
-      splitStableText();
       const finalCount = local.length - 1; // all but the still-mutating last item
       if (finalCount > committed) {
         const newlyFinal = local.slice(committed, finalCount);
@@ -453,9 +553,10 @@ export function useAgentSession(deps: {
 
     // Re-resolve provider/model/thinking each agentic step so a mid-turn /model or
     // /think (which only mutate the base refs) lands on the next step. Mode is fixed
-    // for the turn (`runMode`); a /mode change applies to the next turn. (spec §4)
+    // for the turn (`runMode`); a /mode change applies to the next turn.
     const refreshTurnConfig = () => {
       const m = modelForTurn(runMode);
+      const compact = modelForRoleId(props.config.models?.compact);
       const budget = supportsThinking(m.provider.id)
         ? budgetFor(thinkingRef.current)
         : 0;
@@ -464,6 +565,8 @@ export function useAgentSession(deps: {
         model: m.model,
         supportsVision: m.supportsVision,
         thinkingBudget: budget,
+        compactProvider: compact?.provider,
+        compactModel: compact?.model,
       };
     };
 
@@ -481,6 +584,8 @@ export function useAgentSession(deps: {
         onCheckpoint: interactive ? approvals.requestCheckpoint : undefined,
         thinkingBudget: budget,
         compactAtTokens: props.config.compactAtTokens,
+        compactProvider: compactRunModel.provider,
+        compactModel: compactRunModel.model,
         signal: controller.signal,
         gate,
         preToolUse,
@@ -699,10 +804,11 @@ export function useAgentSession(deps: {
     }
     modelNameRef.current = resolved.model.name ?? resolved.model.id;
     const label = resolved.model.id;
+    const source = providerDisplayName(resolved.provider);
     setModelLabel(label);
     setCostKnown(hasPriceData(modelNameRef.current));
     if (!hasConversation()) {
-      updateBanner({ model: label, provider: providerRef.current.id });
+      updateBanner({ model: label, provider: source });
     }
     // Persist: update the session row (so --resume restores this model) and write
     // the preference to ~/.cc/config.json (so it's the default next launch).
@@ -713,7 +819,7 @@ export function useAgentSession(deps: {
         "error",
       ),
     );
-    note(`model → ${label}`);
+    note(`model → ${label} (${source})`);
   }
 
   function formatConfigValue(value: unknown): string {
@@ -771,6 +877,15 @@ export function useAgentSession(deps: {
     if (assemblyRef.current) {
       await assemblyRef.current;
       return;
+    }
+    // Seed the resumed transcript into the scrollback (once, on the first
+    // call) so a `--resume` launch shows the prior conversation it continues.
+    const resumed = props.resumedMessages;
+    if (resumed?.length) {
+      const items = itemsFromMessages(resumed).map(
+        (it) => ({ ...it, id: nextId() }) as Item,
+      );
+      setHistory((prev) => [...prev, ...items]);
     }
     const p = (async () => {
       assembledRef.current = await assemble();
@@ -847,14 +962,20 @@ export function useAgentSession(deps: {
     }
   }
 
-  /** List every configured model id (/model with no argument). */
+  /** List every configured model, grouped by source (/model with no argument). */
   function listModels(): void {
-    const ids: string[] = [];
-    for (const pc of Object.values(props.config.providers)) {
-      for (const m of pc.models ?? [])
-        ids.push(m.name ? `${m.id} (${m.name})` : m.id);
+    const lines: string[] = [];
+    for (const [key, pc] of Object.entries(props.config.providers)) {
+      const models = pc.models ?? [];
+      if (models.length === 0) continue;
+      const ids = models.map((m) =>
+        m.name && m.name !== m.id ? `${m.id} (${m.name})` : m.id,
+      );
+      lines.push(`  ${providerDisplayName(key)}: ${ids.join(", ")}`);
     }
-    note(ids.length ? `models: ${ids.join(", ")}` : "no models configured");
+    note(
+      lines.length ? `models:\n${lines.join("\n")}` : "no models configured",
+    );
   }
 
   async function submitPrompt(
@@ -989,7 +1110,27 @@ export function useAgentSession(deps: {
       case "help":
         note(action.text);
         break;
+      case "copy-last":
+        copyLast();
+        break;
+      case "changelog":
+        void doChangelog(action.version);
+        break;
     }
+  }
+
+  // /copy-last — write the most recent assistant message to the clipboard and
+  // note the outcome. Reads the freshest committed scrollback via historyRef so
+  // a just-finished turn's answer is included; safe to run mid-turn.
+  function copyLast(): void {
+    const target = lastAssistantCopyTarget(historyRef.current);
+    if (!target) {
+      note("no assistant message to copy yet");
+      return;
+    }
+    copyTargetToClipboard(target)
+      .then((msg) => note(msg))
+      .catch((err) => note(`/copy-last failed: ${(err as Error).message}`));
   }
 
   // Build the QueuedItem for a queueable action, or null to skip queueing.
@@ -1021,7 +1162,7 @@ export function useAgentSession(deps: {
     if (!line) return;
     // Busy → route by command kind. State/config commands apply live; messages and
     // prompt-commands are queued and injected at the next tool-result boundary;
-    // disruptive lifecycle commands are deferred with a note. (spec §3)
+    // disruptive lifecycle commands are deferred with a note.
     if (busy) {
       setInput("");
       promptHistory.recordHistory(line);
@@ -1058,8 +1199,12 @@ export function useAgentSession(deps: {
       case "set-model":
       case "list-models":
       case "cost":
+      case "changelog":
       case "help":
         applyLiveAction(action);
+        break;
+      case "compact":
+        void compactNow();
         break;
       case "clear": {
         messagesRef.current = [];
@@ -1074,24 +1219,29 @@ export function useAgentSession(deps: {
         if (props.config.hooks.SessionStart?.length) {
           void runSessionStartHooks(props.config.hooks, "clear", hookContext());
         }
-        // Ink's <Static> prints scrollback permanently — resetting React state
-        // alone leaves the old transcript on screen. We must clear via Ink's own
-        // instance.clear() so Ink resets its internal cursor/output bookkeeping;
-        // writing a raw clear escape (\x1b[2J…) out-of-band desyncs Ink and causes
-        // duplicated re-renders and a runaway layout. Reset history first, then
-        // clear on the next tick so the <Static> count is in sync.
+        // Committed `<Static>` scrollback is treated as permanent by the renderer —
+        // resetting React state alone leaves the old transcript on screen. Clear
+        // through the host runtime so the renderer can reset its own bookkeeping.
+        // Reset history first, then clear on the next tick so the scrollback count is
+        // in sync.
         setHistory([]);
         setTasks([]);
-        queueMicrotask(() => props.inkInstance?.current?.clear());
+        queueMicrotask(() => runtime.clear());
         setCost(0);
         setTokens(0);
         note("conversation cleared");
         break;
       }
       case "resume":
-        note(
-          "resume from the TUI isn't supported yet — start with `cc --resume`",
-        );
+        handleResume(action.id);
+        break;
+      case "copy-last":
+        copyLast();
+        break;
+      case "copy-open":
+        // Enter keyboard nav mode over the committed scrollback (focus the last
+        // block). Nav state lives in App; this routes through the ref it sets.
+        enterNavModeRef.current();
         break;
       case "init":
         doInit();
@@ -1117,6 +1267,89 @@ export function useAgentSession(deps: {
         note(action.message, "error");
         break;
     }
+  }
+
+  // `/resume` — bare lists recent sessions; with an id (or unique prefix) it
+  // swaps the running conversation for the saved one: messages, session row,
+  // mode/thinking/model, and running totals all restore from the store, and the
+  // scrollback is rebuilt from the stored transcript. Deferred while busy
+  // (classifyBusyAction), so it never races an in-flight turn.
+  function handleResume(id?: string): void {
+    if (!id) {
+      const rows = props.store.listSessions(10);
+      if (rows.length === 0) {
+        note("no saved sessions yet");
+        return;
+      }
+      const lines = rows.map((s) => {
+        const when = new Date(s.updatedAt)
+          .toISOString()
+          .replace("T", " ")
+          .slice(0, 16);
+        return `  ${s.id.slice(0, 8)}  ${when}  ${s.title ?? "(untitled)"}`;
+      });
+      note(
+        `sessions (newest first):\n${lines.join("\n")}\n\nresume one with /resume <id>`,
+      );
+      return;
+    }
+    const target = resolveSession(props.store, id);
+    if (!target) {
+      note(`no session matching "${id}"`, "error");
+      return;
+    }
+    if (target.id === sessionIdRef.current) {
+      note("that session is already active");
+      return;
+    }
+    const messages = props.store.loadMessages(target.id);
+    messagesRef.current = messages;
+    persistedRef.current = messages.length;
+    sessionIdRef.current = target.id;
+    // Restore the session's last-active mode/thinking via the raw state setters
+    // — the wrappers would write the values straight back to the row.
+    if (
+      target.mode === "normal" ||
+      target.mode === "plan" ||
+      target.mode === "auto"
+    ) {
+      modeRef.current = target.mode;
+      setModeState(target.mode);
+    }
+    const level = parseLevel(target.thinking ?? undefined);
+    if (level !== undefined) {
+      thinkingRef.current = level;
+      setThinkingState(level);
+    }
+    // Restore the session's model when it still resolves (the provider may have
+    // been removed since). Session-local: the saved config default is untouched.
+    const restored = resolveModel(props.config, target.model);
+    if (restored) {
+      try {
+        providerRef.current = createProvider(restored.providerConfig);
+        modelNameRef.current = restored.model.name ?? restored.model.id;
+        setModelLabel(restored.model.id);
+        setCostKnown(hasPriceData(modelNameRef.current));
+      } catch {
+        // unresolvable credentials — keep the current model
+      }
+    }
+    setCost(target.costUsd);
+    setTokens(target.inputTokens + target.outputTokens);
+    setTasks([]);
+    // Rebuild the scrollback from the stored transcript (replaces the old one).
+    setHistory(
+      itemsFromMessages(messages).map(
+        (it) => ({ ...it, id: nextId() }) as Item,
+      ),
+    );
+    queueMicrotask(() => runtime.clear());
+    if (props.config.hooks.SessionStart?.length) {
+      void runSessionStartHooks(props.config.hooks, "resume", hookContext());
+    }
+    note(
+      `↻ resumed session ${target.id.slice(0, 8)} (${messages.length} prior messages)`,
+    );
   }
 
   // `/init` — drive a real agent turn that investigates the repo and writes a
@@ -1246,6 +1479,25 @@ export function useAgentSession(deps: {
   function cancelExtensions(): void {
     extensionsOpenRef.current = false;
     setExtensionsPicker(null);
+  }
+
+  // `/changelog` — show release notes from GitHub. Bare asks for the running
+  // version and falls back to the latest release (covers source/dev runs whose
+  // version was never published); an explicit version must exist.
+  async function doChangelog(version?: string): Promise<void> {
+    const result =
+      (await fetchReleaseNotes(version ?? VERSION)) ??
+      (version ? null : await fetchReleaseNotes());
+    if (!result) {
+      note(
+        version
+          ? `no release notes found for ${version}`
+          : "no release notes available (couldn't reach GitHub releases)",
+        "error",
+      );
+      return;
+    }
+    note(`── cc ${result.version} ──\n${result.notes.trim()}`);
   }
 
   // `/update` — download, verify, and swap in the latest release binary. Each

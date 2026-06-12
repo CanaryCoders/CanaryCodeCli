@@ -35,13 +35,19 @@ export type CommandAction =
   | { kind: "set-model"; model: string }
   | { kind: "list-models" }
   | { kind: "clear" }
+  | { kind: "compact" }
   | { kind: "resume"; id?: string }
   | { kind: "cost" }
+  | { kind: "copy-last" }
+  /** Enter keyboard transcript copy/navigation mode (nav mode). */
+  | { kind: "copy-open" }
   | { kind: "init" }
   /** A command contributed by an extension (built-in or user-loaded). */
   | { kind: "extension-command"; name: string; args: string[] }
   | { kind: "extensions"; op: "list" | "enable" | "disable"; name?: string }
   | { kind: "update" }
+  /** Show release notes — bare for the running version, or for `version`. */
+  | { kind: "changelog"; version?: string }
   | {
       kind: "config";
       op: "summary" | "get" | "set" | "unset" | "reload";
@@ -55,7 +61,7 @@ export type CommandAction =
  * How a command typed *while the agent is busy* should be handled:
  * - "live"  — apply immediately (state/config change or read-only note). /model &
  *             /think take effect on the in-flight turn's next step; /mode on the
- *             next turn. (See the mid-turn-queue spec §3/§4.)
+ *             next turn.
  * - "queue" — push onto the FIFO and inject at the next tool-result boundary.
  * - "defer" — unsafe to run mid-turn (would corrupt in-flight conversation/lifecycle
  *             state); show a "after the current turn" note and run nothing.
@@ -69,13 +75,17 @@ export function classifyBusyAction(
     case "set-mode":
     case "list-models":
     case "cost":
+    case "copy-last":
+    case "changelog":
     case "help":
       return "live";
     case "message":
     case "init":
       return "queue";
     case "clear":
+    case "compact":
     case "resume":
+    case "copy-open":
     case "extension-command":
     case "extensions":
     case "update":
@@ -114,12 +124,21 @@ const BASE_COMMANDS: CommandSpec[] = [
   { name: "auto", description: "switch to autonomous auto mode" },
   { name: "normal", description: "return to normal mode" },
   { name: "clear", description: "clear the conversation and start fresh" },
+  { name: "compact", description: "summarize older context now" },
   {
     name: "resume",
     usage: "[id]",
     description: "list saved sessions, or resume <id>",
   },
   { name: "cost", description: "show token usage and cost so far" },
+  {
+    name: "copy-last",
+    description: "copy the last assistant message to the clipboard",
+  },
+  {
+    name: "copy",
+    description: "enter transcript copy/navigation mode",
+  },
   {
     name: "config",
     usage: "[get|set|unset|reload]",
@@ -139,6 +158,11 @@ const BASE_COMMANDS: CommandSpec[] = [
 /** The static commands that close the `/help` listing. */
 const TAIL_COMMANDS: CommandSpec[] = [
   { name: "update", description: "update cc to the latest release" },
+  {
+    name: "changelog",
+    usage: "[version]",
+    description: "show release notes (default: this version)",
+  },
   { name: "help", aliases: ["?"], description: "show this command list" },
   { name: "exit", aliases: ["quit", "q"], description: "exit cc" },
 ];
@@ -254,10 +278,17 @@ export interface Completion {
   description?: string;
 }
 
+/** A selectable model and where it comes from (provider display name). */
+export interface ModelOption {
+  id: string;
+  /** Source label shown beside the id: "CanaryLLM", "Codex", "OpenCode", … */
+  source?: string;
+}
+
 /** Known parameter values the host can supply for parameter completion. */
 export interface CompletionContext {
-  /** Configured model ids (for `/model` and model-valued `/config` paths). */
-  models?: string[];
+  /** Configured models (for `/model` and model-valued `/config` paths). */
+  models?: ModelOption[];
   /** Recent sessions, newest first (for `/resume`). */
   sessions?: { id: string; title: string | null }[];
   /** Optional config paths supplied by the host; defaults to built-in common paths. */
@@ -301,12 +332,18 @@ function configValueCompletions(
   path: string,
   ctx: CompletionContext,
 ): Completion[] {
-  const values =
+  if (
     path === "model" ||
     path.startsWith("models.") ||
     path === "permission.model"
-      ? (ctx.models ?? [])
-      : (CONFIG_ENUM_VALUES[path] ?? []);
+  ) {
+    return (ctx.models ?? []).map((m) => ({
+      value: `${prefix}${m.id}`,
+      label: m.id,
+      description: m.source,
+    }));
+  }
+  const values = CONFIG_ENUM_VALUES[path] ?? [];
   return values.map((value) => ({ value: `${prefix}${value}`, label: value }));
 }
 
@@ -345,9 +382,12 @@ function paramValues(
 ): Completion[] {
   switch (name) {
     case "model":
-      return (ctx.models ?? []).map((id) => ({
-        value: `/model ${id}`,
-        label: id,
+      // The description names the model's source (CanaryLLM, Codex, OpenCode, …)
+      // so identically-named models from different providers stay tellable apart.
+      return (ctx.models ?? []).map((m) => ({
+        value: `/model ${m.id}`,
+        label: m.id,
+        description: m.source,
       }));
     case "think":
       return THINK_LEVELS.map((l) => ({ value: `/think ${l}`, label: l }));
@@ -476,12 +516,18 @@ export function makeCommandSet(
         return { kind: "set-mode", mode: "normal" };
       case "clear":
         return { kind: "clear" };
+      case "compact":
+        return { kind: "compact" };
       case "resume":
         return parsed.arg
           ? { kind: "resume", id: parsed.arg }
           : { kind: "resume" };
       case "cost":
         return { kind: "cost" };
+      case "copy-last":
+        return { kind: "copy-last" };
+      case "copy":
+        return { kind: "copy-open" };
       case "config":
         return parseConfigAction(parsed.arg);
       case "init":
@@ -490,6 +536,10 @@ export function makeCommandSet(
         return parseExtensionsAction(parsed.arg);
       case "update":
         return { kind: "update" };
+      case "changelog":
+        return parsed.arg
+          ? { kind: "changelog", version: parsed.arg }
+          : { kind: "changelog" };
       case "help":
         return { kind: "help", text: helpText(specs) };
       case "exit":

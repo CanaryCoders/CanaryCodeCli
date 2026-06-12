@@ -14,7 +14,6 @@
 // MultilineInput; while it's active this box's own `useInput` is disabled so the
 // two never fight over a keypress.
 
-import { Box, Text, useInput } from "ink";
 import { useReducer, useRef } from "react";
 import type { AskAnswer, AskQuestion } from "../assemble.ts";
 // recommendedIndex is a pure presentation helper (which option to pre-select);
@@ -23,14 +22,18 @@ import type { AskAnswer, AskQuestion } from "../assemble.ts";
 import { recommendedIndex } from "../extensions/askuser.ts";
 import { useIcon } from "./Icon.tsx";
 import { MultilineInput } from "./Input.tsx";
+import { ChoiceRow } from "./Interactive.tsx";
+import { useTuiInput } from "./keyboard.ts";
+import { Box, Text } from "./primitives.tsx";
 import { SPACING, tint } from "./theme.ts";
 
 const CUSTOM_LABEL = "Write my own answer";
 const ACCENT = "magenta";
 
 /** The wizard's full UI state: which question, cursor + picks, and the
- *  free-text answer field. */
-interface State {
+ *  free-text answer field. Exported (with `reducer` and `Action`) so the
+ *  row-selection behavior can be unit-tested without the renderer. */
+export interface State {
   /** Index of the question currently shown. */
   qIndex: number;
   /** Row the cursor is on (an option index, or the "write my own" row). */
@@ -43,15 +46,16 @@ interface State {
   draft: string;
 }
 
-type Action =
+export type Action =
   | { type: "moveCursor"; rowCount: number; delta: number }
+  | { type: "setCursor"; index: number; rowCount: number }
   | { type: "togglePick"; index: number }
   | { type: "startWriting" }
   | { type: "setDraft"; draft: string }
   | { type: "cancelWriting" }
   | { type: "nextQuestion"; cursor: number };
 
-function reducer(state: State, action: Action): State {
+export function reducer(state: State, action: Action): State {
   switch (action.type) {
     case "moveCursor": {
       const { rowCount, delta } = action;
@@ -60,6 +64,9 @@ function reducer(state: State, action: Action): State {
         cursor: (state.cursor + delta + rowCount) % rowCount,
       };
     }
+    case "setCursor":
+      if (action.index < 0 || action.index >= action.rowCount) return state;
+      return { ...state, cursor: action.index };
     case "togglePick": {
       const picks = new Set(state.picks);
       if (picks.has(action.index)) picks.delete(action.index);
@@ -124,6 +131,19 @@ export function AskUserView({
     });
   };
 
+  const confirmOption = (index: number): void => {
+    const option = q.options[index];
+    if (!option) return;
+    advance({ selected: [option.label] });
+  };
+
+  const toggleOption = (index: number): void => {
+    if (!q.options[index]) return;
+    dispatch({ type: "togglePick", index });
+  };
+
+  const confirmCustom = (): void => dispatch({ type: "startWriting" });
+
   // Confirm the preset selection: toggled picks if any (multiSelect), else the
   // single option under the cursor.
   const confirmPresets = (): void => {
@@ -133,11 +153,11 @@ export function AskUserView({
         .map((i) => q.options[i]!.label);
       advance({ selected: labels });
     } else {
-      advance({ selected: [q.options[cursor]!.label] });
+      confirmOption(cursor);
     }
   };
 
-  useInput(
+  useTuiInput(
     (input, key) => {
       if (key.upArrow)
         return dispatch({ type: "moveCursor", rowCount, delta: -1 });
@@ -209,7 +229,16 @@ export function AskUserView({
             const isSel = i === cursor;
             const checked = q.multiSelect && picks.has(i);
             return (
-              <Box key={`${i}:${o.label}`}>
+              <ChoiceRow
+                key={`${i}:${o.label}`}
+                selected={isSel}
+                onHover={() =>
+                  dispatch({ type: "setCursor", index: i, rowCount })
+                }
+                onAction={() =>
+                  q.multiSelect ? toggleOption(i) : confirmOption(i)
+                }
+              >
                 <Box width={1} marginRight={1}>
                   <Text color={isSel ? accent : undefined}>
                     {isSel ? promptIcon : " "}
@@ -228,10 +257,16 @@ export function AskUserView({
                 {o.description ? (
                   <Text dimColor>{`  ${o.description}`}</Text>
                 ) : null}
-              </Box>
+              </ChoiceRow>
             );
           })}
-          <Box>
+          <ChoiceRow
+            selected={cursor === customRow}
+            onHover={() =>
+              dispatch({ type: "setCursor", index: customRow, rowCount })
+            }
+            onAction={confirmCustom}
+          >
             <Box width={1} marginRight={1}>
               <Text color={cursor === customRow ? accent : undefined}>
                 {cursor === customRow ? promptIcon : " "}
@@ -248,7 +283,7 @@ export function AskUserView({
             >
               {CUSTOM_LABEL}
             </Text>
-          </Box>
+          </ChoiceRow>
           <Text dimColor>
             {q.multiSelect
               ? "↑/↓ move · space toggle · enter submit"

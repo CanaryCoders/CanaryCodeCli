@@ -1,19 +1,19 @@
 // tui/Footer.tsx — the bottom status bar: a mode pill, model, thinking, tokens,
 // cost, and a verbose indicator, above a subtle separator rule.
 //
-// Phase 4.8 promotes the old `model · mode · thinking · $cost` text line to a
-// proper footer bar: the mode renders as a coloured **pill** (background-tinted,
-// black text), the live **token count** sits beside the running **cost**, a
-// `⏵ verbose` indicator shows when expanded tool output is on, and a faint
-// full-width **separator rule** divides it from the scrollback. The width comes
-// from `useStdout` (never a hard-coded 80); on a narrow terminal the lowest-value
-// segments (model → thinking → tokens → verbose) drop out one at a time so the bar
-// never overflows. Colours pass through `tint` so `NO_COLOR` keeps the pill's
-// spacing + the rule but drops the colour.
+// The mode renders as a coloured pill (background-tinted, black text), the live
+// token count sits beside the running cost, and a `⏵ verbose` indicator shows
+// when expanded tool output is on. The width comes from the terminal (never a
+// hard-coded 80); on a narrow terminal the lowest-value segments
+// (model → thinking → tokens → verbose) drop out one at a time so the bar never
+// overflows. Colours pass through `tint` so `NO_COLOR` keeps the pill's spacing
+// + the rule but drops the colour.
 
-import { Box, Text, useStdout } from "ink";
+import { useRef, useState } from "react";
 import type { AgentMode } from "../agent.ts";
 import { useIcon } from "./Icon.tsx";
+import { ActionChip } from "./Interactive.tsx";
+import { Box, Text, useTerminalColumns } from "./primitives.tsx";
 import { tint } from "./theme.ts";
 
 export interface FooterProps {
@@ -31,11 +31,70 @@ export interface FooterProps {
   verbose: boolean;
   /** Override terminal width (tests); defaults to the measured stdout columns. */
   columns?: number;
+  /** Click the mode pill → cycle the mode (same as Shift+Tab). */
+  onCycleMode?: () => void;
+  /** Click the verbose chip → toggle verbose (same as Ctrl+R). */
+  onToggleVerbose?: () => void;
+  /** Click the `?` chip → open the keyboard/mouse help overlay. */
+  onOpenHelp?: () => void;
 }
 
 /** Compact a token count: 1234 → "1.2k", 980 → "980". */
 function formatTokens(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+}
+
+/** The mode pill — a coloured ` mode ` block. Clickable: a left-click cycles the
+ *  mode (exactly like Shift+Tab); hover/press brighten it so the affordance reads.
+ *  Keyboard stays caller-owned; this only translates the click. */
+function ModePill({
+  mode,
+  modeColor,
+  onCycle,
+}: {
+  mode: AgentMode;
+  modeColor: string;
+  onCycle?: () => void;
+}): React.ReactElement {
+  const [hovered, setHovered] = useState(false);
+  const [pressed, setPressed] = useState(false);
+  const pressedRef = useRef(false);
+  const interactive = onCycle !== undefined;
+  const setPressedState = (next: boolean): void => {
+    pressedRef.current = next;
+    setPressed(next);
+  };
+  return (
+    <Text
+      backgroundColor={tint(modeColor)}
+      color={tint("black")}
+      bold
+      inverse={interactive && pressed}
+      underline={interactive && hovered && !pressed}
+      cursor={interactive ? "pointer" : "default"}
+      onMouseOver={() => {
+        if (interactive) setHovered(true);
+      }}
+      onMouseOut={() => {
+        setHovered(false);
+        setPressedState(false);
+      }}
+      onMouseDown={(event) => {
+        if (!interactive || event.button !== 0) return;
+        setPressedState(true);
+        event.stopPropagation();
+      }}
+      onMouseUp={(event) => {
+        if (!interactive || event.button !== 0) return;
+        const wasPressed = pressedRef.current;
+        setPressedState(false);
+        event.stopPropagation();
+        if (wasPressed) onCycle?.();
+      }}
+    >
+      {` ${mode} `}
+    </Text>
+  );
 }
 
 export interface Seg {
@@ -75,13 +134,16 @@ function fitSegments(segs: Seg[], cols: number): Seg[] {
 }
 
 export function Footer(props: FooterProps): React.ReactElement {
-  const { stdout } = useStdout();
-  const cols = props.columns ?? stdout?.columns ?? 80;
+  const measuredColumns = useTerminalColumns();
+  const cols = props.columns ?? measuredColumns;
 
   const tokText = `${formatTokens(props.tokens)} tok`;
   const costText = props.costKnown ? `$${props.cost.toFixed(4)}` : null;
   const verboseIcon = useIcon("verbose");
   const verboseText = "verbose";
+  const verboseLabel = `${verboseIcon} ${verboseText}`;
+  // No nerd-font glyph for "help"; the plain `?` reads everywhere.
+  const helpLabel = "?";
 
   const segs: Seg[] = [
     {
@@ -89,13 +151,11 @@ export function Footer(props: FooterProps): React.ReactElement {
       width: props.mode.length + 2,
       prio: 0,
       node: (
-        <Text
-          backgroundColor={tint(props.modeColor)}
-          color={tint("black")}
-          bold
-        >
-          {` ${props.mode} `}
-        </Text>
+        <ModePill
+          mode={props.mode}
+          modeColor={props.modeColor}
+          onCycle={props.onCycleMode}
+        />
       ),
     },
     {
@@ -126,20 +186,41 @@ export function Footer(props: FooterProps): React.ReactElement {
     });
   }
   if (props.verbose) {
+    // Clickable: a click turns verbose off (matches Ctrl+R). The icon+label ride
+    // in one chip so the whole thing is the hit target.
     segs.push({
       key: "verbose",
-      width: verboseIcon.length + 1 + verboseText.length,
+      width: verboseLabel.length,
       prio: 2,
-      node: (
-        <Box>
-          <Text color={tint("cyan")}>{verboseIcon}</Text>
-          <Box marginLeft={1}>
-            <Text color={tint("cyan")}>{verboseText}</Text>
-          </Box>
-        </Box>
-      ),
+      node:
+        props.onToggleVerbose !== undefined ? (
+          <ActionChip
+            label={verboseLabel}
+            color="cyan"
+            onAction={props.onToggleVerbose}
+          />
+        ) : (
+          <Text color={tint("cyan")}>{verboseLabel}</Text>
+        ),
     });
   }
+  // The `?` help chip drops after model/think/tokens but before cost + the mode
+  // pill, so it survives on all but the narrowest terminals.
+  segs.push({
+    key: "help",
+    width: helpLabel.length,
+    prio: 2,
+    node:
+      props.onOpenHelp !== undefined ? (
+        <ActionChip
+          label={helpLabel}
+          color="cyan"
+          onAction={props.onOpenHelp}
+        />
+      ) : (
+        <Text dimColor>{helpLabel}</Text>
+      ),
+  });
 
   const kept = fitSegments(segs, cols);
   const rule = "─".repeat(Math.max(0, cols));

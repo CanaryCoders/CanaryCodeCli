@@ -58,12 +58,16 @@ describe("modelForRole", () => {
     const c = baseConfig();
     expect(modelForRole(c, "reasoning")).toBe("opus");
     expect(modelForRole(c, "coding")).toBe("opus");
+    expect(modelForRole(c, "compact")).toBe("opus");
   });
 
   test("explicit role overrides win", () => {
-    const c = baseConfig({ models: { reasoning: "opus", coding: "sonnet" } });
+    const c = baseConfig({
+      models: { reasoning: "opus", coding: "sonnet", compact: "haiku" },
+    });
     expect(modelForRole(c, "reasoning")).toBe("opus");
     expect(modelForRole(c, "coding")).toBe("sonnet");
+    expect(modelForRole(c, "compact")).toBe("haiku");
   });
 
   test("permission falls back to legacy permission.model then haiku", () => {
@@ -219,4 +223,21 @@ test("foldPresets skips disabled extensions' presets", () => {
   foldPresets(config);
   expect(config.providers.openai).toBeUndefined();
   expect(config.providers.canaryllm).toBeDefined();
+});
+
+test("foldPresets env-interpolates the apiKey placeholder in injected presets", () => {
+  // The canary preset carries apiKey "${CANARYLLM_API_KEY}". loadConfig's env
+  // interpolation runs BEFORE foldPresets, so foldPresets must expand the
+  // placeholder itself — otherwise the gateway gets the literal string as its
+  // Bearer token and never sees the user's key.
+  const prev = process.env.CANARYLLM_API_KEY;
+  process.env.CANARYLLM_API_KEY = "sk-canary-test";
+  try {
+    const config = defaultConfig();
+    foldPresets(config);
+    expect(config.providers.canaryllm?.apiKey).toBe("sk-canary-test");
+  } finally {
+    if (prev === undefined) delete process.env.CANARYLLM_API_KEY;
+    else process.env.CANARYLLM_API_KEY = prev;
+  }
 });

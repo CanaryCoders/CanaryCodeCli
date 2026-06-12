@@ -2,8 +2,11 @@ name: release
 
 # Tag a version to ship it:
 #   git tag v0.1.0 && git push origin v0.1.0
-# This builds all platform binaries, publishes a GitHub Release, and updates the
-# Nix flake (nix/release.nix) on main so `nix run` tracks the new release.
+# This builds all platform binaries, publishes a GitHub Release whose notes are
+# the tag's section of CHANGELOG.md (add one before tagging — the job fails
+# without it), and updates the Nix flake (nix/release.nix) on main so `nix run`
+# tracks the new release. The CLI surfaces those notes via `cc changelog` and
+# the post-update what's-new banner.
 #
 # Security note: the only workflow inputs used are the built-in GITHUB_REF_NAME
 # (the tag, maintainer-controlled) and github.token. GITHUB_REF_NAME is consumed
@@ -56,13 +59,30 @@ jobs:
         working-directory: dist
         run: sha256sum cc-* > checksums.txt
 
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          set -eu
+          VERSION="${GITHUB_REF_NAME#v}" bun -e '
+            import { readFileSync, writeFileSync } from "node:fs";
+            import { extractChangelog } from "./src/update.ts";
+            const notes = extractChangelog(
+              readFileSync("CHANGELOG.md", "utf8"),
+              process.env.VERSION ?? "",
+            );
+            if (!notes) {
+              console.error(`no CHANGELOG.md section for ${process.env.VERSION}`);
+              process.exit(1);
+            }
+            writeFileSync("release-notes.md", notes);
+          '
+
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" dist/* \
             --title "$GITHUB_REF_NAME" \
-            --generate-notes
+            --notes-file release-notes.md
 
       - name: Bump the Nix flake to this release
         run: |

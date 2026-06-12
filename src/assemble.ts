@@ -41,6 +41,7 @@ import {
   type TaskUpdateFn,
   tasksExtension,
 } from "./extensions/tasks.ts";
+import { describeEnvironment } from "./shell.ts";
 import type { Tool } from "./tools.ts";
 import { tools as allTools } from "./tools.ts";
 
@@ -183,7 +184,12 @@ export async function assembleSession(
   const contextNote = describeContext(projectContext);
   if (contextNote) opts.note(contextNote);
   const base = composeSystemPrompt(SYSTEM_PROMPT, projectContext);
-  const system = [base, ...composed.promptSections].join("\n\n");
+  // The environment block (OS, cwd, date, and — crucially — which shell the
+  // `bash` tool actually runs in) so the model writes compatible commands and
+  // never assumes the user's login shell (fish, …) is the tool shell.
+  const system = [base, describeEnvironment(), ...composed.promptSections].join(
+    "\n\n",
+  );
 
   return { ...composed, system, gate };
 }

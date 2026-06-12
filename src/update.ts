@@ -1,6 +1,6 @@
-// update.ts — self-update for compiled release binaries.
+// update.ts — self-update for compiled release binaries, plus the changelog.
 //
-// Two paths:
+// Update paths:
 //   • Background notice. `cachedUpdateNotice()` does a synchronous read of the
 //     ~/.cc/update-check.json cache and returns a one-line banner string when a
 //     newer version was seen on a prior run. `refreshUpdateCache()` is the
@@ -13,6 +13,11 @@
 // Everything is hard-gated by `updateDisabledReason()`: source runs, Nix installs
 // (CC_DISABLE_UPDATE=1 or a /nix/store path), non-writable install dirs, and
 // `autoUpdate.enabled: false` all return a reason and short-circuit.
+//
+// Changelog: release notes live in CHANGELOG.md; the release workflow publishes
+// each version's section as the GitHub release body (`extractChangelog`). At
+// runtime, `whatsNewNotice()` flags the first launch after a version change and
+// `fetchReleaseNotes()` pulls a release body back down for `/changelog`.
 
 import { accessSync, chmodSync, constants as fsConstants } from "node:fs";
 import { readFile, rename, writeFile } from "node:fs/promises";
@@ -110,15 +115,17 @@ async function writeCache(cache: UpdateCache): Promise<void> {
 
 interface GithubRelease {
   tag_name: string;
+  /** Release notes markdown (the published CHANGELOG section). */
+  body?: string;
   assets: { name: string; browser_download_url: string }[];
 }
 
-async function fetchLatestRelease(): Promise<GithubRelease | null> {
+async function fetchRelease(path: string): Promise<GithubRelease | null> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), NET_TIMEOUT_MS);
   try {
     const res = await fetch(
-      `https://api.github.com/repos/${REPO}/releases/latest`,
+      `https://api.github.com/repos/${REPO}/releases/${path}`,
       {
         headers: {
           Accept: "application/vnd.github+json",
@@ -134,6 +141,24 @@ async function fetchLatestRelease(): Promise<GithubRelease | null> {
   } finally {
     clearTimeout(timer);
   }
+}
+
+function fetchLatestRelease(): Promise<GithubRelease | null> {
+  return fetchRelease("latest");
+}
+
+/**
+ * Release notes for a published version (default: the latest release). Returns
+ * null when the release doesn't exist, has no body, or the network is down.
+ */
+export async function fetchReleaseNotes(
+  version?: string,
+): Promise<{ version: string; notes: string } | null> {
+  const release = await fetchRelease(
+    version ? `tags/v${version.replace(/^v/, "")}` : "latest",
+  );
+  if (!release?.body?.trim()) return null;
+  return { version: release.tag_name.replace(/^v/, ""), notes: release.body };
 }
 
 /**
@@ -167,6 +192,70 @@ export async function refreshUpdateCache(config: Config): Promise<void> {
     checkedAt: Date.now(),
     latest: release.tag_name.replace(/^v/, ""),
   });
+}
+
+/** Where the last-launched version is recorded (for the what's-new notice). */
+function lastVersionPath(): string {
+  return join(homedir(), ".cc", "last-version");
+}
+
+/**
+ * One-line "what's new" banner on the first launch after the binary changed
+ * version (i.e. an update landed). Records the running version either way, so
+ * the notice shows exactly once. Fresh installs (no record yet) and source runs
+ * stay quiet.
+ */
+export async function whatsNewNotice(): Promise<string | null> {
+  if (!IS_RELEASE_BUILD) return null;
+  let previous: string | null = null;
+  try {
+    previous = (await readFile(lastVersionPath(), "utf8")).trim() || null;
+  } catch {
+    // No record yet — first run of a release build on this machine.
+  }
+  if (previous === VERSION) return null;
+  try {
+    await writeFile(lastVersionPath(), VERSION, "utf8");
+  } catch {
+    // Non-fatal: worst case the notice repeats next launch.
+  }
+  if (!previous || compareVersions(VERSION, previous) <= 0) return null;
+  return `✦ updated to cc ${VERSION} — /changelog for what's new`;
+}
+
+/**
+ * Extract one version's section from CHANGELOG.md (Keep a Changelog style:
+ * `## 0.2.0 - 2026-06-12` headings). Matches with or without a leading "v" or a
+ * trailing date, and returns the body up to the next version heading. The
+ * release workflow publishes this as the GitHub release body.
+ */
+export function extractChangelog(
+  markdown: string,
+  version: string,
+): string | null {
+  const want = version.replace(/^v/, "");
+  const lines = markdown.split("\n");
+  const isHeading = (line: string) => /^##\s+/.test(line);
+  const headingVersion = (line: string) => {
+    const m = line.match(/^##\s+\[?v?(\d[^\s\]]*)\]?/);
+    return m ? m[1] : null;
+  };
+  const start = lines.findIndex(
+    (line) => isHeading(line) && headingVersion(line) === want,
+  );
+  if (start === -1) return null;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    if (isHeading(lines[i])) {
+      end = i;
+      break;
+    }
+  }
+  const body = lines
+    .slice(start + 1, end)
+    .join("\n")
+    .trim();
+  return body || null;
 }
 
 /** Parse a `sha256  filename` checksums.txt into a name→hash map. */

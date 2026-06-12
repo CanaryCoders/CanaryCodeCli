@@ -13,7 +13,7 @@ import {
   describeCanary,
   populateCanaryModels,
 } from "../canary.ts";
-import type { Config, ProviderConfig } from "../config.ts";
+import { type Config, interpolateEnv, type ProviderConfig } from "../config.ts";
 import type {
   Extension,
   ExtensionCommand,
@@ -189,7 +189,10 @@ export function foldPresets(
       continue;
     }
     for (const [key, preset] of Object.entries(presets)) {
-      config.providers[key] ??= preset;
+      // Presets are folded in AFTER loadConfig's env interpolation, so any
+      // "${VAR}" placeholder they carry (e.g. the canary apiKey) is still
+      // literal — interpolate here, or the gateway gets the raw "${VAR}" string.
+      config.providers[key] ??= interpolateEnv(preset);
     }
   }
 }

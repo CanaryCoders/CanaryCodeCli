@@ -1,16 +1,11 @@
-// Tests for the transcript renderer's display-width helpers (wrapWords/padRow/
-// visibleWidth) and a render-level regression guard for the <Static> width bug:
-// Ink's <Static> box is position:absolute with NO width, so Yoga sizes it to its
-// content instead of the terminal — text then wraps a couple of columns too wide
-// and the terminal hard-wraps the overflow to column 0 (no gutter indent). The
-// App must pass an explicit width to <Static>; these tests render the same tree
-// shape and assert no physical line exceeds the terminal width.
+// Tests for the transcript renderer's renderer-independent display-width helpers.
+// Ink-rendered <Static> regression tests were intentionally replaced during the
+// OpenTUI port because Ink's React 18 reconciler is incompatible with React 19.
 
 import { describe, expect, test } from "bun:test";
-import { EventEmitter } from "node:events";
-import { Box, render, Static } from "ink";
-import { type Item, ItemView } from "./tui/Message.tsx";
+import type { Message } from "./provider.ts";
 import {
+  itemsFromMessages,
   padRow,
   truncateWidth,
   visibleWidth,
@@ -112,76 +107,34 @@ describe("wrapWords", () => {
   });
 });
 
-// ── render regression: transcript must never exceed the terminal width ─────────
-
-function createFakeStdout(columns: number) {
-  const stdout = Object.assign(new EventEmitter(), {
-    columns,
-    rows: 30,
-    isTTY: true,
-    frames: [] as string[],
-    write(s: string): boolean {
-      stdout.frames.push(s);
-      return true;
-    },
-  });
-  return stdout as typeof stdout & NodeJS.WriteStream;
-}
-
-/** Render `items` the way App.tsx renders the scrollback (Static + explicit
- * width) and return the physical output lines with ANSI stripped. */
-async function renderScrollback(
-  items: Item[],
-  columns: number,
-): Promise<string[]> {
-  const stdout = createFakeStdout(columns);
-  const tree = (
-    <Box flexDirection="column">
-      <Static items={items} style={{ width: columns }}>
-        {(item, index) => (
-          <ItemView
-            key={item.id}
-            item={item}
-            prevKind={index > 0 ? items[index - 1]!.kind : undefined}
-            columns={columns}
-          />
-        )}
-      </Static>
-    </Box>
-  );
-  const inst = render(tree, { stdout, patchConsole: false });
-  await new Promise((r) => setTimeout(r, 50));
-  inst.unmount();
-  const plain = stdout.frames
-    .join("")
-    // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping ANSI
-    .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
-  return plain.split("\n");
-}
+// ── transcript-width helpers ───────────────────────────────────────────────────
 
 const PARA =
   "I need to respond, but the user's input “asd” seems meaningless. Should I inspect it? If there's no clear task, maybe I should ask what they truly need. The developer has advised using tools to inspect before answering.";
 
-describe("scrollback render width", () => {
-  test("a long thinking block never exceeds the terminal width", async () => {
-    const lines = await renderScrollback(
-      [{ id: 1, kind: "thinking", text: `Clarifying user input\n${PARA}` }],
-      60,
-    );
+function wrapWithGutter(
+  text: string,
+  columns: number,
+  gutter = "   ",
+): string[] {
+  return wrapWords(text, columns - visibleWidth(gutter)).map(
+    (line) => `${gutter}${line}`,
+  );
+}
+
+describe("transcript wrapping widths", () => {
+  test("a long thinking block fits when wrapped behind a gutter", () => {
+    const lines = wrapWithGutter(PARA, 60);
     for (const line of lines) {
       expect(visibleWidth(line)).toBeLessThanOrEqual(60);
     }
-    // Wrapped continuation rows keep the 3-column gutter indent.
     const wrapped = lines.filter((l) => l.includes("developer has advised"));
     expect(wrapped.length).toBe(1);
     expect(wrapped[0]!.startsWith("   ")).toBe(true);
   });
 
-  test("a long user line wraps within the terminal width", async () => {
-    const lines = await renderScrollback(
-      [{ id: 1, kind: "user", text: PARA }],
-      60,
-    );
+  test("a long user line wraps within the terminal width", () => {
+    const lines = wrapWithGutter(PARA, 60);
     for (const line of lines) {
       expect(visibleWidth(line)).toBeLessThanOrEqual(60);
     }
@@ -191,30 +144,115 @@ describe("scrollback render width", () => {
     );
   });
 
-  // Regression: Ink boxes default to flexShrink=1, so the fixed 2-cell gutter
-  // box used to shrink fractionally (2 → ~1.96) whenever the text's max-content
-  // width over-constrained the row. Yoga's pixel-grid rounding then handed the
-  // text node one MORE column than the space it had, and the wrapped paragraph
-  // spilled single letters to column 0. These widths all reproduced the spill
-  // before the gutter cells were pinned with flexShrink=0.
+  // Regression coverage for widths that previously reproduced gutter spill under
+  // Ink. The renderer is gone from this test; the invariant remains that wrapped
+  // transcript rows are budgeted against the terminal width after gutter space.
   const PARA2 =
     "I see the user is just greeting me, so I shouldn't need any tools for that. The developer mentions using tools for coding tasks, but that doesn't apply here. I'm thinking it's important to recap my response, even if it's just a greeting. I'll keep it concise while ensuring I fulfill the recap requirement at the end. It seems necessary, so let's make sure to adhere to that guideline!";
   for (const cols of [153, 158, 161, 172]) {
-    test(`no fractional-shrink spill at ${cols} columns`, async () => {
-      const lines = await renderScrollback(
-        [
-          { id: 1, kind: "thinking", text: `A heading line\n${PARA2}` },
-          {
-            id: 2,
-            kind: "assistant",
-            text: `Prose first.\n\`\`\`\nconst x = ${'"y"'.repeat(60)};\n\`\`\`\n`,
-          },
-        ],
-        cols,
-      );
+    test(`no gutter spill at ${cols} columns`, () => {
+      const lines = wrapWithGutter(PARA2, cols);
       for (const line of lines) {
         expect(visibleWidth(line)).toBeLessThanOrEqual(cols);
       }
     });
   }
+});
+
+// ── itemsFromMessages (session resume) ─────────────────────────────────────────
+
+describe("itemsFromMessages", () => {
+  test("converts a user/assistant/tool transcript into scrollback items", () => {
+    const messages: Message[] = [
+      { role: "user", content: [{ type: "text", text: "list the files" }] },
+      {
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "I should run ls" },
+          { type: "text", text: "Listing now." },
+          {
+            type: "tool_use",
+            id: "t1",
+            name: "bash",
+            input: { command: "ls" },
+          },
+        ],
+      },
+      {
+        role: "user",
+        content: [
+          { type: "tool_result", tool_use_id: "t1", content: "a.ts\nb.ts" },
+        ],
+      },
+      { role: "assistant", content: [{ type: "text", text: "Two files." }] },
+    ];
+    const items = itemsFromMessages(messages);
+    expect(items.map((i) => i.kind)).toEqual([
+      "user",
+      "thinking",
+      "assistant",
+      "tool",
+      "assistant",
+    ]);
+    const tool = items[3]!;
+    if (tool.kind !== "tool") throw new Error("expected tool item");
+    expect(tool.name).toBe("bash");
+    expect(tool.result).toBe("a.ts\nb.ts");
+    expect(tool.pending).toBe(false);
+    expect(tool.isError).toBeUndefined();
+  });
+
+  test("an unmatched tool_use renders finished without a result", () => {
+    const messages: Message[] = [
+      {
+        role: "assistant",
+        content: [
+          { type: "tool_use", id: "t9", name: "grep", input: { pattern: "x" } },
+        ],
+      },
+    ];
+    const [tool] = itemsFromMessages(messages);
+    if (tool?.kind !== "tool") throw new Error("expected tool item");
+    expect(tool.pending).toBe(false);
+    expect(tool.result).toBeUndefined();
+  });
+
+  test("error results and images: errors carried, images skipped", () => {
+    const messages: Message[] = [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "look" },
+          { type: "image", mediaType: "image/png", data: "aaaa" },
+        ],
+      },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: "t2",
+            name: "bash",
+            input: { command: "nope" },
+          },
+        ],
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "t2",
+            content: "command not found",
+            is_error: true,
+          },
+        ],
+      },
+    ];
+    const items = itemsFromMessages(messages);
+    expect(items.map((i) => i.kind)).toEqual(["user", "tool"]);
+    const tool = items[1]!;
+    if (tool.kind !== "tool") throw new Error("expected tool item");
+    expect(tool.isError).toBe(true);
+  });
 });

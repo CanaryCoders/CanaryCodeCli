@@ -4,6 +4,7 @@ import { describe, expect, test } from "bun:test";
 import {
   codeLineFlags,
   parseMarkdown,
+  parseMarkdownBlocks,
   parseMarkdownWithFlags,
 } from "./markdown.ts";
 
@@ -38,5 +39,37 @@ describe("parseMarkdownWithFlags", () => {
     expect(code).toEqual([false, false, false, true]);
     // the bullet really is rendered as a bullet (not dim verbatim)
     expect(lines[0]!.spans[0]!.text).toContain("•");
+  });
+
+  test("parses fenced code blocks without rendering fence delimiters", () => {
+    const blocks = parseMarkdownBlocks(
+      "before\n```ts\nconst x = 1;\n```\nafter",
+    );
+    expect(blocks).toEqual([
+      { kind: "lines", lines: [{ spans: [{ text: "before" }] }] },
+      {
+        kind: "code",
+        language: "ts",
+        code: "const x = 1;",
+        lines: ["const x = 1;"],
+      },
+      { kind: "lines", lines: [{ spans: [{ text: "after" }] }] },
+    ]);
+  });
+
+  test("parses markdown tables with alignment and padded cells", () => {
+    const blocks = parseMarkdownBlocks(
+      "| Name | Count |\n| :--- | ---: |\n| a | 12 |\n| longer | 3 |",
+    );
+    expect(blocks.length).toBe(1);
+    const table = blocks[0]!;
+    expect(table.kind).toBe("table");
+    if (table.kind !== "table") return;
+    expect(table.align).toEqual(["left", "right"]);
+    expect(table.widths).toEqual([6, 5]);
+    expect(table.headers[0]!.spans[0]!.text).toBe("Name  ");
+    expect(table.headers[1]!.spans[0]!.text).toBe("Count");
+    expect(table.rows[0]![0]!.spans[0]!.text).toBe("a     ");
+    expect(table.rows[0]![1]!.spans[0]!.text).toBe("   12");
   });
 });

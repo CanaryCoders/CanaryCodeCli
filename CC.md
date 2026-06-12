@@ -6,7 +6,7 @@ agent knows how to work in this repo. Keep it short and high-signal.
 ## Overview
 
 `cc` is a fast, minimal terminal coding agent. One agent loop drives two
-front-ends: a headless `-p` print mode for scripting and an interactive Ink TUI.
+front-ends: a headless `-p` print mode for scripting and an interactive OpenTUI TUI.
 Core stays small (target ~2000 LOC); QoL features include plan/auto/thinking
 modes, web search, sub-agents, custom agents, MCP, skills, hooks, an AI
 permission engine, and project-context files. See `README.md` for full feature
@@ -17,7 +17,7 @@ docs.
 - Runtime: **Bun** (no build step — `.ts`/`.tsx` run directly).
 - Language: **TypeScript**, ESNext modules, `strict` on, `verbatimModuleSyntax`
   (use `import type` for type-only imports; `.ts`/`.tsx` extensions in imports).
-- TUI: **Ink 5** + React 18 (`ink-spinner`, `ink-text-input`).
+- TUI: **OpenTUI** (`@opentui/core`, `@opentui/react`) + React 19.
 - Lint/format: **Biome**. Storage: SQLite via Bun (`~/.cc/sessions.db`).
 
 ## Layout (`src/`)
@@ -39,7 +39,8 @@ docs.
   from `~/.cc/extensions/` and `./.cc/extensions/`.
 - `config.ts`, `session.ts`, `context.ts`, `commands.ts`, `thinking.ts`,
   `diff.ts`, `markdown.ts`, `fuzzy.ts` — supporting modules.
-- `tui/` — Ink components (`App.tsx`, `Message.tsx`, `Input.tsx`, …) + `theme.ts`;
+- `tui/` — OpenTUI components (`App.tsx`, `Message.tsx`, `Input.tsx`, …) routed
+  through `primitives.tsx` (the `Box`/`Text` adapter layer) + `theme.ts`;
   `verbs.ts` (root) supplies the spinner's status verbs.
 
 ## Commands

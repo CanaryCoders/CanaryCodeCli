@@ -3,6 +3,7 @@
 // from the component module so Message.tsx only exports components (clean
 // fast-refresh boundaries) and so they can be unit-tested without a renderer.
 
+import type { Message } from "../provider.ts";
 import {
   pickVerb,
   RESPONDING_VERBS,
@@ -10,7 +11,7 @@ import {
   TOOL_VERB,
 } from "../verbs.ts";
 import { charWidth } from "./input-helpers.ts";
-import type { Item } from "./Message.tsx";
+import type { Item, ItemInput } from "./Message.tsx";
 
 // ── display-width helpers ────────────────────────────────────────────────────────
 
@@ -199,6 +200,64 @@ export function head(
   };
 }
 
+// ── Session resume ───────────────────────────────────────────────────────────────
+
+/**
+ * Convert a persisted Message transcript back into renderable scrollback items
+ * (session resume). tool_use blocks pair with their tool_result by id, so a
+ * resumed tool call shows its outcome; image blocks have no transcript
+ * rendering and are skipped (the model still received them in the original
+ * turn). Ids are assigned by the caller (the transcript owns the id counter).
+ */
+export function itemsFromMessages(messages: Message[]): ItemInput[] {
+  const results = new Map<string, { content: string; is_error?: boolean }>();
+  for (const m of messages) {
+    for (const b of m.content) {
+      if (b.type === "tool_result")
+        results.set(b.tool_use_id, {
+          content: b.content,
+          is_error: b.is_error,
+        });
+    }
+  }
+  const out: ItemInput[] = [];
+  for (const m of messages) {
+    for (const b of m.content) {
+      switch (b.type) {
+        case "text":
+          if (!b.text.trim()) break;
+          out.push(
+            m.role === "user"
+              ? { kind: "user", text: b.text }
+              : { kind: "assistant", text: b.text },
+          );
+          break;
+        case "thinking":
+          if (b.thinking.trim())
+            out.push({ kind: "thinking", text: b.thinking });
+          break;
+        case "tool_use": {
+          const r = results.get(b.id);
+          out.push({
+            kind: "tool",
+            toolId: b.id,
+            name: b.name,
+            input: b.input,
+            // Never resume into a spinner: an unmatched call (interrupted turn)
+            // still renders as finished, just without a result.
+            pending: false,
+            result: r?.content,
+            isError: r?.is_error,
+          });
+          break;
+        }
+        // tool_result renders via its tool_use; images are skipped.
+      }
+    }
+  }
+  return out;
+}
+
 // ── Live status verb ───────────────────────────────────────────────────────────
 
 /** A short status verb for the busy spinner, derived from the live transcript. */
@@ -274,37 +333,4 @@ export function clampLineWidth(text: string, width: number): string {
     .split("\n")
     .map((line) => (line.length > w ? `${line.slice(0, w - 1)}…` : line))
     .join("\n");
-}
-
-/**
- * Length of the leading run of a streamed text block that is *stable* — i.e. safe
- * to commit to the permanent `<Static>` scrollback because it will never re-render
- * differently as more text arrives. This is the key to ghost-free streaming: only
- * the unstable tail stays in the dynamic region, so that region can't outgrow the
- * viewport (which is what desyncs Ink's redraw and duplicates lines).
- *
- * Stable = whole lines only (never a partial current line), and — for markdown —
- * never a line *inside* an open ``` code fence (the fence needs its closing marker
- * to render as one block). For plain `thinking` text it's simply everything up to
- * the last newline. Returns 0 when nothing is committable yet.
- */
-export function stablePrefixLen(
-  text: string,
-  kind: "assistant" | "thinking",
-): number {
-  const lastNl = text.lastIndexOf("\n");
-  if (lastNl < 0) return 0; // no complete line yet
-  if (kind === "thinking") return lastNl + 1;
-  // Markdown: walk complete lines, tracking ``` fence parity. The commit point is
-  // the offset after the last complete line that sits *outside* an open fence.
-  const lines = text.split("\n");
-  let fenceOpen = false;
-  let offset = 0;
-  let safe = 0;
-  for (let i = 0; i < lines.length - 1; i++) {
-    if (/^\s*```/.test(lines[i]!)) fenceOpen = !fenceOpen;
-    offset += lines[i]!.length + 1; // + the newline
-    if (!fenceOpen) safe = offset;
-  }
-  return safe;
 }

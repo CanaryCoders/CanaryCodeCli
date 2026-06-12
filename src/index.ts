@@ -3,10 +3,10 @@
 // cc — a fast, minimal terminal coding agent.
 // Entry point: arg parse + mode dispatch (headless vs TUI).
 //
-// Phase 1 ships the headless print path: `cc -p "<prompt>"` runs the shared
-// agent loop once and streams the result to stdout, then exits. Piped stdin is
-// folded into the prompt as context (`git diff | cc -p "commit message"`). The
-// interactive TUI lands in Phase 4.
+// The headless print path (`cc -p "<prompt>"`) runs the shared agent loop once
+// and streams the result to stdout, then exits. Piped stdin is folded into the
+// prompt as context (`git diff | cc -p "commit message"`). Without a prompt,
+// the interactive TUI starts instead.
 
 import { type AgentMode, roleForMode, runAgent } from "./agent.ts";
 import {
@@ -45,7 +45,13 @@ import { extractImagePaths, readImageFile } from "./image.ts";
 import { renderAnsi } from "./markdown.ts";
 import type { ContentBlock, Message, Provider } from "./provider.ts";
 import { createProvider } from "./provider.ts";
-import { hasPriceData, type SessionRow, SessionStore } from "./session.ts";
+import {
+  hasPriceData,
+  resolveSession,
+  type SessionRow,
+  SessionStore,
+} from "./session.ts";
+import { pickSession } from "./session-picker.ts";
 import {
   describeLevel,
   parseLevel,
@@ -57,8 +63,10 @@ import { startTui } from "./tui/App.tsx";
 import {
   applyUpdate,
   cachedUpdateNotice,
+  fetchReleaseNotes,
   refreshUpdateCache,
   updateDisabledReason,
+  whatsNewNotice,
 } from "./update.ts";
 import { VERSION } from "./version.ts";
 
@@ -83,9 +91,12 @@ interface Args {
   think?: string;
   /**
    * --resume: a session id (or id prefix) to continue, or `true` for a bare
-   * `--resume` (resume the most recent session, or list sessions if no prompt).
+   * `--resume` (interactive: opens the session picker; headless: most recent).
+   * Interactive launches resume into the TUI; with -p the run is headless.
    */
   resume?: string | boolean;
+  /** -c/--continue: resume the most recent session directly (no picker). */
+  continueLatest: boolean;
 }
 
 /** Parse argv into a small, explicit shape. Unknown flags are ignored for now. */
@@ -98,6 +109,7 @@ function parseArgs(argv: string[]): Args {
     json: false,
     plan: false,
     auto: false,
+    continueLatest: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -152,6 +164,12 @@ function parseArgs(argv: string[]): Args {
         }
         break;
       }
+      case "-c":
+      case "--continue":
+        // Claude Code-style shorthand: continue the most recent session
+        // directly, without the `--resume` picker.
+        out.continueLatest = true;
+        break;
       default:
         // A bare positional after no recognized flag is treated as the prompt.
         if (!a.startsWith("-") && out.prompt === undefined) out.prompt = a;
@@ -175,11 +193,12 @@ function printUsage(
       "",
       "Usage:",
       '  cc -p "<prompt>"   headless print mode (streams to stdout, exits)',
-      "  cc                 interactive TUI (Ink)",
+      "  cc                 interactive TUI",
       "",
       "Subcommands:",
       ...builtin,
       "  cc update                  update cc to the latest release (binary installs)",
+      "  cc changelog [version]     show release notes (default: this version)",
       "",
       "Flags:",
       "  -p, --print <s>    run a single prompt headless",
@@ -192,8 +211,9 @@ function printUsage(
       "  --no-tools         disable tools (read-only quick Q&A)",
       "  --no-color         raw markdown to stdout even on a TTY (also: NO_COLOR)",
       "  --json             stream structured JSON events (JSONL) on stdout",
-      "  --resume [id]      continue a saved session (most recent if id omitted);",
-      "                     bare --resume with no prompt lists recent sessions",
+      "  --resume [id]      continue a saved session: bare --resume opens a picker,",
+      "                     an id resumes directly; runs headless with -p",
+      "  -c, --continue     continue the most recent session (no picker)",
       "  -h, --help         show this help",
       "  --version          show version",
       "",
@@ -201,9 +221,11 @@ function printUsage(
       '  git diff | cc -p "write a commit message"',
       "",
       "Resume a conversation:",
-      "  cc --resume                 list recent sessions",
-      '  cc --resume -p "and now?"   continue the most recent session',
-      '  cc --resume 1a2b3c4d -p "…" continue a session by id (prefix ok)',
+      "  cc --resume                 pick a recent session to reopen in the TUI",
+      "  cc --resume 1a2b3c4d        reopen a session by id (prefix ok)",
+      "  cc --continue               reopen the most recent session",
+      '  cc -c -p "and now?"         continue the most recent session headless',
+      "  (inside the TUI, /resume lists sessions and /resume <id> switches)",
     ].join("\n"),
   );
 }
@@ -218,42 +240,6 @@ async function readStdin(): Promise<string> {
   }
 }
 
-/** Render a one-line summary per recent session (the `/resume` listing). */
-function printSessions(store: SessionStore): void {
-  const rows = store.listSessions(20);
-  if (rows.length === 0) {
-    console.log("cc: no saved sessions yet");
-    return;
-  }
-  console.log("Recent sessions (newest first):\n");
-  for (const s of rows) {
-    const when = new Date(s.updatedAt)
-      .toISOString()
-      .replace("T", " ")
-      .slice(0, 16);
-    const title = s.title ?? "(untitled)";
-    const tokens = `${s.inputTokens + s.outputTokens} tok`;
-    const cost = hasPriceData(s.model) ? `  $${s.costUsd.toFixed(4)}` : "";
-    console.log(
-      `  ${s.id.slice(0, 8)}  ${when}  ${s.model}  ${tokens}${cost}  ${title}`,
-    );
-  }
-  console.log('\nResume with:  cc --resume <id> -p "<prompt>"');
-}
-
-/** Resolve a session by exact id, then by id prefix among recent sessions. */
-function resolveSession(
-  store: SessionStore,
-  idOrPrefix: string,
-): SessionRow | undefined {
-  const exact = store.getSession(idOrPrefix);
-  if (exact) return exact;
-  const matches = store
-    .listSessions(100)
-    .filter((s) => s.id.startsWith(idOrPrefix));
-  return matches.length === 1 ? matches[0] : undefined;
-}
-
 /** Truncate a prompt into a short session title. */
 function titleFrom(prompt: string): string {
   const oneLine = prompt.replace(/\s+/g, " ").trim();
@@ -262,21 +248,6 @@ function titleFrom(prompt: string): string {
 
 /** Headless print mode: run the agent loop once over `prompt`, streaming to stdout. */
 async function runHeadless(args: Args): Promise<number> {
-  // Bare `--resume` with no prompt → list sessions and exit.
-  if (
-    args.resume === true &&
-    args.prompt === undefined &&
-    process.stdin.isTTY
-  ) {
-    const store = SessionStore.open();
-    try {
-      printSessions(store);
-    } finally {
-      store.close();
-    }
-    return 0;
-  }
-
   const stdin = await readStdin();
   let prompt = args.prompt ?? "";
   if (stdin) {
@@ -360,8 +331,10 @@ async function runHeadless(args: Args): Promise<number> {
   let sessionId: string;
   const messages: Message[] = [];
 
-  if (args.resume) {
-    // Resume an explicit id/prefix, or the most recent session for bare --resume.
+  const wantsResume = Boolean(args.resume) || args.continueLatest;
+  if (wantsResume) {
+    // Resume an explicit id/prefix, or the most recent session for a bare
+    // --resume/--continue (headless has no picker).
     const target =
       typeof args.resume === "string"
         ? resolveSession(store, args.resume)
@@ -392,7 +365,7 @@ async function runHeadless(args: Args): Promise<number> {
   if (config.hooks.SessionStart?.length) {
     await runSessionStartHooks(
       config.hooks,
-      args.resume ? "resume" : "startup",
+      wantsResume ? "resume" : "startup",
       hookContext,
     );
   }
@@ -428,6 +401,13 @@ async function runHeadless(args: Args): Promise<number> {
     },
   });
   const { tools, system, gate } = sessionForMode(session, mode);
+  const compactResolved = resolveModel(config, modelForRole(config, "compact"));
+  const compactProvider = compactResolved
+    ? createProvider(compactResolved.providerConfig)
+    : provider;
+  const compactModel = compactResolved
+    ? (compactResolved.model.name ?? compactResolved.model.id)
+    : modelName;
   if (mode === "plan") process.stderr.write("≡ plan mode (read-only)\n");
   if (mode === "auto")
     process.stderr.write(`◉ auto mode (autonomous · max ${turnCap} turns)\n`);
@@ -539,6 +519,8 @@ async function runHeadless(args: Args): Promise<number> {
       maxTurns: turnCap,
       thinkingBudget,
       compactAtTokens: config.compactAtTokens,
+      compactProvider,
+      compactModel,
       signal: controller.signal,
       gate,
       preToolUse: session.preToolUse,
@@ -730,7 +712,7 @@ function flushTranscript(
 }
 
 /**
- * Interactive TUI mode (Ink). Assembles the same engine pieces as headless —
+ * Interactive TUI mode. Assembles the same engine pieces as headless —
  * config, provider, project context, skills, MCP — then hands them to the App
  * component, which keeps a running session over `runAgent`. Startup notes that the
  * headless path writes to stderr are passed in as scrollback items instead.
@@ -743,7 +725,7 @@ async function runTui(args: Args): Promise<number> {
     console.error((err as Error).message);
     return 1;
   }
-  // User-extension loading runs BEFORE Ink mounts: Bun's global confirm() is a
+  // User-extension loading runs BEFORE the TUI mounts: Bun's global confirm() is a
   // synchronous y/n on the launching terminal, which is exactly where a trust
   // decision for project extensions belongs. Loader notes surface as startup
   // scrollback items below.
@@ -764,8 +746,53 @@ async function runTui(args: Args): Promise<number> {
   // re-discovers the models live.
   const builtinNotes = await startupExtensions(config, "fast");
 
-  const resolved = resolveModel(config, args.model);
+  // ── resume: resolve the target session before any UI mounts ──
+  const store = SessionStore.open();
+  let resumedSession: SessionRow | undefined;
+  let resumedMessages: Message[] | undefined;
+  if (typeof args.resume === "string") {
+    const target = resolveSession(store, args.resume);
+    if (!target) {
+      store.close();
+      console.error(`cc: no session matching "${args.resume}"`);
+      return 1;
+    }
+    resumedSession = target;
+  } else if (args.continueLatest) {
+    // -c/--continue: straight to the most recent session, no picker.
+    const target = store.listSessions(1)[0];
+    if (!target) {
+      store.close();
+      console.error("cc: no sessions to resume");
+      return 1;
+    }
+    resumedSession = target;
+  } else if (args.resume === true) {
+    // Bare `--resume`: open the interactive picker over recent sessions
+    // (most recent preselected at the top).
+    const rows = store.listSessions(15);
+    if (rows.length === 0) {
+      store.close();
+      console.error("cc: no sessions to resume");
+      return 1;
+    }
+    const picked = await pickSession(rows);
+    if (!picked) {
+      store.close();
+      console.log("cc: resume cancelled");
+      return 0;
+    }
+    resumedSession = picked;
+  }
+  if (resumedSession) {
+    resumedMessages = store.loadMessages(resumedSession.id);
+  }
+
+  // An explicit --model wins; otherwise a resumed session restores its model
+  // (when it still resolves), and a fresh launch uses the configured default.
+  const resolved = resolveModel(config, args.model ?? resumedSession?.model);
   if (!resolved) {
+    store.close();
     console.error("cc: no model available; check ~/.cc/config.json providers");
     return 1;
   }
@@ -774,6 +801,7 @@ async function runTui(args: Args): Promise<number> {
   try {
     provider = createProvider(resolved.providerConfig);
   } catch (err) {
+    store.close();
     console.error((err as Error).message);
     return 1;
   }
@@ -785,6 +813,9 @@ async function runTui(args: Args): Promise<number> {
   // read); the network refresh runs in the background for the next launch.
   const updateNotice = await cachedUpdateNotice(config);
   if (updateNotice) startupNotes.push(updateNotice);
+  // First launch after an update lands: point at /changelog once.
+  const whatsNew = await whatsNewNotice();
+  if (whatsNew) startupNotes.push(whatsNew);
   void refreshUpdateCache(config);
   startupNotes.push(...extensionNotes, ...builtinNotes);
 
@@ -808,26 +839,47 @@ async function runTui(args: Args): Promise<number> {
   }
 
   // Thinking level persists in config (the user's default); an explicit `--think`
-  // flag overrides it for this launch without changing the saved default.
+  // flag overrides it for this launch. A resumed session restores its own
+  // last-active thinking level and mode.
   const initialThinking: ThinkingLevel =
-    parseLevel(args.think) ?? config.thinking;
+    parseLevel(args.think) ??
+    parseLevel(resumedSession?.thinking ?? undefined) ??
+    config.thinking;
+  const initialMode: AgentMode | undefined =
+    resumedSession?.mode === "normal" ||
+    resumedSession?.mode === "plan" ||
+    resumedSession?.mode === "auto"
+      ? resumedSession.mode
+      : undefined;
 
-  const store = SessionStore.open();
-  const sessionId = store.createSession({
-    model: modelName,
-    cwd: process.cwd(),
-    thinking: initialThinking,
-  });
-  if (config.hooks.SessionStart?.length) {
-    await runSessionStartHooks(config.hooks, "startup", {
-      sessionId,
+  // Resume reuses the saved session row (new turns append to it); a fresh
+  // launch creates a new one.
+  const sessionId =
+    resumedSession?.id ??
+    store.createSession({
+      model: modelName,
       cwd: process.cwd(),
+      thinking: initialThinking,
     });
+  if (config.hooks.SessionStart?.length) {
+    await runSessionStartHooks(
+      config.hooks,
+      resumedSession ? "resume" : "startup",
+      {
+        sessionId,
+        cwd: process.cwd(),
+      },
+    );
   }
 
   // The launch banner (in the TUI) shows app/version/cwd/model — keep the startup
   // notes to the /help hint plus context/skills/mcp lines.
   startupNotes.unshift("type /help for commands");
+  if (resumedSession) {
+    startupNotes.push(
+      `↻ resumed session ${sessionId.slice(0, 8)} (${resumedMessages?.length ?? 0} prior messages)`,
+    );
+  }
 
   startTui({
     config,
@@ -838,7 +890,9 @@ async function runTui(args: Args): Promise<number> {
     store,
     sessionId,
     noTools: args.noTools,
+    initialMode,
     initialThinking,
+    resumedMessages,
     startupNotes,
   });
   return 0;
@@ -936,10 +990,34 @@ async function runUpdate(): Promise<number> {
   return result.ok ? 0 : 1;
 }
 
+/**
+ * `cc changelog [version]` — print a release's notes. Bare asks for the running
+ * version and falls back to the latest release (covers source runs whose
+ * version was never published); an explicit version must exist.
+ */
+async function runChangelog(version?: string): Promise<number> {
+  const result =
+    (await fetchReleaseNotes(version ?? VERSION)) ??
+    (version ? null : await fetchReleaseNotes());
+  if (!result) {
+    console.error(
+      version
+        ? `cc changelog: no release notes found for ${version}`
+        : "cc changelog: no release notes available (couldn't reach GitHub releases)",
+    );
+    return 1;
+  }
+  console.log(`cc ${result.version}\n\n${result.notes.trim()}`);
+  return 0;
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   if (argv[0] === "update") {
     process.exit(await runUpdate());
+  }
+  if (argv[0] === "changelog") {
+    process.exit(await runChangelog(argv[1]));
   }
   // A bare first word may be an extension subcommand (login-codex, …);
   // resolving it needs config, since disabled extensions expose nothing.
@@ -957,13 +1035,17 @@ async function main(): Promise<void> {
     console.log(`cc ${VERSION}`);
     return;
   }
-  // Headless when a prompt is given, or when --resume is used (with a prompt to
-  // continue, or bare to list sessions).
-  if (args.prompt !== undefined || args.resume !== undefined) {
+  // Headless when a prompt is given (resume included), or when --resume is used
+  // without a terminal (the prompt then comes from piped stdin). An interactive
+  // `cc --resume [id]` with no prompt reopens the session in the TUI instead.
+  if (
+    args.prompt !== undefined ||
+    ((args.resume !== undefined || args.continueLatest) && !process.stdin.isTTY)
+  ) {
     process.exit(await runHeadless(args));
   }
-  // No prompt + an interactive terminal → launch the Ink TUI. Without a TTY (piped
-  // with no prompt) there's nothing to do, so show usage.
+  // No prompt + an interactive terminal → launch the TUI (resuming when asked).
+  // Without a TTY (piped with no prompt) there's nothing to do, so show usage.
   if (process.stdin.isTTY) {
     const code = await runTui(args);
     if (code !== 0) process.exit(code);

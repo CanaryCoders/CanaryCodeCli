@@ -5,21 +5,26 @@
 // width-capped so it never overflows Ink's dynamic region); `PromptArea` renders
 // whichever pause-and-ask overlay is active, or the framed input box when none is.
 
-import { Box, Text } from "ink";
-import Spinner from "ink-spinner";
 import { AskUserView } from "./AskUser.tsx";
 import { Complete } from "./Complete.tsx";
 import { ConfirmView } from "./Confirm.tsx";
 import { ExtensionsView } from "./Extensions.tsx";
-import { useIcon } from "./Icon.tsx";
+import { HelpOverlay } from "./Help.tsx";
+import { useIcon, useSpinnerFrame } from "./Icon.tsx";
 import { MultilineInput } from "./Input.tsx";
+import { ActionChip } from "./Interactive.tsx";
 import { type Item, ItemView } from "./Message.tsx";
 import { clampLineWidth, tailLines } from "./message-helpers.ts";
+import { PastePreview } from "./PastePreview.tsx";
 import { PlanView } from "./Plan.tsx";
-import { SPACING, tint } from "./theme.ts";
+import { Box, Text } from "./primitives.tsx";
+import { SPACING, SURFACE, tint } from "./theme.ts";
+import { isItemExpanded } from "./tool-expansion.ts";
 import type { AgentSession } from "./use-agent-session.ts";
 import type { Approvals } from "./use-approvals.ts";
 import type { Autocomplete } from "./use-autocomplete.ts";
+import type { HelpState } from "./use-help.ts";
+import type { PastePreview as PastePreviewState } from "./use-paste-preview.ts";
 import type { PromptHistory } from "./use-prompt-history.ts";
 import type { PromptInput } from "./use-prompt-input.ts";
 
@@ -35,6 +40,9 @@ export function LiveRegion({
   firstToolId,
   liveCap,
   liveContentWidth,
+  expandedToolIds,
+  onToggleTool,
+  onCopyItem,
 }: {
   live: Item[];
   history: Item[];
@@ -42,6 +50,9 @@ export function LiveRegion({
   firstToolId: number | undefined;
   liveCap: number;
   liveContentWidth: number;
+  expandedToolIds: ReadonlySet<number>;
+  onToggleTool: (id: number) => void;
+  onCopyItem?: (item: Item, kind?: "default" | "command" | "output") => void;
 }): React.ReactElement | null {
   if (live.length === 0) return null;
   return (
@@ -76,8 +87,10 @@ export function LiveRegion({
               <ItemView
                 item={{ ...item, text }}
                 prevKind={prevKind}
-                expanded={verbose}
+                expanded={isItemExpanded(item, verbose, expandedToolIds)}
                 showExpandHint={item.id === firstToolId}
+                onToggleTool={onToggleTool}
+                onCopyItem={onCopyItem}
               />
             </Box>
           );
@@ -89,8 +102,10 @@ export function LiveRegion({
             key={item.id}
             item={item}
             prevKind={prevKind}
-            expanded={verbose}
+            expanded={isItemExpanded(item, verbose, expandedToolIds)}
             showExpandHint={item.id === firstToolId}
+            onToggleTool={onToggleTool}
+            onCopyItem={onCopyItem}
             compact
             width={liveContentWidth}
           />
@@ -111,9 +126,12 @@ export function PromptArea({
   promptHistory,
   registerPaste,
   pasteMap,
+  pastePreview,
+  help,
   modeColor,
   verb,
   columns,
+  navMode,
 }: {
   approvals: Approvals;
   session: AgentSession;
@@ -122,13 +140,21 @@ export function PromptArea({
   promptHistory: PromptHistory;
   registerPaste: (text: string) => string | null;
   pasteMap: Map<number, string>;
+  pastePreview: PastePreviewState;
+  help: HelpState;
   modeColor: string;
   verb: string;
   columns: number;
+  /** True while the App is in keyboard transcript nav mode — the prompt goes inert
+   * and a one-line vim-key hint shows in its place. */
+  navMode: boolean;
 }): React.ReactElement {
   const checkpointIcon = useIcon("checkpoint");
   const promptIcon = useIcon("prompt");
   const queuedIcon = useIcon("queued");
+  // Called unconditionally (before the early-return overlays) per the rules of
+  // hooks; it only animates while the turn is busy.
+  const spinner = useSpinnerFrame(session.busy);
 
   if (approvals.pendingConfirm) {
     return (
@@ -136,6 +162,9 @@ export function PromptArea({
         preview={approvals.pendingConfirm}
         reason={approvals.pendingConfirmReason}
         columns={columns}
+        onYes={() => approvals.resolveConfirm(true, false)}
+        onNo={() => approvals.resolveConfirm(false, false)}
+        onAlways={() => approvals.resolveConfirm(true, true)}
       />
     );
   }
@@ -161,18 +190,34 @@ export function PromptArea({
           <Box marginLeft={1}>
             <Text color={tint("yellow")}>
               {`${approvals.pendingCheckpoint} turns in — keep going? `}
-              <Text bold>{"[y]"}</Text>
-              <Text dimColor>{"es / "}</Text>
-              <Text bold>{"[n]"}</Text>
-              <Text dimColor>{"o stop"}</Text>
             </Text>
+            <ActionChip
+              label="[y]"
+              color="yellow"
+              onAction={() => approvals.resolveCheckpoint(true)}
+            />
+            <Text dimColor>{"es / "}</Text>
+            <ActionChip
+              label="[n]"
+              color="yellow"
+              onAction={() => approvals.resolveCheckpoint(false)}
+            />
+            <Text dimColor>{"o stop"}</Text>
           </Box>
         </Box>
       </Box>
     );
   }
   if (approvals.pendingPlan) {
-    return <PlanView plan={approvals.pendingPlan} mode={session.mode} />;
+    return (
+      <PlanView
+        plan={approvals.pendingPlan}
+        mode={session.mode}
+        onAccept={session.acceptPlan}
+        onEdit={session.editPlan}
+        onReject={session.rejectPlan}
+      />
+    );
   }
   if (session.extensionsPicker) {
     return (
@@ -205,46 +250,88 @@ export function PromptArea({
         <Complete
           items={autocomplete.suggestions}
           selected={autocomplete.sel}
+          onSelect={autocomplete.selectCompletion}
+          onAccept={autocomplete.acceptCompletion}
         />
+      ) : null}
+      {/* Paste-chip preview: rendered above the input frame (like the autocomplete
+          list) when a `[Pasted …]` chip is clicked. Read-only — never edits the
+          buffer; while open the MultilineInput below is paused. */}
+      {pastePreview.chipId !== null ? (
+        <PastePreview
+          chipId={pastePreview.chipId}
+          text={pasteMap.get(pastePreview.chipId) ?? ""}
+          columns={columns}
+          onClose={pastePreview.close}
+        />
+      ) : null}
+      {/* Keyboard & mouse help overlay: rendered above the input frame (like the
+          autocomplete list / paste preview) when opened from the footer `?` chip
+          or by `?` on an empty prompt. While open the MultilineInput below is
+          paused so its own scoped handler owns `?`/Esc to close. */}
+      {help.open ? (
+        <HelpOverlay columns={columns} onClose={help.closeHelp} />
       ) : null}
       {/* Live status: spinner + verb sit on their own row just above the input
           frame while busy (so they never share the prompt line). */}
       {session.busy ? (
-        <Text color={tint("yellow")}>
-          <Spinner type="dots" />
+        <Text color={tint(modeColor)}>
+          {spinner}
           <Text dimColor>{` ${verb}`}</Text>
         </Text>
       ) : null}
-      {/* Framed input: rounded border tinted by mode, dimmed while busy. */}
+      {/* Nav mode: a one-line dim hint of the vim keys, shown just above the (inert)
+          input frame so the user knows what the keyboard now drives. */}
+      {navMode ? (
+        <Box paddingLeft={SPACING.boxPadX}>
+          <Text dimColor>
+            {
+              "nav: j/k move · g/G top/bottom · enter expand · y yank · c/o cmd/out · i/esc exit"
+            }
+          </Text>
+        </Box>
+      ) : null}
+      {/* Input bar: a soft filled block in the same family as the cards (no
+          border), with the prompt glyph tinted by the active mode. While in nav
+          mode the prompt glyph dims and the input is inert (keys drive the
+          transcript), so the bar visibly steps back. */}
       <Box
-        borderStyle="round"
-        borderColor={tint(modeColor)}
-        borderDimColor={session.busy}
+        backgroundColor={tint(SURFACE.input)}
         paddingX={SPACING.boxPadX}
+        paddingY={SPACING.boxPadY}
         flexDirection="row"
       >
         <Box width={1} marginRight={1}>
-          <Text color={tint(modeColor)}>{promptIcon}</Text>
+          <Text
+            color={navMode ? undefined : tint(modeColor)}
+            dimColor={navMode}
+          >
+            {promptIcon}
+          </Text>
         </Box>
         <Box flexGrow={1} flexShrink={1} minWidth={0}>
           <MultilineInput
             value={promptInput.input}
             onChange={autocomplete.handleInputChange}
             onSubmit={session.onSubmit}
+            inputActive={!navMode && !help.open}
             capture={autocomplete.completeOpen}
             cursorNonce={promptInput.cursorNonce}
             onHistoryPrev={promptHistory.historyPrev}
             onHistoryNext={promptHistory.historyNext}
             registerPaste={registerPaste}
             pastes={pasteMap}
-            // Inner content width = terminal − border (2) − paddingX (2) − the
-            // Prompt prefix + 1 spare so the EOL cursor block never pushes a row
-            // past the border (which smears on redraw).
-            width={Math.max(1, columns - 2 - 2 * SPACING.boxPadX - 2 - 1)}
+            onChipClick={pastePreview.open}
+            previewActive={pastePreview.chipId !== null}
+            // Inner content width = terminal − paddingX (2) − the prompt prefix +
+            // 1 spare so the EOL cursor block never pushes a row past the edge.
+            width={Math.max(1, columns - 2 * SPACING.boxPadX - 2 - 1)}
             placeholder={
-              session.busy
-                ? "Enter to queue · Esc to cancel"
-                : "message, or /help · Shift+Enter for newline"
+              navMode
+                ? "nav mode — i or esc to return to the prompt"
+                : session.busy
+                  ? "Enter to queue · Esc to cancel"
+                  : "message, or /help · Shift+Enter for newline"
             }
           />
         </Box>

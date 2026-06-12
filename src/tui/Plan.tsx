@@ -6,19 +6,26 @@
 // box; the a/e/r keys are handled in App.tsx's `useInput` while the prompt
 // `TextInput` is unmounted, so the keystrokes can't leak into the input line.
 
-import { Box, Text } from "ink";
 import type { AgentMode } from "../agent.ts";
 import { useIcon } from "./Icon.tsx";
+import { ActionChip } from "./Interactive.tsx";
 import { Markdown } from "./Message.tsx";
+import { Box, Text } from "./primitives.tsx";
 import { modeColor, SPACING, tint } from "./theme.ts";
 
 export function PlanView({
   plan,
   mode = "plan",
+  onAccept,
+  onEdit,
+  onReject,
 }: {
   plan: string;
   /** Active mode — tints the box border + accents (defaults to plan's cyan). */
   mode?: AgentMode;
+  onAccept?: () => void;
+  onEdit?: () => void;
+  onReject?: () => void;
 }): React.ReactElement {
   // Mode-aware accent (plan=cyan), routed through `tint` so NO_COLOR keeps the
   // frame + glyphs but drops colour.
@@ -53,11 +60,23 @@ export function PlanView({
         <Markdown text={plan.trim()} />
       </Box>
       <Box marginTop={SPACING.inputGap}>
-        <Text color={accent}>{"[a]"}</Text>
+        <ActionChip
+          label="[a]"
+          color={modeColor(mode)}
+          onAction={() => onAccept?.()}
+        />
         <Text dimColor>{"ccept · "}</Text>
-        <Text color={accent}>{"[e]"}</Text>
+        <ActionChip
+          label="[e]"
+          color={modeColor(mode)}
+          onAction={() => onEdit?.()}
+        />
         <Text dimColor>{"dit · "}</Text>
-        <Text color={accent}>{"[r]"}</Text>
+        <ActionChip
+          label="[r]"
+          color={modeColor(mode)}
+          onAction={() => onReject?.()}
+        />
         <Text dimColor>{"eject"}</Text>
       </Box>
     </Box>

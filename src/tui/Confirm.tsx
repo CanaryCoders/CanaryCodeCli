@@ -8,10 +8,11 @@
 // disables the gate for the rest of the session. Auto mode and `--yolo` never
 // reach here — they bypass the gate by design.
 
-import { Box, Text } from "ink";
 import type { ConfirmPreview } from "./confirm-helpers.ts";
 import { useIcon } from "./Icon.tsx";
+import { ActionChip } from "./Interactive.tsx";
 import { DiffView } from "./Message.tsx";
+import { Box, Text } from "./primitives.tsx";
 import { SPACING, tint } from "./theme.ts";
 
 // Re-export the preview/choice types and helpers' shapes for callers that still
@@ -24,12 +25,18 @@ export function ConfirmView({
   preview,
   reason,
   columns = 80,
+  onYes,
+  onNo,
+  onAlways,
 }: {
   preview: ConfirmPreview;
   /** When set, the AI safety check flagged this call — shown above the prompt. */
   reason?: string | null;
   /** Terminal width — the diff preview pads its +/− bands to fit inside the box. */
   columns?: number;
+  onYes?: () => void;
+  onNo?: () => void;
+  onAlways?: () => void;
 }): React.ReactElement {
   const warningIcon = useIcon("warning");
   return (
@@ -77,7 +84,14 @@ export function ConfirmView({
             : preview.name}
         </Text>
       )}
-      <Text dimColor>{"[y]es · [n]o · [a]lways (this session)"}</Text>
+      <Box>
+        <ActionChip label="[y]" color="yellow" onAction={() => onYes?.()} />
+        <Text dimColor>{"es · "}</Text>
+        <ActionChip label="[n]" color="yellow" onAction={() => onNo?.()} />
+        <Text dimColor>{"o · "}</Text>
+        <ActionChip label="[a]" color="yellow" onAction={() => onAlways?.()} />
+        <Text dimColor>{"lways (this session)"}</Text>
+      </Box>
     </Box>
   );
 }

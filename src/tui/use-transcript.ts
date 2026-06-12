@@ -1,6 +1,6 @@
 // tui/use-transcript.ts — the rendered transcript: finished scrollback + live turn.
 //
-// Finished items live in `history` (rendered in Ink's <Static> scrollback); the
+// Finished items live in `history` (the committed `<Static>` scrollback); the
 // in-flight turn accumulates in `live` and is moved into `history` as it finalises.
 // `push`/`note` append finished items; `nextId` hands out stable item ids. These
 // are the primitives the approval gate (for error notes) and the agent engine build

@@ -44,7 +44,12 @@ export interface ProviderConfig {
 }
 
 /** A model "role" — a slot in the optional `models` map that overrides the base model. */
-export type ModelRole = "reasoning" | "coding" | "subagent" | "permission";
+export type ModelRole =
+  | "reasoning"
+  | "coding"
+  | "subagent"
+  | "permission"
+  | "compact";
 
 export interface WebSearchConfig {
   /**
@@ -186,6 +191,21 @@ function configPath(): string {
   return join(homedir(), ".cc", "config.json");
 }
 
+// Human-facing names for the built-in provider keys, so the model selector and
+// banner can say where a model comes from ("CanaryLLM", "Codex", …) instead of
+// the raw config key. Unknown (user-defined) provider keys show verbatim.
+const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
+  anthropic: "Anthropic",
+  canaryllm: "CanaryLLM",
+  openai: "Codex",
+  opencode: "OpenCode",
+};
+
+/** Display name for a provider config key (the model's source). */
+export function providerDisplayName(key: string): string {
+  return PROVIDER_DISPLAY_NAMES[key] ?? key;
+}
+
 /** Built-in defaults — a usable config with zero user setup (needs ANTHROPIC_API_KEY in env). */
 export function defaultConfig(): Config {
   return {
@@ -228,7 +248,7 @@ export function defaultConfig(): Config {
 }
 
 /** Recursively replace "${VAR}" string values with the matching env var. */
-function interpolateEnv<T>(
+export function interpolateEnv<T>(
   value: T,
   env: Record<string, string | undefined> = process.env,
 ): T {
@@ -358,6 +378,7 @@ export const CONFIG_PATHS = [
   "models.coding",
   "models.subagent",
   "models.permission",
+  "models.compact",
   "providers.<name>",
   "providers.<name>.api",
   "providers.<name>.apiKey",
@@ -645,10 +666,10 @@ export function resolveModel(
 }
 
 /**
- * Resolve a role to a model id. `reasoning` and `coding` fall back to the base
- * `model`. `permission` falls back to the legacy `permission.model`, then to a
- * cheap default ("haiku"), since the checker runs on every gated call. The
- * `subagent` role is intentionally resolved by subagents.ts directly (its
+ * Resolve a role to a model id. `reasoning`, `coding`, and `compact` fall back
+ * to the base `model`. `permission` falls back to the legacy `permission.model`,
+ * then to a cheap default ("haiku"), since the checker runs on every gated call.
+ * The `subagent` role is intentionally resolved by subagents.ts directly (its
  * fallback is the parent's model, not the base model), so it is not handled here.
  */
 export function modelForRole(config: Config, role: ModelRole): string {

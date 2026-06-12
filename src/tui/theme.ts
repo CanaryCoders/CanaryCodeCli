@@ -1,19 +1,26 @@
-// tui/theme.ts — the central palette + spacing tokens for the Ink TUI.
+// tui/theme.ts — the central palette + spacing tokens for the TUI.
 //
-// Phase 4.8 ("the pretty pass") pulls every glyph, colour, and spacing decision
-// into one place so the look lives here, not scattered across components. The
-// values capture the conventions the TUI already grew organically — the cyan `›`
-// user gutter, mode-coloured borders (normal=green / plan=cyan / auto=yellow), the
-// green/red/yellow tool-status marks, and the green/red/cyan diff palette — and
-// give the remaining 4.8 tasks (speaker gutters, framed input, footer pill,
-// code/diff gutters) a shared vocabulary to draw from instead of re-deriving it.
+// Every glyph, colour, and spacing decision lives here so the look is defined
+// in one place, not scattered across components: the orange `›` user gutter,
+// mode-coloured borders (normal=brand orange / plan=cyan / auto=yellow), the
+// green/red/yellow tool-status marks, and the green/red/cyan diff palette.
 //
-// Colours are Ink colour names (strings). `NO_COLOR` degradation is a render-time
-// concern handled by a later task; the constants here stay pure data so they can
-// be read in tests and mapped to Ink `<Text>`/`<Box>` props at the call site.
+// Colours are terminal colour names (strings). `NO_COLOR` degradation is a
+// render-time concern; the constants here stay pure data so they can be read in
+// tests and mapped to `<Text>`/`<Box>` props at the call site.
 
 import type { AgentMode } from "../agent.ts";
 import type { IconName } from "../icons.ts";
+
+// ── Brand ──────────────────────────────────────────────────────────────────────
+// The CanaryCoders signature orange (canarycoders.es theme accent). Used for the
+// banner wordmark, the user gutter, and the normal-mode accent so the default
+// look carries the brand; plan/auto keep their semantic cyan/yellow.
+
+export const BRAND = {
+  /** CanaryCoders signature orange. */
+  orange: "#ff7f32",
+} as const;
 
 // ── Roles (transcript speakers) ────────────────────────────────────────────────
 // Every transcript item gets a left-gutter glyph + colour so the eye instantly
@@ -44,7 +51,7 @@ export interface RoleStyle {
 export const ROLE: Record<Role, RoleStyle> = {
   // A filled dot marks the start of each distinct AI answer (Claude-Code style),
   // so consecutive answers/tool groups read as separate units at a glance.
-  user: { icon: "prompt", color: "cyan", bold: true, bg: "gray" },
+  user: { icon: "prompt", color: BRAND.orange, bold: true, bg: "gray" },
   assistant: { icon: "assistant", color: undefined, bold: true },
   thinking: { icon: "thinking", color: undefined, dim: true },
   tool: { icon: "tool", color: undefined }, // coloured by status — see TOOL_STATUS
@@ -52,11 +59,69 @@ export const ROLE: Record<Role, RoleStyle> = {
   error: { icon: "error", color: "red" },
 };
 
+// ── Cards (boxed transcript units) ──────────────────────────────────────────────
+// Each conversational unit — the user's message, the assistant's answer, every
+// tool call — renders as a soft filled block so the eye reads the transcript as a
+// stack of distinct units (OpenCode / badlogic-pi style). Each block carries a
+// muted background fill plus a gentle accent on its border + title; the colours
+// are deliberately desaturated truecolor (not the bright ANSI 16) so the bars
+// stay soft rather than neon. `tint` strips both fill and accent under NO_COLOR,
+// and the fills are scoped to the blocks — the CLI's own root background is never
+// painted, so a transparent terminal stays transparent around the cards.
+//
+// These are fixed muted tones (they don't track the terminal theme); tweak the
+// hex values here to taste.
+
+export type CardKind = "user" | "assistant" | "tool" | "error";
+
+export interface CardStyle {
+  /** Soft accent for the border + title (muted truecolor hex). */
+  color: string;
+  /** Muted background fill painted behind the whole block. */
+  bg: string;
+  /** Title rendered into the top border. */
+  title: string;
+}
+
+export const CARD: Record<CardKind, CardStyle> = {
+  // The user's own messages carry a softened CanaryCoders orange accent.
+  user: { color: "#e8915a", bg: "#34281e", title: "you" },
+  assistant: { color: "#9ece9a", bg: "#222a28", title: "assistant" },
+  tool: { color: "#89a8d8", bg: "#1f2733", title: "tool" },
+  error: { color: "#e09aa0", bg: "#34232a", title: "error" },
+};
+
+// Soft neutral fills for the non-conversational chrome — the launch banner and
+// the input bar — so they read as the same family of filled blocks as the cards
+// without competing for a speaker colour. Muted truecolor; stripped under
+// NO_COLOR. The CLI's own root background is still never painted.
+export const SURFACE = {
+  /** Fill behind the launch banner chip. */
+  banner: "#222530",
+  /** Fill behind the prompt input bar. */
+  input: "#262a36",
+} as const;
+
+export const INTERACTIVE = {
+  /** Foreground used when an inline action is hovered. */
+  hoverFg: "white",
+  /** Foreground used while an inline action is pressed. */
+  activeFg: "yellow",
+  /** Subtle row fill for hovered selectable rows. */
+  hoverBg: "#2a2e42",
+  /** Darker row fill while pressed. */
+  activeBg: "#161a22",
+  /** Selection colours for transcript text. */
+  selectionBg: "#3b4261",
+  selectionFg: "white",
+} as const;
+
 // ── Modes (border + accent colour) ─────────────────────────────────────────────
 // The active mode tints the input frame border, the plan box, and the footer pill.
 
 const MODE_COLOR: Record<AgentMode, string> = {
-  normal: "green",
+  // Normal mode wears the brand accent; plan/auto keep semantic colours.
+  normal: BRAND.orange,
   plan: "cyan",
   auto: "yellow",
 };
@@ -125,8 +190,11 @@ export const SPACING = {
   groupGap: 0,
   /** Top margin above the input frame. */
   inputGap: 1,
-  /** Horizontal padding inside bordered boxes (input frame, plan, confirm). */
+  /** Horizontal padding inside filled blocks / bordered boxes. */
   boxPadX: 1,
+  /** Vertical padding inside filled blocks (cards, input bar, banner) so content
+   * gets a row of breathing room above and below the fill. */
+  boxPadY: 1,
 } as const;
 
 // ── Colour degradation ─────────────────────────────────────────────────────────

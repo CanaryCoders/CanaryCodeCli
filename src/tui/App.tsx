@@ -1,4 +1,5 @@
-// tui/App.tsx — the Ink interactive TUI: scrollback + input box + status line.
+/** @jsxImportSource @opentui/react */
+// tui/App.tsx — the OpenTUI interactive TUI: scrollback + input box + status line.
 //
 // This is the second front-end over the shared agent engine (`runAgent`). The
 // headless path (index.ts) streams to stdout and exits; the TUI keeps a running
@@ -17,26 +18,59 @@
 // step needs a second press). Ctrl+R toggles verbose tool output; Shift+Tab cycles
 // the mode (normal → plan → auto → normal).
 
-import { Box, render, Static, useInput, useStdout } from "ink";
-import { useEffect, useReducer, useRef } from "react";
+import { type CliRenderer, createCliRenderer } from "@opentui/core";
+import {
+  createRoot,
+  type Root,
+  useOnResize,
+  useTerminalDimensions,
+} from "@opentui/react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import { describeLevel } from "../thinking.ts";
 import { LiveRegion, PromptArea } from "./AppViews.tsx";
 import type { AppProps } from "./app-types.ts";
 import { confirmChoiceForKey } from "./confirm-helpers.ts";
+import {
+  copyTargetToClipboard,
+  groupCopyText,
+  resolveItemCopyTarget,
+  writeTextToClipboard,
+} from "./copy-targets.ts";
 import { Footer } from "./Footer.tsx";
 import { IconProvider } from "./Icon.tsx";
+import { ActionChip } from "./Interactive.tsx";
 import { isRawEscapeInput } from "./input-helpers.ts";
-import { ItemView } from "./Message.tsx";
+import { useTuiInput } from "./keyboard.ts";
+import { type Item, ItemView } from "./Message.tsx";
 import { statusVerb } from "./message-helpers.ts";
 import { planChoiceForKey } from "./plan-helpers.ts";
+import { Box, ScrollBox } from "./primitives.tsx";
+import { type TuiRuntime, TuiRuntimeContext } from "./runtime.tsx";
 import { Tasks } from "./Tasks.tsx";
 import { modeColor as themeModeColor } from "./theme.ts";
+import { isItemExpanded, toggleToolExpanded } from "./tool-expansion.ts";
+import {
+  firstFocusId,
+  focusGroup,
+  lastFocusId,
+  moveFocus,
+} from "./transcript-nav.ts";
 import { useAgentSession } from "./use-agent-session.ts";
 import { useApprovals } from "./use-approvals.ts";
 import { useAutocomplete } from "./use-autocomplete.ts";
+import { useHelp } from "./use-help.ts";
 import { usePasteChips } from "./use-paste-chips.ts";
+import { usePastePreview } from "./use-paste-preview.ts";
 import { usePromptHistory } from "./use-prompt-history.ts";
 import { usePromptInput } from "./use-prompt-input.ts";
+import { useScrollFollow } from "./use-scroll-follow.ts";
 import { useTranscript } from "./use-transcript.ts";
 
 // ── The component ────────────────────────────────────────────────────────────────
@@ -44,39 +78,22 @@ import { useTranscript } from "./use-transcript.ts";
 // Finished items live in the `<Static>` scrollback; the in-flight turn accumulates
 // in `live` and is moved into the scrollback when the turn completes.
 
-function App(props: AppProps): React.ReactElement {
-  // Terminal size, used to cap the live (in-flight) region so it never grows past
-  // the viewport — overflowing the dynamic region desyncs Ink's redraw and
-  // duplicates lines into the scrollback. `<Static>` scrollback is printed once
-  // and is unaffected by height.
-  const { stdout } = useStdout();
-  // Ink's `useStdout` does NOT subscribe to terminal resizes, so dimensions read
-  // during render would otherwise go stale until an unrelated re-render. Force a
-  // re-render on every `resize` event so the live-region cap and content widths
-  // recompute against the new size.
-  const [, bumpResize] = useReducer((n: number) => n + 1, 0);
-  useEffect(() => {
-    if (!stdout) return;
-    const onResize = () => {
-      // On resize the terminal reflows the previously-written dynamic frame to the
-      // new width, but Ink's eraser only erases `previousLineCount` lines measured
-      // at the OLD width — so when the terminal narrows the frame now occupies more
-      // physical rows than Ink erases, and the un-erased top rows survive as the
-      // broken/duplicated input boxes. Ink's own resize handler can't fix this
-      // (same stale count). Wipe the whole viewport ourselves, then reset Ink's
-      // line bookkeeping via clear() so its next render redraws from a clean slate,
-      // and bump a re-render so content widths recompute against the new size.
-      // Erase only the visible screen (not the scrollback buffer — no \x1b[3J — so
-      // history the user scrolled past is preserved) and home the cursor.
-      stdout.write("\x1b[2J\x1b[H");
-      props.inkInstance?.current?.clear();
-      bumpResize();
-    };
-    stdout.on("resize", onResize);
-    return () => {
-      stdout.off("resize", onResize);
-    };
-  }, [stdout, props.inkInstance]);
+let openTuiRenderer: CliRenderer | null = null;
+let openTuiRoot: Root | null = null;
+// The transcript note callback, surfaced at module scope so the renderer's
+// "selection" handler (registered in startTui, outside the component) can push a
+// note when drag-select auto-copy falls back to a temp file. The App component
+// keeps it fresh each render (see `noteRef` below).
+let selectionNote: ((text: string, tone?: "info" | "error") => void) | null =
+  null;
+
+function App(props: AppProps): React.ReactNode {
+  const dimensions = useTerminalDimensions();
+  const [resizeNonce, bumpResize] = useReducer((n: number) => n + 1, 0);
+  useOnResize(() => {
+    bumpResize();
+    openTuiRenderer?.requestRender();
+  });
 
   // The in-flight request's abort controller is shared between the agent session
   // (which creates/aborts it) and the approval gate (whose AI safety check reads
@@ -101,10 +118,32 @@ function App(props: AppProps): React.ReactElement {
   // The prompt buffer + its cursor nonce (bumped on out-of-band sets).
   const promptInput = usePromptInput();
 
+  // Keyboard transcript nav mode: null = insert mode (prompt active); a non-null id
+  // is the focused scrollback item (nav mode). Entry is Ctrl+Up / Ctrl+K / `/copy`;
+  // j/k/g/G walk it, Enter expands a tool, y/Y/c/o yank, i/Esc returns to the prompt.
+  const [focusedId, setFocusedId] = useState<number | null>(null);
+
+  // Transcript scroll-follow: tracks whether the scrollbox is pinned to the
+  // newest content (drives the "jump to latest" banner) and exposes the jump
+  // actions the banner click and End/Home keys route to.
+  const scrollFollow = useScrollFollow();
+
   // Pasted-text chips: a large paste is stored by id and embedded in the input
   // buffer as a single sentinel char (see Input.tsx). The buffer carries sentinels;
   // they are expanded to real text only when a prompt is sent.
   const { pasteMap, registerPaste } = usePasteChips();
+
+  // Paste-chip preview: clicking a `[Pasted …]` chip in the prompt opens a
+  // read-only popover (above the input frame) showing the stored text. While it is
+  // open the editor pauses; `pastePreview.openRef` lets the global Esc handler tell
+  // the preview is open and close it without escalating the cancel chain.
+  const pastePreview = usePastePreview();
+
+  // Keyboard & mouse help overlay: the footer `?` chip (and `?` on an empty
+  // prompt) opens a modal cheat-sheet above the input frame. While it is open the
+  // editor pauses; `help.openRef` lets the global key handler tell it is open and
+  // close it on Esc without escalating the cancel chain (and swallow stray keys).
+  const help = useHelp();
 
   // Pause-and-ask interactions (confirm / checkpoint / ask_user / plan review) and
   // the composed approval gate — each suspends the agent loop on a promise until
@@ -131,6 +170,28 @@ function App(props: AppProps): React.ReactElement {
     store: props.store,
   });
 
+  const runtime = useMemo<TuiRuntime>(
+    () => ({
+      clear: () => openTuiRenderer?.requestRender(),
+      exit: () => {
+        openTuiRoot?.unmount();
+        openTuiRenderer?.destroy();
+        openTuiRoot = null;
+        openTuiRenderer = null;
+      },
+      columns: () => dimensions.width ?? 80,
+      rows: () => dimensions.height ?? 24,
+    }),
+    [dimensions.width, dimensions.height],
+  );
+
+  // `/copy` enters nav mode (focus the newest block). Nav state lives here in the
+  // shell; the session calls this through a ref so it always reaches the freshest
+  // transcript. No-op when there's nothing focusable.
+  const enterNavMode = useCallback(() => {
+    setFocusedId((id) => lastFocusId(transcript.history) ?? id);
+  }, [transcript.history]);
+
   // The agent-session controller: run state + every turn-driving action.
   const session = useAgentSession({
     props,
@@ -140,6 +201,8 @@ function App(props: AppProps): React.ReactElement {
     promptHistory,
     pasteMap,
     controllerRef,
+    runtime,
+    enterNavMode,
   });
 
   // Assemble the session once the UI has painted — runTui defers it here (rather
@@ -150,6 +213,10 @@ function App(props: AppProps): React.ReactElement {
   startSessionRef.current = session.startSession;
   const noteRef = useRef(transcript.note);
   noteRef.current = transcript.note;
+  // Keep the module-level note callback pointed at the live transcript so the
+  // renderer's "selection" handler (outside this component) can surface the
+  // auto-copy temp-file fallback path.
+  selectionNote = transcript.note;
   useEffect(() => {
     // Per-feature errors (per-server MCP failures, etc.) are reported inside
     // assembly via the note callback; this catch guards an unexpected throw so it
@@ -168,9 +235,63 @@ function App(props: AppProps): React.ReactElement {
   // the prompt). Pending gates own the keyboard until answered. The handler reads
   // live state via refs (Ink rebinds it each render, but the async loop mutates
   // state between renders).
-  useInput((_input, key) => {
+  useTuiInput((_input, key) => {
     if (key.ctrl && _input === "c") {
       session.handleCancel("Ctrl+C");
+      return;
+    }
+    // Keyboard nav mode owns the keyboard while a scrollback item is focused: j/k
+    // (or ↑/↓) walk it, g/G jump to top/bottom, Enter/Space toggle a focused tool,
+    // y/Y/c/o yank, i/Esc return to the prompt. Handled BEFORE the Esc escalation so
+    // Esc here only exits nav (never aborts/quits). Any other key is swallowed so a
+    // stray letter can't leak into the (inert) prompt. This whole block is skipped
+    // when not in nav mode, so every binding below stays intact.
+    if (focusedId !== null) {
+      const history = transcript.history;
+      const focused = history.find((i) => i.id === focusedId);
+      if (key.escape || isRawEscapeInput(_input) || _input === "i") {
+        setFocusedId(null);
+        return;
+      }
+      if (_input === "j" || key.downArrow) {
+        setFocusedId((id) => moveFocus(history, id, 1));
+        return;
+      }
+      if (_input === "k" || key.upArrow) {
+        setFocusedId((id) => moveFocus(history, id, -1));
+        return;
+      }
+      if (_input === "g") {
+        setFocusedId(firstFocusId(history));
+        return;
+      }
+      if (_input === "G") {
+        setFocusedId(lastFocusId(history));
+        return;
+      }
+      if ((key.return && !key.shift && !key.meta) || _input === " ") {
+        // Enter/Space expands or collapses a focused tool card; a no-op otherwise.
+        if (focused?.kind === "tool") toggleTool(focused.id);
+        return;
+      }
+      if (_input === "y") {
+        if (focused) void copyItem(focused, "default");
+        return;
+      }
+      if (_input === "Y") {
+        // Yank the whole answer group the focused item belongs to.
+        if (focused) yankGroup(focusGroup(history, focused.id));
+        return;
+      }
+      if (_input === "c") {
+        if (focused?.kind === "tool") void copyItem(focused, "command");
+        return;
+      }
+      if (_input === "o") {
+        if (focused?.kind === "tool") void copyItem(focused, "output");
+        return;
+      }
+      // Swallow every other key so it can't leak into the inert prompt.
       return;
     }
     if (key.escape || isRawEscapeInput(_input)) {
@@ -179,16 +300,26 @@ function App(props: AppProps): React.ReactElement {
       // prompt → clear prompt → abort → quit. A rapid Esc repeat can arrive as
       // raw "\x1b" bytes without key.escape set; handle that here so the prompt
       // input never inserts visible ^[ text.
-      if (autocomplete.completeOpenRef.current) autocomplete.dismissComplete();
+      if (help.openRef.current) help.closeHelp();
+      else if (pastePreview.openRef.current) pastePreview.close();
+      else if (autocomplete.completeOpenRef.current)
+        autocomplete.dismissComplete();
       else if (session.extensionsOpenRef.current) session.cancelExtensions();
       else session.handleCancel("Esc");
       return;
     }
+    // The help overlay owns its keys (`?`/Esc handled by its own scoped handler;
+    // Esc also handled above) — bow out for every other key so nothing leaks to
+    // nav/mode-cycle/the prompt while it's open. Mirrors the paste-preview gate.
+    if (help.openRef.current) return;
     // A pending ask owns the keyboard — AskUserView's own useInput drives the
     // wizard (↑/↓/space/enter); bow out so mode-cycle/verbose don't also fire.
     if (approvals.pendingAskRef.current) return;
     // Same for the `/extensions` picker — ExtensionsView owns ↑/↓/space/enter.
     if (session.extensionsOpenRef.current) return;
+    // The paste-preview popover owns its keys (`y` copy; Esc handled above) — bow
+    // out so no stray letter leaks to nav/mode-cycle while it's open.
+    if (pastePreview.openRef.current) return;
     // A pending confirm owns y/n/a (and swallows other keys) until answered.
     if (approvals.pendingConfirmRef.current) {
       const choice = confirmChoiceForKey(_input);
@@ -202,6 +333,54 @@ function App(props: AppProps): React.ReactElement {
       const k = _input.toLowerCase();
       if (k === "y") approvals.resolveCheckpoint(true);
       else if (k === "n") approvals.resolveCheckpoint(false);
+      return;
+    }
+    // Enter nav mode (focus the newest block) with Ctrl+Up or Ctrl+K — only when
+    // idle and nothing else owns the keyboard (gates handled above, autocomplete
+    // closed). A no-op when there's nothing focusable. `/copy` is the discoverable
+    // equivalent. Placed after the gate early returns so it can't steal their keys.
+    if (
+      key.ctrl &&
+      (key.upArrow || _input === "k") &&
+      !autocomplete.completeOpenRef.current &&
+      !approvals.pendingPlanRef.current
+    ) {
+      const last = lastFocusId(transcript.history);
+      if (last !== null) setFocusedId(last);
+      return;
+    }
+    // End/Home scroll the transcript when nothing else owns those keys: the
+    // autocomplete popover is closed, no plan review is pending, and the prompt is
+    // empty. The empty-prompt guard scopes this to the idle case so it never
+    // interferes while typing a message. End jumps to the newest output and
+    // re-engages sticky-follow; Home jumps to the oldest. PageUp/PageDown are left
+    // to the scrollbox's own native handling.
+    if (
+      (key.end || key.home) &&
+      !key.ctrl &&
+      !key.meta &&
+      !autocomplete.completeOpenRef.current &&
+      !approvals.pendingPlanRef.current &&
+      promptInput.inputRef.current === ""
+    ) {
+      if (key.end) scrollFollow.jumpToLatest();
+      else scrollFollow.jumpToOldest();
+      return;
+    }
+    // `?` opens the help overlay — but only when idle and safe: the prompt is
+    // empty (so `?` still types into a non-empty message), no plan review is
+    // pending, and the autocomplete popover is closed. The gates/nav/preview above
+    // already early-returned, so reaching here means none own the keyboard. Guarded
+    // like the End/Home block so it never shadows a typed `?`.
+    if (
+      _input === "?" &&
+      !key.ctrl &&
+      !key.meta &&
+      !autocomplete.completeOpenRef.current &&
+      !approvals.pendingPlanRef.current &&
+      promptInput.inputRef.current === ""
+    ) {
+      help.openHelp();
       return;
     }
     // Autocomplete popover navigation: ↑/↓ or Ctrl-P/Ctrl-N move, Tab/Enter accept.
@@ -237,12 +416,63 @@ function App(props: AppProps): React.ReactElement {
   const thinkLabel =
     session.thinking === "off" ? "no-think" : describeLevel(session.thinking);
 
-  // The session's first tool call gets a one-time `ctrl+r to expand` hint so the
-  // user discovers the verbose affordance. Its id is stable, so every other tool
-  // (and re-render) leaves the hint to that single item.
+  // The session's first tool call gets a one-time `click/enter expands · ctrl+r
+  // expands all` hint so the user discovers the expand affordances. Its id is
+  // stable, so every other tool (and re-render) leaves the hint to that single item.
   const firstToolId = [...transcript.history, ...transcript.live].find(
     (i) => i.kind === "tool",
   )?.id;
+
+  // Per-tool expansion: clicking one tool card toggles just that tool, tracked
+  // by id. This is independent of `session.verbose` (Ctrl+R = expand all) —
+  // `isItemExpanded` ORs the two together.
+  const [expandedToolIds, setExpandedToolIds] = useState<Set<number>>(
+    () => new Set(),
+  );
+  const toggleTool = useCallback((id: number) => {
+    setExpandedToolIds((s) => toggleToolExpanded(s, id));
+  }, []);
+
+  // Copy a transcript item (or one of a tool card's command/output chips) to the
+  // system clipboard, falling back to a temp file when no clipboard tool exists.
+  // Either way the outcome is surfaced as a scrollback note. transcript.note is
+  // read through a ref so this callback stays stable across renders.
+  const copyItem = useCallback(
+    async (item: Item, kind: "default" | "command" | "output" = "default") => {
+      const target = resolveItemCopyTarget(item, kind);
+      if (!target) {
+        noteRef.current("nothing to copy", "info");
+        return;
+      }
+      // Success and the temp-file fallback are both informative outcomes, so
+      // both land as info notes — copyTargetToClipboard frames the wording. A
+      // rejection is guarded so it can't become an unhandled rejection,
+      // mirroring yankGroup's .catch path.
+      try {
+        noteRef.current(await copyTargetToClipboard(target), "info");
+      } catch (err) {
+        noteRef.current(`copy failed: ${(err as Error).message}`, "error");
+      }
+    },
+    [],
+  );
+
+  // Yank a whole answer group (nav `Y`): concatenate the members' source text and
+  // copy it as one "group" target, surfacing the outcome as a note — mirroring
+  // copyItem's note path. A rejection is guarded so it can't become an unhandled
+  // rejection. note() reads through a ref so this stays stable across renders.
+  const yankGroup = useCallback((items: Item[]): void => {
+    const text = groupCopyText(items);
+    if (!text) {
+      noteRef.current("nothing to copy", "info");
+      return;
+    }
+    copyTargetToClipboard({ kind: "message", label: "group", text })
+      .then((msg) => noteRef.current(msg, "info"))
+      .catch((err) =>
+        noteRef.current(`copy failed: ${(err as Error).message}`, "error"),
+      );
+  }, []);
 
   // Short status verb shown beside the busy spinner ("thinking…", "running
   // bash…", "searching…"), derived from the live transcript's most recent item.
@@ -262,9 +492,15 @@ function App(props: AppProps): React.ReactElement {
       key={item.id}
       item={item}
       prevKind={index > 0 ? transcript.history[index - 1]!.kind : undefined}
-      expanded={session.verbose}
+      expanded={isItemExpanded(item, session.verbose, expandedToolIds)}
       showExpandHint={item.id === firstToolId}
       columns={columns}
+      // Nav focus: tools highlight via `focusedToolId`; box-less items via
+      // `itemFocused`. Both resolve from the same focused id (null in insert mode).
+      focusedToolId={focusedId}
+      itemFocused={item.id === focusedId}
+      onToggleTool={toggleTool}
+      onCopyItem={copyItem}
     />
   );
 
@@ -275,78 +511,149 @@ function App(props: AppProps): React.ReactElement {
   // text still lands in the scrollback when the block finalises. Reserve rows for
   // the input frame, footer, gaps, and the trim marker; over-reserving only trims
   // a little more tail, which is harmless.
-  const rows = stdout?.rows ?? 24;
-  const columns = stdout?.columns ?? 80;
-  const liveCap = Math.max(3, rows - 10);
-  // Reserve for the *deepest* nested gutter a live line can sit behind: the 3-cell
-  // speaker gutter, plus the 2-cell `│ ` markdown rule that code-fence/indented
-  // lines get nested inside it. Clamping too wide makes code soft-wrap mid-word in
-  // the live region — and a wrapped live line occupies a terminal row `tailLines`
-  // never budgeted, overflowing the dynamic region and desyncing Ink into a flood
-  // of blank/duplicate lines.
-  const liveContentWidth = Math.max(1, columns - 5);
+  const rows = runtime.rows();
+  const columns = runtime.columns();
+  // Reserve rows for the input bar, footer, gaps, the trim marker, AND the
+  // streaming assistant card's chrome (title row + top/bottom vertical padding +
+  // above-gap). Over-reserving only trims a little more tail, which is harmless.
+  const liveCap = Math.max(3, rows - 14);
+  // Clamp each live line so it never soft-wraps (a wrapped live line occupies a
+  // terminal row `tailLines` never budgeted). Reserve for the *deepest* place a
+  // live line can sit: inside the assistant card (2 padding cells), plus the
+  // 2-cell `│ ` markdown rule that code-fence/indented lines nest in, with a
+  // little slack.
+  const liveContentWidth = Math.max(1, columns - 6);
 
   return (
-    <IconProvider config={props.config}>
-      <Box flexDirection="column">
-        {/* Ink's <Static> box is position:absolute with NO width, so Yoga sizes it
-            to its content instead of the terminal — text then wraps a couple of
-            columns too wide and the terminal hard-wraps the spill to column 0
-            (orphan letters with no gutter indent). Pin it to the terminal width. */}
-        <Static items={transcript.history} style={{ width: columns }}>
-          {renderHistoryItem}
-        </Static>
+    <TuiRuntimeContext.Provider value={runtime}>
+      <IconProvider config={props.config}>
+        {/* Viewport-height column: the transcript scrolls inside a flexGrow
+            scrollbox while the tasks panel, input box, and footer stay pinned to
+            the bottom of the terminal (they were scrolling off-screen when a long
+            conversation overflowed a plain column). */}
+        <Box flexDirection="column" height={rows}>
+          {/* Finished transcript scrolls inside the flexGrow scrollbox; it's the
+              only flexible child (flexShrink + minHeight:0), so it gives up height
+              first and the bottom chrome below it never gets squeezed. */}
+          <ScrollBox
+            key={`transcript-${resizeNonce}`}
+            ref={scrollFollow.ref}
+            flexGrow={1}
+            flexShrink={1}
+            minHeight={0}
+            width={columns}
+            stickyScroll
+            stickyStart="bottom"
+            scrollY
+          >
+            <Box flexDirection="column" width={columns}>
+              {transcript.history.map(renderHistoryItem)}
+              <LiveRegion
+                live={transcript.live}
+                history={transcript.history}
+                verbose={session.verbose}
+                firstToolId={firstToolId}
+                liveCap={liveCap}
+                liveContentWidth={liveContentWidth}
+                expandedToolIds={expandedToolIds}
+                onToggleTool={toggleTool}
+                onCopyItem={copyItem}
+              />
+            </Box>
+          </ScrollBox>
 
-        <LiveRegion
-          live={transcript.live}
-          history={transcript.history}
-          verbose={session.verbose}
-          firstToolId={firstToolId}
-          liveCap={liveCap}
-          liveContentWidth={liveContentWidth}
-        />
+          {/* Bottom chrome — the jump-to-latest banner, tasks, input box, and footer
+              — pinned to the terminal bottom. flexShrink:0 keeps it at full height
+              (it was getting compacted/clipped when the scrollbox grew). The
+              in-flight turn renders in the transcript scrollbox above, so the
+              toolbar top stays reserved for queue/spinner/status rows only. */}
+          <Box flexDirection="column" flexShrink={0}>
+            {/* Shown only while the user has scrolled up away from the newest
+                content. It lives OUTSIDE the scrollbox so its click isn't swallowed
+                by the scroll region's mouse handling. Clicking it (or pressing End)
+                jumps to the latest output and re-engages sticky-follow. */}
+            {!scrollFollow.atBottom && (
+              <Box paddingLeft={1}>
+                <ActionChip
+                  label="↓ new messages · jump to latest"
+                  color="gray"
+                  onAction={scrollFollow.jumpToLatest}
+                />
+              </Box>
+            )}
 
-        <Tasks tasks={session.tasks} />
+            <Tasks tasks={session.tasks} />
 
-        <PromptArea
-          approvals={approvals}
-          session={session}
-          autocomplete={autocomplete}
-          promptInput={promptInput}
-          promptHistory={promptHistory}
-          registerPaste={registerPaste}
-          pasteMap={pasteMap}
-          modeColor={modeColor}
-          verb={verb}
-          columns={columns}
-        />
+            <PromptArea
+              approvals={approvals}
+              session={session}
+              autocomplete={autocomplete}
+              promptInput={promptInput}
+              promptHistory={promptHistory}
+              registerPaste={registerPaste}
+              pasteMap={pasteMap}
+              pastePreview={pastePreview}
+              help={help}
+              modeColor={modeColor}
+              verb={verb}
+              columns={columns}
+              navMode={focusedId !== null}
+            />
 
-        <Footer
-          modelLabel={session.modelLabel}
-          mode={session.mode}
-          modeColor={modeColor}
-          thinkLabel={thinkLabel}
-          cost={session.cost}
-          costKnown={session.costKnown}
-          tokens={session.tokens}
-          verbose={session.verbose}
-        />
-      </Box>
-    </IconProvider>
+            <Footer
+              modelLabel={session.modelLabel}
+              mode={session.mode}
+              modeColor={modeColor}
+              thinkLabel={thinkLabel}
+              cost={session.cost}
+              costKnown={session.costKnown}
+              tokens={session.tokens}
+              verbose={session.verbose}
+              onCycleMode={session.cycleMode}
+              onToggleVerbose={() => session.setVerbose((v) => !v)}
+              onOpenHelp={help.openHelp}
+            />
+          </Box>
+        </Box>
+      </IconProvider>
+    </TuiRuntimeContext.Provider>
   );
 }
 
-/** Launch the Ink TUI. The caller resolves config/provider/system and passes them in. */
+/** Launch the OpenTUI TUI. The caller resolves config/provider/system and passes them in. */
 export function startTui(props: AppProps): void {
   // exitOnCtrlC:false — the App handles Ctrl+C itself (abort once, quit twice).
-  // The instance ref lets the App clear the screen via Ink's own clear() (see
-  // the /clear handler) instead of writing raw escape sequences, which desync
-  // Ink's renderer and cause duplicated lines / runaway layout.
-  const inkInstance: { current: { clear: () => void } | null } = {
-    current: null,
-  };
-  const instance = render(<App {...props} inkInstance={inkInstance} />, {
+  void createCliRenderer({
     exitOnCtrlC: false,
+    useMouse: true,
+    enableMouseMovement: true,
+  }).then((renderer) => {
+    openTuiRenderer = renderer;
+    // Select-to-copy (every message kind): the renderer emits "selection" once,
+    // on drag release (finishSelection). Copy the highlighted text to the system
+    // clipboard, then clear the highlight so the copy "consumes" the selection.
+    // A clean copy stays silent (a note on every drag-select would be noise); only
+    // the temp-file fallback — when no clipboard tool exists — surfaces its path so
+    // the text isn't silently stranded. The promise is fire-and-forget with a
+    // guarded .catch so a write failure can't become an unhandled rejection.
+    renderer.on(
+      "selection",
+      (selection: { getSelectedText(): string } | null) => {
+        const text = selection?.getSelectedText() ?? "";
+        if (text.length === 0) return;
+        writeTextToClipboard(text)
+          .then((r) => {
+            if (!r.ok)
+              selectionNote?.(
+                `clipboard unavailable — wrote selection to ${r.path}`,
+                "info",
+              );
+          })
+          .catch(() => {});
+        renderer.clearSelection();
+      },
+    );
+    openTuiRoot = createRoot(renderer);
+    openTuiRoot.render(<App {...props} />);
   });
-  inkInstance.current = instance;
 }
