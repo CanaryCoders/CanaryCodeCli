@@ -10,7 +10,6 @@ import { createTextAttributes } from "@opentui/core";
 import { useTerminalDimensions } from "@opentui/react";
 import type { ReactElement, ReactNode } from "react";
 import { createContext, createElement, useContext } from "react";
-import { tint } from "./theme.ts";
 
 // OpenTUI splits Ink's single <Text> into two host elements: a block-level
 // <text> (a TextRenderable) and inline <span> runs (TextNodeRenderable). A
@@ -102,12 +101,18 @@ export function OpenTuiBox({
   borderStyle,
   borderColor,
   borderDimColor: _borderDimColor,
+  flexDirection,
   ...props
 }: BoxProps): ReactElement {
   return createElement(
     "box",
     {
       ...props,
+      // Ink's <Box> defaults to flexDirection="row"; OpenTUI/Yoga defaults to
+      // "column". The whole TUI was authored against Ink's row default, so we
+      // restore it here — otherwise every Box that relied on the implicit
+      // default (footer bar, completion rows, …) stacks vertically.
+      flexDirection: flexDirection ?? "row",
       border: borderStyle ? true : undefined,
       borderStyle: mapBorderStyle(borderStyle),
       borderColor,
@@ -155,14 +160,19 @@ export function buildTextElement(
   }: TextProps,
   insideText: boolean,
 ): ReactElement {
-  const fg = dimColor ? tint("gray") : color;
+  // Ink's `dimColor` applied the ANSI dim attribute (SGR 2): it fades whatever
+  // colour is set and respects the terminal's theme. The first port mapped it to
+  // a flat hard-coded grey foreground, which discarded the real colour and made
+  // every dim line one uniform grey. Use the native dim attribute instead so the
+  // colour is preserved and faded — terminal-theme-aware, matching Ink.
+  const fg = color;
   const attributes = createTextAttributes({
     bold,
     italic,
     underline,
     strikethrough,
     inverse,
-    dim: dimColor && tint("gray") === undefined,
+    dim: dimColor,
   });
 
   if (insideText) {

@@ -6,7 +6,7 @@
 
 import { expect, test } from "bun:test";
 import type { ReactElement } from "react";
-import { buildTextElement } from "./primitives.tsx";
+import { buildTextElement, OpenTuiBox } from "./primitives.tsx";
 
 /** React 19 types element props as `unknown`; read them through a known shape. */
 function props(el: ReactElement): Record<string, unknown> {
@@ -51,4 +51,18 @@ test("block-only wrap props apply to <text> but not <span>", () => {
   expect(
     props(buildTextElement({ wrap: "truncate" }, true)).truncate,
   ).toBeUndefined();
+});
+
+// Ink's <Box> defaults to flexDirection="row"; OpenTUI/Yoga defaults to
+// "column". The TUI was authored against Ink, so Box must default to row or
+// horizontal containers (footer bar, completion rows) stack vertically.
+test("Box defaults to flexDirection=row to match Ink semantics", () => {
+  expect(props(OpenTuiBox({ children: null })).flexDirection).toBe("row");
+});
+
+test("Box honours an explicit flexDirection", () => {
+  expect(
+    props(OpenTuiBox({ children: null, flexDirection: "column" }))
+      .flexDirection,
+  ).toBe("column");
 });
