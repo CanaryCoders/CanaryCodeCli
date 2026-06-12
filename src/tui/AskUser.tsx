@@ -31,8 +31,9 @@ const CUSTOM_LABEL = "Write my own answer";
 const ACCENT = "magenta";
 
 /** The wizard's full UI state: which question, cursor + picks, and the
- *  free-text answer field. */
-interface State {
+ *  free-text answer field. Exported (with `reducer` and `Action`) so the
+ *  row-selection behavior can be unit-tested without the renderer. */
+export interface State {
   /** Index of the question currently shown. */
   qIndex: number;
   /** Row the cursor is on (an option index, or the "write my own" row). */
@@ -45,7 +46,7 @@ interface State {
   draft: string;
 }
 
-type Action =
+export type Action =
   | { type: "moveCursor"; rowCount: number; delta: number }
   | { type: "setCursor"; index: number; rowCount: number }
   | { type: "togglePick"; index: number }
@@ -54,7 +55,7 @@ type Action =
   | { type: "cancelWriting" }
   | { type: "nextQuestion"; cursor: number };
 
-function reducer(state: State, action: Action): State {
+export function reducer(state: State, action: Action): State {
   switch (action.type) {
     case "moveCursor": {
       const { rowCount, delta } = action;

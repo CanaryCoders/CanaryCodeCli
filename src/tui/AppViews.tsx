@@ -9,11 +9,13 @@ import { AskUserView } from "./AskUser.tsx";
 import { Complete } from "./Complete.tsx";
 import { ConfirmView } from "./Confirm.tsx";
 import { ExtensionsView } from "./Extensions.tsx";
+import { HelpOverlay } from "./Help.tsx";
 import { useIcon, useSpinnerFrame } from "./Icon.tsx";
 import { MultilineInput } from "./Input.tsx";
 import { ActionChip } from "./Interactive.tsx";
 import { type Item, ItemView } from "./Message.tsx";
 import { clampLineWidth, tailLines } from "./message-helpers.ts";
+import { PastePreview } from "./PastePreview.tsx";
 import { PlanView } from "./Plan.tsx";
 import { Box, Text } from "./primitives.tsx";
 import { SPACING, SURFACE, tint } from "./theme.ts";
@@ -21,6 +23,8 @@ import { isItemExpanded } from "./tool-expansion.ts";
 import type { AgentSession } from "./use-agent-session.ts";
 import type { Approvals } from "./use-approvals.ts";
 import type { Autocomplete } from "./use-autocomplete.ts";
+import type { HelpState } from "./use-help.ts";
+import type { PastePreview as PastePreviewState } from "./use-paste-preview.ts";
 import type { PromptHistory } from "./use-prompt-history.ts";
 import type { PromptInput } from "./use-prompt-input.ts";
 
@@ -122,6 +126,8 @@ export function PromptArea({
   promptHistory,
   registerPaste,
   pasteMap,
+  pastePreview,
+  help,
   modeColor,
   verb,
   columns,
@@ -134,6 +140,8 @@ export function PromptArea({
   promptHistory: PromptHistory;
   registerPaste: (text: string) => string | null;
   pasteMap: Map<number, string>;
+  pastePreview: PastePreviewState;
+  help: HelpState;
   modeColor: string;
   verb: string;
   columns: number;
@@ -246,6 +254,24 @@ export function PromptArea({
           onAccept={autocomplete.acceptCompletion}
         />
       ) : null}
+      {/* Paste-chip preview: rendered above the input frame (like the autocomplete
+          list) when a `[Pasted …]` chip is clicked. Read-only — never edits the
+          buffer; while open the MultilineInput below is paused. */}
+      {pastePreview.chipId !== null ? (
+        <PastePreview
+          chipId={pastePreview.chipId}
+          text={pasteMap.get(pastePreview.chipId) ?? ""}
+          columns={columns}
+          onClose={pastePreview.close}
+        />
+      ) : null}
+      {/* Keyboard & mouse help overlay: rendered above the input frame (like the
+          autocomplete list / paste preview) when opened from the footer `?` chip
+          or by `?` on an empty prompt. While open the MultilineInput below is
+          paused so its own scoped handler owns `?`/Esc to close. */}
+      {help.open ? (
+        <HelpOverlay columns={columns} onClose={help.closeHelp} />
+      ) : null}
       {/* Live status: spinner + verb sit on their own row just above the input
           frame while busy (so they never share the prompt line). */}
       {session.busy ? (
@@ -288,13 +314,15 @@ export function PromptArea({
             value={promptInput.input}
             onChange={autocomplete.handleInputChange}
             onSubmit={session.onSubmit}
-            inputActive={!navMode}
+            inputActive={!navMode && !help.open}
             capture={autocomplete.completeOpen}
             cursorNonce={promptInput.cursorNonce}
             onHistoryPrev={promptHistory.historyPrev}
             onHistoryNext={promptHistory.historyNext}
             registerPaste={registerPaste}
             pastes={pasteMap}
+            onChipClick={pastePreview.open}
+            previewActive={pastePreview.chipId !== null}
             // Inner content width = terminal − paddingX (2) − the prompt prefix +
             // 1 spare so the EOL cursor block never pushes a row past the edge.
             width={Math.max(1, columns - 2 * SPACING.boxPadX - 2 - 1)}

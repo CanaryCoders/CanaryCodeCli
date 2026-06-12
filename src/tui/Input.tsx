@@ -20,6 +20,7 @@
 
 import { useRef, useState } from "react";
 import {
+  chipIdBeforeCursor,
   cursorLineCol,
   EMPTY_PASTES,
   type InputResult,
@@ -31,6 +32,7 @@ import {
 } from "./input-helpers.ts";
 import { useTuiInput, useTuiPaste } from "./keyboard.ts";
 import { Box, Text } from "./primitives.tsx";
+import { INTERACTIVE, tint } from "./theme.ts";
 
 // ── the component ─────────────────────────────────────────────────────────────
 
@@ -60,6 +62,13 @@ interface MultilineInputProps {
   registerPaste?: (text: string) => string | null;
   /** The host's paste map, for rendering sentinels as `[Pasted …]` chips. */
   pastes?: Map<number, string>;
+  /** Click handler for a paste chip — opens the host's read-only preview popover
+   *  for that paste id. Omit to make chips non-interactive (plain dim labels). */
+  onChipClick?: (id: number) => void;
+  /** True while the paste-preview popover is open. The editor pauses (its key/paste
+   *  hooks go inert) so the popover's own keys don't type into the buffer; the
+   *  buffer/cursor are left untouched until the preview closes. */
+  previewActive?: boolean;
   /** Visible content width (columns) available to the input. Display lines are
    *  hard-wrapped to this width so Ink never soft-wraps a live row — a soft-wrapped
    *  row is what Ink mis-erases and smears across the box border. */
@@ -79,6 +88,8 @@ export function MultilineInput({
   onHistoryNext,
   registerPaste,
   pastes = EMPTY_PASTES,
+  onChipClick,
+  previewActive = false,
   width = 0,
 }: MultilineInputProps): React.ReactElement {
   // react-doctor flags this twice, both false positives: (1) no-derived-useState —
@@ -138,6 +149,18 @@ export function MultilineInput({
       // them as input.
       const cleanInput = stripEscapes(input);
       if (input && !cleanInput) return;
+      // Ctrl+P opens the preview for the chip the cursor rests just after — a
+      // keyboard path to what a mouse click on the chip already does. Only when
+      // autocomplete is closed (`!capture`), so it never fights the popover's own
+      // Ctrl+P = move-selection; and only when the char before the cursor is a
+      // sentinel, so otherwise Ctrl+P stays the editor's no-op. Consumes the key.
+      if (key.ctrl && cleanInput === "p" && !capture && onChipClick) {
+        const chipId = chipIdBeforeCursor(valueRef.current, cursorRef.current);
+        if (chipId !== null) {
+          onChipClick(chipId);
+          return;
+        }
+      }
       applyResult(
         reduceInput(
           { value: valueRef.current, cursor: cursorRef.current },
@@ -147,9 +170,10 @@ export function MultilineInput({
         ),
       );
     },
-    // Inert in nav mode (`inputActive` false): keystrokes drive the transcript,
-    // not the prompt buffer.
-    { isActive: isActive && inputActive },
+    // Inert in nav mode (`inputActive` false), or while the paste-preview popover
+    // is open (`previewActive`): keystrokes drive the transcript / the popover, not
+    // the prompt buffer.
+    { isActive: isActive && inputActive && !previewActive },
   );
 
   // A terminal paste arrives as a single bracketed-paste event, so it goes
@@ -167,7 +191,7 @@ export function MultilineInput({
         ),
       );
     },
-    { isActive: isActive && inputActive },
+    { isActive: isActive && inputActive && !previewActive },
   );
 
   if (value.length === 0) {
@@ -208,6 +232,17 @@ export function MultilineInput({
     }
   }
 
+  // When the cursor rests on/just after a paste chip and the editor is live, offer
+  // a subtle one-line hint for the keyboard open (mirrors the mouse click). Gated
+  // the same way as the Ctrl+P handler so the hint never lies about being usable.
+  const showChipHint =
+    isActive &&
+    inputActive &&
+    !previewActive &&
+    !capture &&
+    onChipClick !== undefined &&
+    chipIdBeforeCursor(value, effectiveCursor) !== null;
+
   return (
     <Box flexDirection="column">
       {rows.map((row, i) => (
@@ -217,12 +252,22 @@ export function MultilineInput({
         // distinct without a bare index key.
         <Text key={`${i}:${row.text}`}>
           {row.cursorCol !== null ? (
-            <CursorLine text={row.text} col={row.cursorCol} pastes={pastes} />
+            <CursorLine
+              text={row.text}
+              col={row.cursorCol}
+              pastes={pastes}
+              onChipClick={onChipClick}
+            />
           ) : (
-            <BlankableLine text={row.text} pastes={pastes} />
+            <BlankableLine
+              text={row.text}
+              pastes={pastes}
+              onChipClick={onChipClick}
+            />
           )}
         </Text>
       ))}
+      {showChipHint && <Text dimColor>{"ctrl+p preview"}</Text>}
     </Box>
   );
 }
@@ -233,12 +278,53 @@ export function MultilineInput({
 function BlankableLine({
   text,
   pastes,
+  onChipClick,
 }: {
   text: string;
   pastes: Map<number, string>;
+  onChipClick?: (id: number) => void;
 }): React.ReactElement {
   if (text.length === 0) return <Text> </Text>;
-  return <LineParts text={text} pastes={pastes} />;
+  return <LineParts text={text} pastes={pastes} onChipClick={onChipClick} />;
+}
+
+/** A single paste chip: a dim `[Pasted …]` label that brightens on hover and, when
+ *  interactive, opens the read-only preview popover on click. Kept to one inline
+ *  `<Text>` run so the cursor/line-wrap math (which treats the sentinel as one
+ *  atomic unit) is unchanged — see `wrapDisplayLine`/`splitLineParts`. */
+function Chip({
+  id,
+  pastes,
+  onChipClick,
+}: {
+  id: number;
+  pastes: Map<number, string>;
+  onChipClick?: (id: number) => void;
+}): React.ReactElement {
+  const [hovered, setHovered] = useState(false);
+  const interactive = onChipClick !== undefined;
+  const label = pasteChipLabel(id, pastes.get(id) ?? "");
+  return (
+    <Text
+      dimColor={!hovered}
+      color={hovered ? tint(INTERACTIVE.hoverFg) : undefined}
+      backgroundColor={hovered ? tint(INTERACTIVE.hoverBg) : undefined}
+      cursor={interactive ? "pointer" : "default"}
+      onMouseOver={() => {
+        if (interactive) setHovered(true);
+      }}
+      onMouseOut={() => setHovered(false)}
+      onMouseDown={(event) => {
+        if (!interactive || event.button !== 0) return;
+        // Open on press (mouse-up can land outside a one-line chip after a drag);
+        // stop propagation so the click doesn't reach the surrounding surface.
+        event.stopPropagation();
+        onChipClick?.(id);
+      }}
+    >
+      {label}
+    </Text>
+  );
 }
 
 /** One piece of a line: a plain-text run or a paste-chip marker. Pure data (no
@@ -281,18 +367,23 @@ function splitLineParts(text: string): LinePart[] {
 function LineParts({
   text,
   pastes,
+  onChipClick,
 }: {
   text: string;
   pastes: Map<number, string>;
+  onChipClick?: (id: number) => void;
 }): React.ReactElement {
   const parts = splitLineParts(text);
   return (
     <>
       {parts.map((part) =>
         "chipId" in part ? (
-          <Text key={`p${part.start}`} dimColor>
-            {pasteChipLabel(part.chipId, pastes.get(part.chipId) ?? "")}
-          </Text>
+          <Chip
+            key={`p${part.start}`}
+            id={part.chipId}
+            pastes={pastes}
+            onChipClick={onChipClick}
+          />
         ) : (
           <Text key={`t${part.start}`}>{part.text}</Text>
         ),
@@ -307,40 +398,43 @@ function CursorLine({
   text,
   col,
   pastes,
+  onChipClick,
 }: {
   text: string;
   col: number;
   pastes: Map<number, string>;
+  onChipClick?: (id: number) => void;
 }): React.ReactElement {
   const chars = [...text];
   const before = chars.slice(0, col).join("");
   const at = chars[col];
   const after = chars.slice(col + 1).join("");
-  // The cursor sits on a paste chip: highlight the whole chip label.
+  // The cursor sits on a paste chip: highlight the whole chip label (the inverse
+  // caret owns it, so it stays a plain run rather than a clickable Chip).
   if (at !== undefined && pasteId(at) >= 0) {
     return (
       <>
-        <LineParts text={before} pastes={pastes} />
+        <LineParts text={before} pastes={pastes} onChipClick={onChipClick} />
         <Text inverse>
           {pasteChipLabel(pasteId(at), pastes.get(pasteId(at)) ?? "")}
         </Text>
-        <LineParts text={after} pastes={pastes} />
+        <LineParts text={after} pastes={pastes} onChipClick={onChipClick} />
       </>
     );
   }
   if (at === undefined) {
     return (
       <>
-        <LineParts text={before} pastes={pastes} />
+        <LineParts text={before} pastes={pastes} onChipClick={onChipClick} />
         <Text inverse> </Text>
       </>
     );
   }
   return (
     <>
-      <LineParts text={before} pastes={pastes} />
+      <LineParts text={before} pastes={pastes} onChipClick={onChipClick} />
       <Text inverse>{at}</Text>
-      <LineParts text={after} pastes={pastes} />
+      <LineParts text={after} pastes={pastes} onChipClick={onChipClick} />
     </>
   );
 }

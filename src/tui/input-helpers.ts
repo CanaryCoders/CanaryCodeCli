@@ -33,6 +33,19 @@ export function pasteId(ch: string): number {
   return cp - PASTE_BASE;
 }
 
+/** If the char immediately before `offset` in `text` is a paste sentinel, return
+ *  its chip id; else null. Lets the editor open a chip's preview from the keyboard
+ *  when the cursor rests just after the (single-cell) chip — see Input.tsx's
+ *  Ctrl+P branch. Pure so the "cursor on a chip" detection stays unit-testable. */
+export function chipIdBeforeCursor(
+  text: string,
+  offset: number,
+): number | null {
+  if (offset <= 0 || offset > text.length) return null;
+  const id = pasteId(text[offset - 1]!);
+  return id >= 0 ? id : null;
+}
+
 /** Should this pasted text collapse into a chip rather than insert verbatim? */
 export function shouldCollapsePaste(text: string): boolean {
   let nl = 0;
@@ -55,6 +68,20 @@ export function expandPastes(value: string, map: Map<number, string>): string {
 export function pasteChipLabel(id: number, text: string): string {
   const lines = text.split("\n").length;
   return `[Pasted\u00a0text\u00a0#${id + 1}\u00a0+${lines}\u00a0lines]`;
+}
+
+/** A read-only preview of a paste's stored text, capped to the first `max` lines.
+ *  Returns the visible `lines` plus a `more` count of lines elided past the cap
+ *  (0 when nothing was trimmed). Pure so the popover renderer stays a thin shell
+ *  and the height-cap math can be unit tested without a render. */
+export function pastePreviewLines(
+  text: string,
+  max: number,
+): { lines: string[]; more: number } {
+  const all = text.split("\n");
+  if (max <= 0) return { lines: [], more: all.length };
+  if (all.length <= max) return { lines: all, more: 0 };
+  return { lines: all.slice(0, max), more: all.length - max };
 }
 
 // ── pure editing reducer ──────────────────────────────────────────────────────

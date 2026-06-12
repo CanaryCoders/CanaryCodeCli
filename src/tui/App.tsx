@@ -65,7 +65,9 @@ import {
 import { useAgentSession } from "./use-agent-session.ts";
 import { useApprovals } from "./use-approvals.ts";
 import { useAutocomplete } from "./use-autocomplete.ts";
+import { useHelp } from "./use-help.ts";
 import { usePasteChips } from "./use-paste-chips.ts";
+import { usePastePreview } from "./use-paste-preview.ts";
 import { usePromptHistory } from "./use-prompt-history.ts";
 import { usePromptInput } from "./use-prompt-input.ts";
 import { useScrollFollow } from "./use-scroll-follow.ts";
@@ -78,6 +80,12 @@ import { useTranscript } from "./use-transcript.ts";
 
 let openTuiRenderer: CliRenderer | null = null;
 let openTuiRoot: Root | null = null;
+// The transcript note callback, surfaced at module scope so the renderer's
+// "selection" handler (registered in startTui, outside the component) can push a
+// note when drag-select auto-copy falls back to a temp file. The App component
+// keeps it fresh each render (see `noteRef` below).
+let selectionNote: ((text: string, tone?: "info" | "error") => void) | null =
+  null;
 
 function App(props: AppProps): React.ReactNode {
   const dimensions = useTerminalDimensions();
@@ -124,6 +132,18 @@ function App(props: AppProps): React.ReactNode {
   // buffer as a single sentinel char (see Input.tsx). The buffer carries sentinels;
   // they are expanded to real text only when a prompt is sent.
   const { pasteMap, registerPaste } = usePasteChips();
+
+  // Paste-chip preview: clicking a `[Pasted …]` chip in the prompt opens a
+  // read-only popover (above the input frame) showing the stored text. While it is
+  // open the editor pauses; `pastePreview.openRef` lets the global Esc handler tell
+  // the preview is open and close it without escalating the cancel chain.
+  const pastePreview = usePastePreview();
+
+  // Keyboard & mouse help overlay: the footer `?` chip (and `?` on an empty
+  // prompt) opens a modal cheat-sheet above the input frame. While it is open the
+  // editor pauses; `help.openRef` lets the global key handler tell it is open and
+  // close it on Esc without escalating the cancel chain (and swallow stray keys).
+  const help = useHelp();
 
   // Pause-and-ask interactions (confirm / checkpoint / ask_user / plan review) and
   // the composed approval gate — each suspends the agent loop on a promise until
@@ -193,6 +213,10 @@ function App(props: AppProps): React.ReactNode {
   startSessionRef.current = session.startSession;
   const noteRef = useRef(transcript.note);
   noteRef.current = transcript.note;
+  // Keep the module-level note callback pointed at the live transcript so the
+  // renderer's "selection" handler (outside this component) can surface the
+  // auto-copy temp-file fallback path.
+  selectionNote = transcript.note;
   useEffect(() => {
     // Per-feature errors (per-server MCP failures, etc.) are reported inside
     // assembly via the note callback; this catch guards an unexpected throw so it
@@ -276,16 +300,26 @@ function App(props: AppProps): React.ReactNode {
       // prompt → clear prompt → abort → quit. A rapid Esc repeat can arrive as
       // raw "\x1b" bytes without key.escape set; handle that here so the prompt
       // input never inserts visible ^[ text.
-      if (autocomplete.completeOpenRef.current) autocomplete.dismissComplete();
+      if (help.openRef.current) help.closeHelp();
+      else if (pastePreview.openRef.current) pastePreview.close();
+      else if (autocomplete.completeOpenRef.current)
+        autocomplete.dismissComplete();
       else if (session.extensionsOpenRef.current) session.cancelExtensions();
       else session.handleCancel("Esc");
       return;
     }
+    // The help overlay owns its keys (`?`/Esc handled by its own scoped handler;
+    // Esc also handled above) — bow out for every other key so nothing leaks to
+    // nav/mode-cycle/the prompt while it's open. Mirrors the paste-preview gate.
+    if (help.openRef.current) return;
     // A pending ask owns the keyboard — AskUserView's own useInput drives the
     // wizard (↑/↓/space/enter); bow out so mode-cycle/verbose don't also fire.
     if (approvals.pendingAskRef.current) return;
     // Same for the `/extensions` picker — ExtensionsView owns ↑/↓/space/enter.
     if (session.extensionsOpenRef.current) return;
+    // The paste-preview popover owns its keys (`y` copy; Esc handled above) — bow
+    // out so no stray letter leaks to nav/mode-cycle while it's open.
+    if (pastePreview.openRef.current) return;
     // A pending confirm owns y/n/a (and swallows other keys) until answered.
     if (approvals.pendingConfirmRef.current) {
       const choice = confirmChoiceForKey(_input);
@@ -317,9 +351,10 @@ function App(props: AppProps): React.ReactNode {
     }
     // End/Home scroll the transcript when nothing else owns those keys: the
     // autocomplete popover is closed, no plan review is pending, and the prompt is
-    // empty (so they still move the cursor while typing). End jumps to the newest
-    // output and re-engages sticky-follow; Home jumps to the oldest. PageUp/PageDown
-    // are left to the scrollbox's own native handling.
+    // empty. The empty-prompt guard scopes this to the idle case so it never
+    // interferes while typing a message. End jumps to the newest output and
+    // re-engages sticky-follow; Home jumps to the oldest. PageUp/PageDown are left
+    // to the scrollbox's own native handling.
     if (
       (key.end || key.home) &&
       !key.ctrl &&
@@ -330,6 +365,22 @@ function App(props: AppProps): React.ReactNode {
     ) {
       if (key.end) scrollFollow.jumpToLatest();
       else scrollFollow.jumpToOldest();
+      return;
+    }
+    // `?` opens the help overlay — but only when idle and safe: the prompt is
+    // empty (so `?` still types into a non-empty message), no plan review is
+    // pending, and the autocomplete popover is closed. The gates/nav/preview above
+    // already early-returned, so reaching here means none own the keyboard. Guarded
+    // like the End/Home block so it never shadows a typed `?`.
+    if (
+      _input === "?" &&
+      !key.ctrl &&
+      !key.meta &&
+      !autocomplete.completeOpenRef.current &&
+      !approvals.pendingPlanRef.current &&
+      promptInput.inputRef.current === ""
+    ) {
+      help.openHelp();
       return;
     }
     // Autocomplete popover navigation: ↑/↓ or Ctrl-P/Ctrl-N move, Tab/Enter accept.
@@ -365,9 +416,9 @@ function App(props: AppProps): React.ReactNode {
   const thinkLabel =
     session.thinking === "off" ? "no-think" : describeLevel(session.thinking);
 
-  // The session's first tool call gets a one-time `ctrl+r to expand` hint so the
-  // user discovers the verbose affordance. Its id is stable, so every other tool
-  // (and re-render) leaves the hint to that single item.
+  // The session's first tool call gets a one-time `click/enter expands · ctrl+r
+  // expands all` hint so the user discovers the expand affordances. Its id is
+  // stable, so every other tool (and re-render) leaves the hint to that single item.
   const firstToolId = [...transcript.history, ...transcript.live].find(
     (i) => i.kind === "tool",
   )?.id;
@@ -541,6 +592,8 @@ function App(props: AppProps): React.ReactNode {
               promptHistory={promptHistory}
               registerPaste={registerPaste}
               pasteMap={pasteMap}
+              pastePreview={pastePreview}
+              help={help}
               modeColor={modeColor}
               verb={verb}
               columns={columns}
@@ -556,6 +609,9 @@ function App(props: AppProps): React.ReactNode {
               costKnown={session.costKnown}
               tokens={session.tokens}
               verbose={session.verbose}
+              onCycleMode={session.cycleMode}
+              onToggleVerbose={() => session.setVerbose((v) => !v)}
+              onOpenHelp={help.openHelp}
             />
           </Box>
         </Box>
@@ -576,14 +632,25 @@ export function startTui(props: AppProps): void {
     // Select-to-copy (every message kind): the renderer emits "selection" once,
     // on drag release (finishSelection). Copy the highlighted text to the system
     // clipboard, then clear the highlight so the copy "consumes" the selection.
+    // A clean copy stays silent (a note on every drag-select would be noise); only
+    // the temp-file fallback — when no clipboard tool exists — surfaces its path so
+    // the text isn't silently stranded. The promise is fire-and-forget with a
+    // guarded .catch so a write failure can't become an unhandled rejection.
     renderer.on(
       "selection",
       (selection: { getSelectedText(): string } | null) => {
         const text = selection?.getSelectedText() ?? "";
-        if (text.length > 0) {
-          void writeTextToClipboard(text);
-          renderer.clearSelection();
-        }
+        if (text.length === 0) return;
+        writeTextToClipboard(text)
+          .then((r) => {
+            if (!r.ok)
+              selectionNote?.(
+                `clipboard unavailable — wrote selection to ${r.path}`,
+                "info",
+              );
+          })
+          .catch(() => {});
+        renderer.clearSelection();
       },
     );
     openTuiRoot = createRoot(renderer);

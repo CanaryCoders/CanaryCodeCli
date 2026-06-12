@@ -4,9 +4,13 @@ import { describe, expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
 import {
   charWidth,
+  chipIdBeforeCursor,
   drainInputQuiet,
   EMPTY_PASTES,
   isRawEscapeInput,
+  pasteChipLabel,
+  pastePreviewLines,
+  pasteSentinel,
   reduceInput,
   wrapDisplayLine,
 } from "./tui/input-helpers.ts";
@@ -72,6 +76,77 @@ describe("display width", () => {
     expect(rows.map((r) => r.text)).toEqual(["漢字", "漢字"]);
     expect(rows[0]).toMatchObject({ start: 0, end: 2 });
     expect(rows[1]).toMatchObject({ start: 2, end: 4 });
+  });
+});
+
+describe("paste preview", () => {
+  test("pasteChipLabel: 1-based id and line count, non-breaking spaces", () => {
+    expect(pasteChipLabel(0, "a\nb\nc")).toBe("[Pasted text #1 +3 lines]");
+    expect(pasteChipLabel(4, "single line")).toBe("[Pasted text #5 +1 lines]");
+  });
+
+  test("pasteChipLabel: separators are non-breaking spaces", () => {
+    // The label must not contain ASCII spaces (they'd let Ink wrap it).
+    const label = pasteChipLabel(0, "a\nb\nc");
+    expect(label).not.toContain(" ");
+    expect(label).toContain(" ");
+    expect(label).toBe(`[Pasted text #1 +3 lines]`);
+  });
+
+  test("pastePreviewLines: returns all lines when under the cap", () => {
+    expect(pastePreviewLines("a\nb\nc", 12)).toEqual({
+      lines: ["a", "b", "c"],
+      more: 0,
+    });
+    // Exactly at the cap is not trimmed.
+    expect(pastePreviewLines("a\nb\nc", 3)).toEqual({
+      lines: ["a", "b", "c"],
+      more: 0,
+    });
+  });
+
+  test("pastePreviewLines: caps long text and reports the elided count", () => {
+    const text = Array.from({ length: 20 }, (_, i) => `line ${i}`).join("\n");
+    const { lines, more } = pastePreviewLines(text, 12);
+    expect(lines).toHaveLength(12);
+    expect(lines[0]).toBe("line 0");
+    expect(lines[11]).toBe("line 11");
+    expect(more).toBe(8);
+  });
+
+  test("pastePreviewLines: max <= 0 elides everything", () => {
+    expect(pastePreviewLines("a\nb", 0)).toEqual({ lines: [], more: 2 });
+  });
+});
+
+describe("chipIdBeforeCursor", () => {
+  test("returns the id when the cursor rests just after a sentinel", () => {
+    const text = `hi ${pasteSentinel(2)}`;
+    // Cursor at end → char before is the chip.
+    expect(chipIdBeforeCursor(text, text.length)).toBe(2);
+  });
+
+  test("returns null at offset 0 (no char before the cursor)", () => {
+    expect(chipIdBeforeCursor(pasteSentinel(0), 0)).toBeNull();
+  });
+
+  test("returns null when the char before is ordinary text", () => {
+    expect(chipIdBeforeCursor("abc", 2)).toBeNull();
+  });
+
+  test("returns null for an offset past the end of the buffer", () => {
+    const text = pasteSentinel(0);
+    expect(chipIdBeforeCursor(text, text.length + 1)).toBeNull();
+  });
+
+  test("with multiple chips, returns the one immediately before the cursor", () => {
+    const text = `${pasteSentinel(0)}x${pasteSentinel(1)}`;
+    // Right after chip #0 (offset 1).
+    expect(chipIdBeforeCursor(text, 1)).toBe(0);
+    // After the ordinary 'x' (offset 2) → null.
+    expect(chipIdBeforeCursor(text, 2)).toBeNull();
+    // Right after chip #1 (offset 3).
+    expect(chipIdBeforeCursor(text, 3)).toBe(1);
   });
 });
 
