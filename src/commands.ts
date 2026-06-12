@@ -46,6 +46,8 @@ export type CommandAction =
   | { kind: "extension-command"; name: string; args: string[] }
   | { kind: "extensions"; op: "list" | "enable" | "disable"; name?: string }
   | { kind: "update" }
+  /** Show release notes — bare for the running version, or for `version`. */
+  | { kind: "changelog"; version?: string }
   | {
       kind: "config";
       op: "summary" | "get" | "set" | "unset" | "reload";
@@ -59,7 +61,7 @@ export type CommandAction =
  * How a command typed *while the agent is busy* should be handled:
  * - "live"  — apply immediately (state/config change or read-only note). /model &
  *             /think take effect on the in-flight turn's next step; /mode on the
- *             next turn. (See the mid-turn-queue spec §3/§4.)
+ *             next turn.
  * - "queue" — push onto the FIFO and inject at the next tool-result boundary.
  * - "defer" — unsafe to run mid-turn (would corrupt in-flight conversation/lifecycle
  *             state); show a "after the current turn" note and run nothing.
@@ -74,6 +76,7 @@ export function classifyBusyAction(
     case "list-models":
     case "cost":
     case "copy-last":
+    case "changelog":
     case "help":
       return "live";
     case "message":
@@ -155,6 +158,11 @@ const BASE_COMMANDS: CommandSpec[] = [
 /** The static commands that close the `/help` listing. */
 const TAIL_COMMANDS: CommandSpec[] = [
   { name: "update", description: "update cc to the latest release" },
+  {
+    name: "changelog",
+    usage: "[version]",
+    description: "show release notes (default: this version)",
+  },
   { name: "help", aliases: ["?"], description: "show this command list" },
   { name: "exit", aliases: ["quit", "q"], description: "exit cc" },
 ];
@@ -528,6 +536,10 @@ export function makeCommandSet(
         return parseExtensionsAction(parsed.arg);
       case "update":
         return { kind: "update" };
+      case "changelog":
+        return parsed.arg
+          ? { kind: "changelog", version: parsed.arg }
+          : { kind: "changelog" };
       case "help":
         return { kind: "help", text: helpText(specs) };
       case "exit":

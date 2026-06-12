@@ -4,6 +4,7 @@ import { describe, expect, test } from "bun:test";
 import { loadConfig } from "./config.ts";
 import {
   compareVersions,
+  extractChangelog,
   parseChecksums,
   updateDisabledReason,
 } from "./update.ts";
@@ -33,6 +34,50 @@ describe("parseChecksums", () => {
     expect(map.get("cc-darwin-arm64")).toBe(hash);
     expect(map.get("cc-linux-x64")).toBe(other);
     expect(map.size).toBe(2);
+  });
+});
+
+describe("extractChangelog", () => {
+  const changelog = [
+    "# Changelog",
+    "",
+    "Intro prose that is not a release section.",
+    "",
+    "## 0.2.0 - 2026-07-01",
+    "",
+    "### Added",
+    "- second thing",
+    "",
+    "## 0.1.0 - 2026-06-12",
+    "",
+    "First public release.",
+    "- first thing",
+    "",
+  ].join("\n");
+
+  test("returns one version's section, stopping at the next heading", () => {
+    expect(extractChangelog(changelog, "0.2.0")).toBe(
+      "### Added\n- second thing",
+    );
+    expect(extractChangelog(changelog, "0.1.0")).toBe(
+      "First public release.\n- first thing",
+    );
+  });
+
+  test("tolerates a leading v and bracketed headings", () => {
+    expect(extractChangelog(changelog, "v0.2.0")).toBe(
+      "### Added\n- second thing",
+    );
+    expect(extractChangelog("## [0.3.0] - 2026-08-01\nbody\n", "0.3.0")).toBe(
+      "body",
+    );
+  });
+
+  test("returns null for unknown versions and empty sections", () => {
+    expect(extractChangelog(changelog, "9.9.9")).toBeNull();
+    expect(
+      extractChangelog("## 0.4.0\n\n## 0.3.0\nbody\n", "0.4.0"),
+    ).toBeNull();
   });
 });
 

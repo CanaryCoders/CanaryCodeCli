@@ -76,7 +76,12 @@ import {
   supportsThinking,
   type ThinkingLevel,
 } from "../thinking.ts";
-import { applyUpdate, updateDisabledReason } from "../update.ts";
+import {
+  applyUpdate,
+  fetchReleaseNotes,
+  updateDisabledReason,
+} from "../update.ts";
+import { VERSION } from "../version.ts";
 import type { AppProps } from "./app-types.ts";
 import {
   copyTargetToClipboard,
@@ -509,8 +514,8 @@ export function useAgentSession(deps: {
     // pending→done); every earlier item is final. So as the turn progresses we
     // move finalised items into the `<Static>` scrollback and keep just the live
     // (mutating) item in the dynamic region. This is what stops the dynamic region
-    // from growing past the terminal viewport — overflowing it desyncs Ink's
-    // redraw and duplicates lines into the scrollback. `committed` tracks how many
+    // from growing past the terminal viewport — overflowing it desyncs the
+    // renderer's redraw and duplicates lines into the scrollback. `committed` tracks how many
     // of `local` have already been handed to `<Static>`.
     const local: Item[] = [];
     let committed = 0;
@@ -548,7 +553,7 @@ export function useAgentSession(deps: {
 
     // Re-resolve provider/model/thinking each agentic step so a mid-turn /model or
     // /think (which only mutate the base refs) lands on the next step. Mode is fixed
-    // for the turn (`runMode`); a /mode change applies to the next turn. (spec §4)
+    // for the turn (`runMode`); a /mode change applies to the next turn.
     const refreshTurnConfig = () => {
       const m = modelForTurn(runMode);
       const compact = modelForRoleId(props.config.models?.compact);
@@ -1108,6 +1113,9 @@ export function useAgentSession(deps: {
       case "copy-last":
         copyLast();
         break;
+      case "changelog":
+        void doChangelog(action.version);
+        break;
     }
   }
 
@@ -1154,7 +1162,7 @@ export function useAgentSession(deps: {
     if (!line) return;
     // Busy → route by command kind. State/config commands apply live; messages and
     // prompt-commands are queued and injected at the next tool-result boundary;
-    // disruptive lifecycle commands are deferred with a note. (spec §3)
+    // disruptive lifecycle commands are deferred with a note.
     if (busy) {
       setInput("");
       promptHistory.recordHistory(line);
@@ -1191,6 +1199,7 @@ export function useAgentSession(deps: {
       case "set-model":
       case "list-models":
       case "cost":
+      case "changelog":
       case "help":
         applyLiveAction(action);
         break;
@@ -1210,7 +1219,7 @@ export function useAgentSession(deps: {
         if (props.config.hooks.SessionStart?.length) {
           void runSessionStartHooks(props.config.hooks, "clear", hookContext());
         }
-        // The current Ink renderer prints scrollback permanently via <Static> —
+        // Committed `<Static>` scrollback is treated as permanent by the renderer —
         // resetting React state alone leaves the old transcript on screen. Clear
         // through the host runtime so the renderer can reset its own bookkeeping.
         // Reset history first, then clear on the next tick so the scrollback count is
@@ -1470,6 +1479,25 @@ export function useAgentSession(deps: {
   function cancelExtensions(): void {
     extensionsOpenRef.current = false;
     setExtensionsPicker(null);
+  }
+
+  // `/changelog` — show release notes from GitHub. Bare asks for the running
+  // version and falls back to the latest release (covers source/dev runs whose
+  // version was never published); an explicit version must exist.
+  async function doChangelog(version?: string): Promise<void> {
+    const result =
+      (await fetchReleaseNotes(version ?? VERSION)) ??
+      (version ? null : await fetchReleaseNotes());
+    if (!result) {
+      note(
+        version
+          ? `no release notes found for ${version}`
+          : "no release notes available (couldn't reach GitHub releases)",
+        "error",
+      );
+      return;
+    }
+    note(`── cc ${result.version} ──\n${result.notes.trim()}`);
   }
 
   // `/update` — download, verify, and swap in the latest release binary. Each

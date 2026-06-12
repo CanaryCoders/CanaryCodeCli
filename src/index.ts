@@ -3,10 +3,10 @@
 // cc — a fast, minimal terminal coding agent.
 // Entry point: arg parse + mode dispatch (headless vs TUI).
 //
-// Phase 1 ships the headless print path: `cc -p "<prompt>"` runs the shared
-// agent loop once and streams the result to stdout, then exits. Piped stdin is
-// folded into the prompt as context (`git diff | cc -p "commit message"`). The
-// interactive TUI lands in Phase 4.
+// The headless print path (`cc -p "<prompt>"`) runs the shared agent loop once
+// and streams the result to stdout, then exits. Piped stdin is folded into the
+// prompt as context (`git diff | cc -p "commit message"`). Without a prompt,
+// the interactive TUI starts instead.
 
 import { type AgentMode, roleForMode, runAgent } from "./agent.ts";
 import {
@@ -63,8 +63,10 @@ import { startTui } from "./tui/App.tsx";
 import {
   applyUpdate,
   cachedUpdateNotice,
+  fetchReleaseNotes,
   refreshUpdateCache,
   updateDisabledReason,
+  whatsNewNotice,
 } from "./update.ts";
 import { VERSION } from "./version.ts";
 
@@ -191,11 +193,12 @@ function printUsage(
       "",
       "Usage:",
       '  cc -p "<prompt>"   headless print mode (streams to stdout, exits)',
-      "  cc                 interactive TUI (Ink)",
+      "  cc                 interactive TUI",
       "",
       "Subcommands:",
       ...builtin,
       "  cc update                  update cc to the latest release (binary installs)",
+      "  cc changelog [version]     show release notes (default: this version)",
       "",
       "Flags:",
       "  -p, --print <s>    run a single prompt headless",
@@ -709,7 +712,7 @@ function flushTranscript(
 }
 
 /**
- * Interactive TUI mode (Ink). Assembles the same engine pieces as headless —
+ * Interactive TUI mode. Assembles the same engine pieces as headless —
  * config, provider, project context, skills, MCP — then hands them to the App
  * component, which keeps a running session over `runAgent`. Startup notes that the
  * headless path writes to stderr are passed in as scrollback items instead.
@@ -722,7 +725,7 @@ async function runTui(args: Args): Promise<number> {
     console.error((err as Error).message);
     return 1;
   }
-  // User-extension loading runs BEFORE Ink mounts: Bun's global confirm() is a
+  // User-extension loading runs BEFORE the TUI mounts: Bun's global confirm() is a
   // synchronous y/n on the launching terminal, which is exactly where a trust
   // decision for project extensions belongs. Loader notes surface as startup
   // scrollback items below.
@@ -810,6 +813,9 @@ async function runTui(args: Args): Promise<number> {
   // read); the network refresh runs in the background for the next launch.
   const updateNotice = await cachedUpdateNotice(config);
   if (updateNotice) startupNotes.push(updateNotice);
+  // First launch after an update lands: point at /changelog once.
+  const whatsNew = await whatsNewNotice();
+  if (whatsNew) startupNotes.push(whatsNew);
   void refreshUpdateCache(config);
   startupNotes.push(...extensionNotes, ...builtinNotes);
 
@@ -984,10 +990,34 @@ async function runUpdate(): Promise<number> {
   return result.ok ? 0 : 1;
 }
 
+/**
+ * `cc changelog [version]` — print a release's notes. Bare asks for the running
+ * version and falls back to the latest release (covers source runs whose
+ * version was never published); an explicit version must exist.
+ */
+async function runChangelog(version?: string): Promise<number> {
+  const result =
+    (await fetchReleaseNotes(version ?? VERSION)) ??
+    (version ? null : await fetchReleaseNotes());
+  if (!result) {
+    console.error(
+      version
+        ? `cc changelog: no release notes found for ${version}`
+        : "cc changelog: no release notes available (couldn't reach GitHub releases)",
+    );
+    return 1;
+  }
+  console.log(`cc ${result.version}\n\n${result.notes.trim()}`);
+  return 0;
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   if (argv[0] === "update") {
     process.exit(await runUpdate());
+  }
+  if (argv[0] === "changelog") {
+    process.exit(await runChangelog(argv[1]));
   }
   // A bare first word may be an extension subcommand (login-codex, …);
   // resolving it needs config, since disabled extensions expose nothing.
