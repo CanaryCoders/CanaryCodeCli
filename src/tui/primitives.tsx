@@ -99,6 +99,9 @@ export interface TextProps extends MouseProps {
   strikethrough?: boolean;
   inverse?: boolean;
   wrap?: "wrap" | "truncate";
+  selectable?: boolean;
+  selectionBg?: string;
+  selectionFg?: string;
 }
 
 export function Box(props: BoxProps): ReactElement {
@@ -213,6 +216,9 @@ export function buildTextElement(
     strikethrough,
     inverse,
     wrap,
+    selectable,
+    selectionBg,
+    selectionFg,
     ...props
   }: TextProps,
   insideText: boolean,
@@ -235,7 +241,15 @@ export function buildTextElement(
   if (insideText) {
     return createElement(
       "span",
-      { ...props, fg, bg: backgroundColor, attributes },
+      {
+        ...props,
+        fg,
+        bg: backgroundColor,
+        attributes,
+        selectable,
+        selectionBg,
+        selectionFg,
+      },
       children as ReactNode,
     );
   }
@@ -247,6 +261,9 @@ export function buildTextElement(
       fg,
       bg: backgroundColor,
       attributes,
+      selectable,
+      selectionBg,
+      selectionFg,
       truncate: wrap === "truncate",
       wrapMode: mapWrapMode(wrap),
     },

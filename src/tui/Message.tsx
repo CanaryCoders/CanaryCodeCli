@@ -15,6 +15,7 @@ import { type Diff, type DiffLine, diffStat } from "../diff.ts";
 import { type MdLine, parseMarkdownBlocks, type Span } from "../markdown.ts";
 import { Card } from "./Card.tsx";
 import { useIcon } from "./Icon.tsx";
+import { ActionChip } from "./Interactive.tsx";
 import {
   displayToolName,
   fmtInput,
@@ -35,6 +36,7 @@ import {
   ROLE,
   type Role,
   SPACING,
+  INTERACTIVE,
   SURFACE,
   TOOL_STATUS,
   tint,
@@ -150,10 +152,12 @@ function LineSpans({
   line,
   dim,
   bold,
+  selectable = true,
 }: {
   line: MdLine;
   dim?: boolean;
   bold?: boolean;
+  selectable?: boolean;
 }): React.ReactElement {
   const spans = line.spans.map((span, si) => (
     <Text
@@ -165,7 +169,16 @@ function LineSpans({
       {span.text}
     </Text>
   ));
-  return <Text wrap="wrap">{spans}</Text>;
+  return (
+    <Text
+      wrap="wrap"
+      selectable={selectable}
+      selectionBg={tint(INTERACTIVE.selectionBg)}
+      selectionFg={tint(INTERACTIVE.selectionFg)}
+    >
+      {spans}
+    </Text>
+  );
 }
 
 function CodeBlock({
@@ -187,7 +200,12 @@ function CodeBlock({
       </RuleRow>
       {highlighted.map((spans, li) => (
         <RuleRow key={rowKey(li, spans.map((span) => span.text).join(""))}>
-          <Text wrap="truncate">
+          <Text
+            wrap="truncate"
+            selectable
+            selectionBg={tint(INTERACTIVE.selectionBg)}
+            selectionFg={tint(INTERACTIVE.selectionFg)}
+          >
             {spans.map((span, si) => (
               <Text key={rowKey(si, span.text)} {...spanProps(span)}>
                 {span.text}
@@ -215,7 +233,11 @@ function TableBlock({
     bold = false,
   ): React.ReactElement => (
     <RuleRow key={keyPrefix}>
-      <Text>
+      <Text
+        selectable
+        selectionBg={tint(INTERACTIVE.selectionBg)}
+        selectionFg={tint(INTERACTIVE.selectionFg)}
+      >
         {cells.map((cell, col) => (
           <Text key={`${keyPrefix}:${col}`} {...(bold ? { bold: true } : {})}>
             {col > 0 ? " │ " : ""}
@@ -377,6 +399,21 @@ function Gutter({
   );
 }
 
+function CopyActions({
+  onCopy,
+  label,
+}: {
+  onCopy?: () => void;
+  label: string;
+}): React.ReactElement | null {
+  if (!onCopy) return null;
+  return (
+    <Box>
+      <ActionChip label={`[${label}]`} color="gray" onAction={onCopy} />
+    </Box>
+  );
+}
+
 // ── User card ────────────────────────────────────────────────────────────────────
 //
 // The user's message is the start of a turn, rendered as a cyan titled card so it
@@ -384,7 +421,13 @@ function Gutter({
 // line is its own wrapping row inside the card; the box owns the width, so long
 // lines wrap to the card's content edge rather than the terminal's.
 
-function UserView({ text }: { text: string }): React.ReactElement {
+function UserView({
+  text,
+  onCopy,
+}: {
+  text: string;
+  onCopy?: () => void;
+}): React.ReactElement {
   return (
     <Card
       color={CARD.user.color}
@@ -392,8 +435,15 @@ function UserView({ text }: { text: string }): React.ReactElement {
       title={CARD.user.title}
       marginTop={SPACING.turnGap}
     >
+      <CopyActions onCopy={onCopy} label="copy" />
       {text.split("\n").map((line, i) => (
-        <Text key={rowKey(i, line)} wrap="wrap">
+        <Text
+          key={rowKey(i, line)}
+          wrap="wrap"
+          selectable
+          selectionBg={tint(INTERACTIVE.selectionBg)}
+          selectionFg={tint(INTERACTIVE.selectionFg)}
+        >
           {line}
         </Text>
       ))}
@@ -445,6 +495,7 @@ export function ItemView({
   focusedToolId,
   onFocusTool,
   onToggleTool,
+  onCopyItem,
 }: {
   item: Item;
   /** Kind of the immediately preceding transcript item, for group spacing. */
@@ -466,13 +517,14 @@ export function ItemView({
   focusedToolId?: number | null;
   onFocusTool?: (id: number) => void;
   onToggleTool?: (id: number) => void;
+  onCopyItem?: (item: Item, kind?: "default" | "command" | "output") => void;
 }): React.ReactElement {
   switch (item.kind) {
     case "banner":
       return <BannerView {...item} />;
     case "user":
       // A user message starts a new turn → one blank line above its cyan card.
-      return <UserView text={item.text} />;
+      return <UserView text={item.text} onCopy={() => onCopyItem?.(item)} />;
     case "assistant":
       // The model's answer is plain prose — no box. Only tool calls (and the
       // user's message) get the filled-block treatment; the assistant's text reads
@@ -484,6 +536,7 @@ export function ItemView({
           paddingX={SPACING.boxPadX}
           marginTop={Math.max(1, topGap(item, prevKind))}
         >
+          <CopyActions onCopy={() => onCopyItem?.(item)} label="copy" />
           <Markdown text={item.text} />
         </Box>
       );
@@ -496,6 +549,7 @@ export function ItemView({
           paddingX={SPACING.boxPadX}
           marginTop={Math.max(1, topGap(item, prevKind))}
         >
+          <CopyActions onCopy={() => onCopyItem?.(item)} label="copy" />
           <Markdown text={item.text} dim />
         </Box>
       );
@@ -514,6 +568,8 @@ export function ItemView({
           focused={focusedToolId === item.id}
           onFocus={() => onFocusTool?.(item.id)}
           onToggle={() => onToggleTool?.(item.id)}
+          onCopyCommand={() => onCopyItem?.(item, "command")}
+          onCopyOutput={() => onCopyItem?.(item, "output")}
         />
       );
     case "note": {
@@ -560,6 +616,8 @@ function ToolView({
   focused = false,
   onFocus,
   onToggle,
+  onCopyCommand,
+  onCopyOutput,
 }: {
   item: Extract<Item, { kind: "tool" }>;
   expanded: boolean;
@@ -579,6 +637,8 @@ function ToolView({
   focused?: boolean;
   onFocus?: () => void;
   onToggle?: () => void;
+  onCopyCommand?: () => void;
+  onCopyOutput?: () => void;
 }): React.ReactElement {
   const status = toolStatus(item.pending, item.isError);
   const glyph = useIcon(ROLE.tool.icon);
@@ -640,9 +700,48 @@ function ToolView({
     !item.pending && !item.isError && item.diff && item.diff.hunks.length > 0;
 
   return (
-    <Card color={cardColor} bg={cardBg} title={title} marginTop={marginTop}>
+    <Card
+      color={cardColor}
+      bg={cardBg}
+      title={title}
+      marginTop={marginTop}
+      cursor="pointer"
+      onMouseOver={() => {
+        setHovered(true);
+        onFocus?.();
+      }}
+      onMouseOut={() => {
+        setHovered(false);
+        setPressedState(false);
+      }}
+      onMouseDown={(event) => {
+        if (event.button !== 0) return;
+        setPressedState(true);
+        event.stopPropagation();
+      }}
+      onMouseUp={(event) => {
+        if (event.button !== 0) return;
+        const wasPressed = pressedRef.current;
+        setPressedState(false);
+        event.stopPropagation();
+        if (wasPressed) onToggle?.();
+      }}
+    >
+      {expanded ? (
+        <Box>
+          <ActionChip label="[copy command]" color="gray" onAction={() => onCopyCommand?.()} />
+          <Text dimColor>{" "}</Text>
+          <ActionChip label="[copy output]" color="gray" onAction={() => onCopyOutput?.()} />
+        </Box>
+      ) : null}
       {expanded && summary ? (
-        <Text dimColor wrap="truncate">
+        <Text
+          dimColor
+          wrap="truncate"
+          selectable
+          selectionBg={tint(INTERACTIVE.selectionBg)}
+          selectionFg={tint(INTERACTIVE.selectionFg)}
+        >
           {truncate(fmtInput(item.input), 200)}
         </Text>
       ) : null}
@@ -653,6 +752,9 @@ function ToolView({
               color={tint(item.isError ? "red" : undefined)}
               dimColor={!item.isError}
               wrap="truncate"
+              selectable
+              selectionBg={tint(INTERACTIVE.selectionBg)}
+              selectionFg={tint(INTERACTIVE.selectionFg)}
             >
               {line}
             </Text>

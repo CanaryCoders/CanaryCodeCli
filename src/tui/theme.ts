@@ -94,6 +94,20 @@ export const SURFACE = {
   input: "#262a36",
 } as const;
 
+export const INTERACTIVE = {
+  /** Foreground used when an inline action is hovered. */
+  hoverFg: "white",
+  /** Foreground used while an inline action is pressed. */
+  activeFg: "yellow",
+  /** Subtle row fill for hovered selectable rows. */
+  hoverBg: "#2a2e42",
+  /** Darker row fill while pressed. */
+  activeBg: "#161a22",
+  /** Selection colours for transcript text. */
+  selectionBg: "#3b4261",
+  selectionFg: "white",
+} as const;
+
 // ── Modes (border + accent colour) ─────────────────────────────────────────────
 // The active mode tints the input frame border, the plan box, and the footer pill.
 

@@ -6,8 +6,8 @@
 // same actions their keyboard handlers already perform.
 
 import { useRef, useState } from "react";
-import { Box, Text, type BoxProps } from "./primitives.tsx";
-import { tint } from "./theme.ts";
+import { Box, type BoxProps } from "./primitives.tsx";
+import { INTERACTIVE, tint } from "./theme.ts";
 
 export interface ActionChipProps {
   label: string;
@@ -24,8 +24,8 @@ export function ActionChip({
   onAction,
   disabled = false,
   color = "cyan",
-  hoverColor = "white",
-  activeColor = "yellow",
+  hoverColor = INTERACTIVE.hoverFg,
+  activeColor = INTERACTIVE.activeFg,
 }: ActionChipProps): React.ReactElement {
   const [hovered, setHovered] = useState(false);
   const [pressed, setPressed] = useState(false);
@@ -111,7 +111,9 @@ export function ChoiceRow({
     | "onMouseUp"
   > = {
     cursor: interactive ? "pointer" : "default",
-    backgroundColor: tint(pressed ? "gray" : hovered ? "#2a2e42" : undefined),
+    backgroundColor: tint(
+      pressed ? INTERACTIVE.activeBg : hovered ? INTERACTIVE.hoverBg : undefined,
+    ),
     onMouseOver: () => {
       if (!interactive) return;
       setHovered(true);
@@ -135,11 +137,5 @@ export function ChoiceRow({
     },
   };
 
-  return (
-    <Box {...boxProps}>
-      <Text color={selected ? tint(accentColor) : undefined} dimColor={disabled}>
-        {children}
-      </Text>
-    </Box>
-  ) as React.ReactElement;
+  return <Box {...boxProps}>{children}</Box> as React.ReactElement;
 }

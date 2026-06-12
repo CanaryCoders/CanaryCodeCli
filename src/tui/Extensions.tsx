@@ -113,7 +113,7 @@ export function ExtensionsView({
   const promptIcon = useIcon("prompt");
   const selectedIcon = useIcon("choiceSelected");
   const emptyIcon = useIcon("choiceEmpty");
-  const width = Math.max(...items.map((i) => i.name.length));
+  const width = Math.max(0, ...items.map((i) => i.name.length));
 
   return (
     <Box
