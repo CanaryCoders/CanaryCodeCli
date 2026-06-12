@@ -1,4 +1,5 @@
-// tui/App.tsx — the Ink interactive TUI: scrollback + input box + status line.
+/** @jsxImportSource @opentui/react */
+// tui/App.tsx — the OpenTUI interactive TUI: scrollback + input box + status line.
 //
 // This is the second front-end over the shared agent engine (`runAgent`). The
 // headless path (index.ts) streams to stdout and exits; the TUI keeps a running
@@ -17,7 +18,13 @@
 // step needs a second press). Ctrl+R toggles verbose tool output; Shift+Tab cycles
 // the mode (normal → plan → auto → normal).
 
-import { render, Static, useApp, useStdout } from "ink";
+import { type CliRenderer, createCliRenderer } from "@opentui/core";
+import {
+  createRoot,
+  type Root,
+  useOnResize,
+  useTerminalDimensions,
+} from "@opentui/react";
 import { useEffect, useMemo, useReducer, useRef } from "react";
 import { describeLevel } from "../thinking.ts";
 import { LiveRegion, PromptArea } from "./AppViews.tsx";
@@ -47,45 +54,13 @@ import { useTranscript } from "./use-transcript.ts";
 // Finished items live in the `<Static>` scrollback; the in-flight turn accumulates
 // in `live` and is moved into the scrollback when the turn completes.
 
-const inkRuntimeInstanceRef: { current: { clear: () => void } | null } = {
-  current: null,
-};
+let openTuiRenderer: CliRenderer | null = null;
+let openTuiRoot: Root | null = null;
 
-function App(props: AppProps): React.ReactElement {
-  const app = useApp();
-
-  // Terminal size, used to cap the live (in-flight) region so it never grows past
-  // the viewport — overflowing the dynamic region desyncs Ink's redraw and
-  // duplicates lines into the scrollback. `<Static>` scrollback is printed once
-  // and is unaffected by height.
-  const { stdout } = useStdout();
-  // Ink's `useStdout` does NOT subscribe to terminal resizes, so dimensions read
-  // during render would otherwise go stale until an unrelated re-render. Force a
-  // re-render on every `resize` event so the live-region cap and content widths
-  // recompute against the new size.
+function App(props: AppProps): React.ReactNode {
+  const dimensions = useTerminalDimensions();
   const [, bumpResize] = useReducer((n: number) => n + 1, 0);
-  useEffect(() => {
-    if (!stdout) return;
-    const onResize = () => {
-      // On resize the terminal reflows the previously-written dynamic frame to the
-      // new width, but Ink's eraser only erases `previousLineCount` lines measured
-      // at the OLD width — so when the terminal narrows the frame now occupies more
-      // physical rows than Ink erases, and the un-erased top rows survive as the
-      // broken/duplicated input boxes. Ink's own resize handler can't fix this
-      // (same stale count). Wipe the whole viewport ourselves, then reset Ink's
-      // line bookkeeping via clear() so its next render redraws from a clean slate,
-      // and bump a re-render so content widths recompute against the new size.
-      // Erase only the visible screen (not the scrollback buffer — no \x1b[3J — so
-      // history the user scrolled past is preserved) and home the cursor.
-      stdout.write("\x1b[2J\x1b[H");
-      inkRuntimeInstanceRef.current?.clear();
-      bumpResize();
-    };
-    stdout.on("resize", onResize);
-    return () => {
-      stdout.off("resize", onResize);
-    };
-  }, [stdout]);
+  useOnResize(() => bumpResize());
 
   // The in-flight request's abort controller is shared between the agent session
   // (which creates/aborts it) and the approval gate (whose AI safety check reads
@@ -142,12 +117,17 @@ function App(props: AppProps): React.ReactElement {
 
   const runtime = useMemo<TuiRuntime>(
     () => ({
-      clear: () => inkRuntimeInstanceRef.current?.clear(),
-      exit: () => app.exit(),
-      columns: () => stdout?.columns ?? 80,
-      rows: () => stdout?.rows ?? 24,
+      clear: () => openTuiRenderer?.requestRender(),
+      exit: () => {
+        openTuiRoot?.unmount();
+        openTuiRenderer?.destroy();
+        openTuiRoot = null;
+        openTuiRenderer = null;
+      },
+      columns: () => dimensions.width ?? 80,
+      rows: () => dimensions.height ?? 24,
     }),
-    [app, stdout],
+    [dimensions.width, dimensions.height],
   );
 
   // The agent-session controller: run state + every turn-driving action.
@@ -310,13 +290,12 @@ function App(props: AppProps): React.ReactElement {
     <TuiRuntimeContext.Provider value={runtime}>
       <IconProvider config={props.config}>
         <Box flexDirection="column">
-          {/* Ink's <Static> box is position:absolute with NO width, so Yoga sizes it
-            to its content instead of the terminal — text then wraps a couple of
-            columns too wide and the terminal hard-wraps the spill to column 0
-            (orphan letters with no gutter indent). Pin it to the terminal width. */}
-          <Static items={transcript.history} style={{ width: columns }}>
-            {renderHistoryItem}
-          </Static>
+          {/* Initial OpenTUI parity uses an append-only history area matching Ink's
+            non-interactive <Static> behavior. A scrollbox with manual scrollback is
+            a follow-up once root rendering is stable. */}
+          <Box flexDirection="column" width={columns}>
+            {transcript.history.map(renderHistoryItem)}
+          </Box>
 
           <LiveRegion
             live={transcript.live}
@@ -358,14 +337,12 @@ function App(props: AppProps): React.ReactElement {
   );
 }
 
-/** Launch the Ink TUI. The caller resolves config/provider/system and passes them in. */
+/** Launch the OpenTUI TUI. The caller resolves config/provider/system and passes them in. */
 export function startTui(props: AppProps): void {
   // exitOnCtrlC:false — the App handles Ctrl+C itself (abort once, quit twice).
-  // The runtime ref lets the App clear the screen via Ink's own clear() (see the
-  // /clear handler) instead of writing raw escape sequences, which desync Ink's
-  // renderer and cause duplicated lines / runaway layout.
-  const instance = render(<App {...props} />, {
-    exitOnCtrlC: false,
+  void createCliRenderer({ exitOnCtrlC: false }).then((renderer) => {
+    openTuiRenderer = renderer;
+    openTuiRoot = createRoot(renderer);
+    openTuiRoot.render(<App {...props} />);
   });
-  inkRuntimeInstanceRef.current = instance;
 }

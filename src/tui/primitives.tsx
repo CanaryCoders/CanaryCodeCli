@@ -6,7 +6,8 @@
 // future root switch without changing their public props again.
 
 import { createTextAttributes } from "@opentui/core";
-import { Box as InkBox, Text as InkText, useStdout } from "ink";
+import { useTerminalDimensions } from "@opentui/react";
+import type { Box as InkBox, Text as InkText } from "ink";
 import type { ReactElement, ReactNode } from "react";
 import { createElement } from "react";
 import { tint } from "./theme.ts";
@@ -15,16 +16,16 @@ export type BoxProps = React.ComponentProps<typeof InkBox>;
 export type TextProps = React.ComponentProps<typeof InkText>;
 
 export function Box(props: BoxProps): ReactElement {
-  return <InkBox {...props} />;
+  return <OpenTuiBox {...props} />;
 }
 
 export function Text(props: TextProps): ReactElement {
-  return <InkText {...props} />;
+  return <OpenTuiText {...props} />;
 }
 
 export function useTerminalColumns(fallback = 80): number {
-  const { stdout } = useStdout();
-  return stdout?.columns ?? fallback;
+  const dimensions = useTerminalDimensions();
+  return dimensions.width ?? fallback;
 }
 
 function mapBorderStyle(

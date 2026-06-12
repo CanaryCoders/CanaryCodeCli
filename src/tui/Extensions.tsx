@@ -30,32 +30,75 @@ interface ExtensionsViewProps {
   onSubmit: (next: ExtensionToggle[]) => void;
 }
 
+export interface ExtensionPickerState {
+  cursor: number;
+  checked: Set<string>;
+}
+
+export type ExtensionPickerAction =
+  | { kind: "up" }
+  | { kind: "down" }
+  | { kind: "toggle" };
+
+export function initialExtensionPickerState(
+  items: ExtensionToggle[],
+): ExtensionPickerState {
+  return {
+    cursor: 0,
+    checked: new Set(items.filter((i) => i.enabled).map((i) => i.name)),
+  };
+}
+
+export function reduceExtensionPicker(
+  state: ExtensionPickerState,
+  items: ExtensionToggle[],
+  action: ExtensionPickerAction,
+): ExtensionPickerState {
+  if (items.length === 0) return state;
+  if (action.kind === "up") {
+    return {
+      ...state,
+      cursor: (state.cursor - 1 + items.length) % items.length,
+    };
+  }
+  if (action.kind === "down") {
+    return { ...state, cursor: (state.cursor + 1) % items.length };
+  }
+
+  const name = items[state.cursor]?.name;
+  if (!name) return state;
+  const checked = new Set(state.checked);
+  if (checked.has(name)) checked.delete(name);
+  else checked.add(name);
+  return { ...state, checked };
+}
+
+export function applyExtensionPickerState(
+  items: ExtensionToggle[],
+  state: ExtensionPickerState,
+): ExtensionToggle[] {
+  return items.map((i) => ({ ...i, enabled: state.checked.has(i.name) }));
+}
+
 export function ExtensionsView({
   items,
   onSubmit,
 }: ExtensionsViewProps): React.ReactElement {
-  const [cursor, setCursor] = useState(0);
   // Pending checkbox states, seeded from the live config; nothing is applied
   // until Enter so a toggle spree costs one reassembly, not one per keypress.
-  const [checked, setChecked] = useState<Set<string>>(
-    () => new Set(items.filter((i) => i.enabled).map((i) => i.name)),
-  );
+  const [state, setState] = useState(() => initialExtensionPickerState(items));
 
   useTuiInput((input, key) => {
     if (key.upArrow)
-      return setCursor((c) => (c - 1 + items.length) % items.length);
-    if (key.downArrow) return setCursor((c) => (c + 1) % items.length);
-    if (input === " ") {
-      const name = items[cursor]!.name;
-      return setChecked((prev) => {
-        const next = new Set(prev);
-        if (next.has(name)) next.delete(name);
-        else next.add(name);
-        return next;
-      });
-    }
+      return setState((s) => reduceExtensionPicker(s, items, { kind: "up" }));
+    if (key.downArrow)
+      return setState((s) => reduceExtensionPicker(s, items, { kind: "down" }));
+    if (input === " ")
+      return setState((s) =>
+        reduceExtensionPicker(s, items, { kind: "toggle" }),
+      );
     if (key.return) {
-      onSubmit(items.map((i) => ({ ...i, enabled: checked.has(i.name) })));
+      onSubmit(applyExtensionPickerState(items, state));
     }
   });
 
@@ -77,8 +120,8 @@ export function ExtensionsView({
         {"[extensions]"}
       </Text>
       {items.map((item, i) => {
-        const isSel = i === cursor;
-        const on = checked.has(item.name);
+        const isSel = i === state.cursor;
+        const on = state.checked.has(item.name);
         const changedMark = on !== item.enabled ? "*" : " ";
         return (
           <Box key={item.name}>

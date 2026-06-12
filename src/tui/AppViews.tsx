@@ -5,7 +5,6 @@
 // width-capped so it never overflows Ink's dynamic region); `PromptArea` renders
 // whichever pause-and-ask overlay is active, or the framed input box when none is.
 
-import Spinner from "ink-spinner";
 import { AskUserView } from "./AskUser.tsx";
 import { Complete } from "./Complete.tsx";
 import { ConfirmView } from "./Confirm.tsx";
@@ -211,7 +210,7 @@ export function PromptArea({
           frame while busy (so they never share the prompt line). */}
       {session.busy ? (
         <Text color={tint("yellow")}>
-          <Spinner type="dots" />
+          {"…"}
           <Text dimColor>{` ${verb}`}</Text>
         </Text>
       ) : null}

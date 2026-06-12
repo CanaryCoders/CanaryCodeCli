@@ -23,12 +23,12 @@
     "ink": "^5",
     "ink-spinner": "^5",
     "ink-text-input": "^6",
-    "react": "^18"
+    "react": "^19.2.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.16",
     "@types/bun": "latest",
-    "@types/react": "^18",
+    "@types/react": "^19.2.0",
     "react-devtools-core": "^7.0.1",
     "typescript": "^5"
   }

@@ -6,7 +6,7 @@
 // switch can replace only this boundary.
 
 import type { KeyEvent as OpenTuiKeyEvent } from "@opentui/core";
-import { useInput as useInkInput } from "ink";
+import { useKeyboard } from "@opentui/react";
 import type { InputKey } from "./input-helpers.ts";
 
 export type TuiKey = InputKey;
@@ -15,38 +15,6 @@ export type TuiInputHandler = (input: string, key: TuiKey) => void;
 
 export interface TuiInputOptions {
   isActive?: boolean;
-}
-
-interface InkKeyLike {
-  return?: boolean;
-  shift?: boolean;
-  meta?: boolean;
-  ctrl?: boolean;
-  leftArrow?: boolean;
-  rightArrow?: boolean;
-  upArrow?: boolean;
-  downArrow?: boolean;
-  backspace?: boolean;
-  delete?: boolean;
-  escape?: boolean;
-  tab?: boolean;
-}
-
-function copyKey(key: InkKeyLike): TuiKey {
-  return {
-    return: key.return,
-    shift: key.shift,
-    meta: key.meta,
-    ctrl: key.ctrl,
-    leftArrow: key.leftArrow,
-    rightArrow: key.rightArrow,
-    upArrow: key.upArrow,
-    downArrow: key.downArrow,
-    backspace: key.backspace,
-    delete: key.delete,
-    escape: key.escape,
-    tab: key.tab,
-  };
 }
 
 function printableOpenTuiInput(event: OpenTuiKeyEvent, key: TuiKey): string {
@@ -80,15 +48,19 @@ function printableOpenTuiInput(event: OpenTuiKeyEvent, key: TuiKey): string {
   return "";
 }
 
-/** Current production adapter: Ink useInput → renderer-neutral key shape. */
+/** Production adapter: OpenTUI useKeyboard → renderer-neutral key shape. */
 export function useTuiInput(
   handler: TuiInputHandler,
   options?: TuiInputOptions,
 ): void {
-  useInkInput((input, key) => handler(input, copyKey(key)), options);
+  useKeyboard((event) => {
+    if (options?.isActive === false) return;
+    const { input, key } = normalizeOpenTuiKey(event);
+    handler(input, key);
+  });
 }
 
-/** Future adapter helper: OpenTUI KeyEvent → renderer-neutral key shape + input. */
+/** OpenTUI KeyEvent → renderer-neutral key shape + input. */
 export function normalizeOpenTuiKey(event: OpenTuiKeyEvent): {
   input: string;
   key: TuiKey;
