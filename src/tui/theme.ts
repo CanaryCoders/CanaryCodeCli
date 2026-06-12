@@ -2,8 +2,8 @@
 //
 // Phase 4.8 ("the pretty pass") pulls every glyph, colour, and spacing decision
 // into one place so the look lives here, not scattered across components. The
-// values capture the conventions the TUI already grew organically — the cyan `›`
-// user gutter, mode-coloured borders (normal=green / plan=cyan / auto=yellow), the
+// values capture the conventions the TUI already grew organically — the orange `›`
+// user gutter, mode-coloured borders (normal=brand orange / plan=cyan / auto=yellow), the
 // green/red/yellow tool-status marks, and the green/red/cyan diff palette — and
 // give the remaining 4.8 tasks (speaker gutters, framed input, footer pill,
 // code/diff gutters) a shared vocabulary to draw from instead of re-deriving it.
@@ -14,6 +14,16 @@
 
 import type { AgentMode } from "../agent.ts";
 import type { IconName } from "../icons.ts";
+
+// ── Brand ──────────────────────────────────────────────────────────────────────
+// The CanaryCoders signature orange (canarycoders.es theme accent). Used for the
+// banner wordmark, the user gutter, and the normal-mode accent so the default
+// look carries the brand; plan/auto keep their semantic cyan/yellow.
+
+export const BRAND = {
+  /** CanaryCoders signature orange. */
+  orange: "#ff7f32",
+} as const;
 
 // ── Roles (transcript speakers) ────────────────────────────────────────────────
 // Every transcript item gets a left-gutter glyph + colour so the eye instantly
@@ -44,7 +54,7 @@ export interface RoleStyle {
 export const ROLE: Record<Role, RoleStyle> = {
   // A filled dot marks the start of each distinct AI answer (Claude-Code style),
   // so consecutive answers/tool groups read as separate units at a glance.
-  user: { icon: "prompt", color: "cyan", bold: true, bg: "gray" },
+  user: { icon: "prompt", color: BRAND.orange, bold: true, bg: "gray" },
   assistant: { icon: "assistant", color: undefined, bold: true },
   thinking: { icon: "thinking", color: undefined, dim: true },
   tool: { icon: "tool", color: undefined }, // coloured by status — see TOOL_STATUS
@@ -77,7 +87,8 @@ export interface CardStyle {
 }
 
 export const CARD: Record<CardKind, CardStyle> = {
-  user: { color: "#a9b1d6", bg: "#2a2e42", title: "you" },
+  // The user's own messages carry a softened CanaryCoders orange accent.
+  user: { color: "#e8915a", bg: "#34281e", title: "you" },
   assistant: { color: "#9ece9a", bg: "#222a28", title: "assistant" },
   tool: { color: "#89a8d8", bg: "#1f2733", title: "tool" },
   error: { color: "#e09aa0", bg: "#34232a", title: "error" },
@@ -112,7 +123,8 @@ export const INTERACTIVE = {
 // The active mode tints the input frame border, the plan box, and the footer pill.
 
 const MODE_COLOR: Record<AgentMode, string> = {
-  normal: "green",
+  // Normal mode wears the brand accent; plan/auto keep semantic colours.
+  normal: BRAND.orange,
   plan: "cyan",
   auto: "yellow",
 };

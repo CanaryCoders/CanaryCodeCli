@@ -30,6 +30,7 @@ import { Box, Text } from "./primitives.tsx";
 import { useTuiRuntime } from "./runtime.tsx";
 import { getHighlightedCode } from "./syntax-highlight.ts";
 import {
+  BRAND,
   CARD,
   DIFF,
   GUTTER_RULE_ICON,
@@ -341,10 +342,12 @@ function BannerView({
       paddingY={SPACING.boxPadY}
       width="100%"
     >
-      <Text bold>{`${appName} v${version}`}</Text>
+      {/* The wordmark wears the CanaryCoders brand orange. */}
+      <Text bold color={tint(BRAND.orange)}>{`${appName} v${version}`}</Text>
       <Text
         dimColor
       >{`  ${abbreviateCwd(cwd)}  ·  ${model} · ${provider}`}</Text>
+      <Text color={tint(BRAND.orange)}>{"  ·  canarycoders.es"}</Text>
     </Box>
   );
 }
@@ -543,7 +546,8 @@ export function ItemView({
   /** Kind of the immediately preceding transcript item, for group spacing. */
   prevKind?: Item["kind"];
   expanded?: boolean;
-  /** Render a one-time `ctrl+r to expand` hint (the session's first tool call). */
+  /** Render a one-time `click/enter expands · ctrl+r expands all` hint (the
+   * session's first tool call). */
   showExpandHint?: boolean;
   /** Live (in-flight, redrawn) rendering: bound a tool to a single headline row so
    * it can't overflow the dynamic region and desync Ink. The full command/output
@@ -678,7 +682,8 @@ function ToolView({
 }: {
   item: Extract<Item, { kind: "tool" }>;
   expanded: boolean;
-  /** Show the one-time `ctrl+r to expand` affordance hint (collapsed only). */
+  /** Show the one-time `click/enter expands · ctrl+r expands all` affordance hint
+   * (collapsed only). */
   showHint?: boolean;
   /** Live rendering: bound to a single headline row (no card, no body, no diff) so
    * the redrawn live region can't overflow. The full card renders once the item
