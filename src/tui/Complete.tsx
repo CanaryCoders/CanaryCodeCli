@@ -9,6 +9,7 @@
 
 import type { Completion } from "../commands.ts";
 import { useIcon } from "./Icon.tsx";
+import { ChoiceRow } from "./Interactive.tsx";
 import { Box, Text } from "./primitives.tsx";
 import { SPACING, tint } from "./theme.ts";
 
@@ -37,11 +38,15 @@ function windowRange(
 interface CompleteProps {
   items: Completion[];
   selected: number;
+  onSelect?: (index: number) => void;
+  onAccept?: (index: number) => void;
 }
 
 export function Complete({
   items,
   selected,
+  onSelect,
+  onAccept,
 }: CompleteProps): React.ReactElement | null {
   const promptIcon = useIcon("prompt");
   if (items.length === 0) return null;
@@ -55,7 +60,12 @@ export function Complete({
         const idx = start + i;
         const isSel = idx === selected;
         return (
-          <Box key={`${idx}:${c.label}`}>
+          <ChoiceRow
+            key={`${idx}:${c.label}`}
+            selected={isSel}
+            onHover={() => onSelect?.(idx)}
+            onAction={() => onAccept?.(idx)}
+          >
             <Box width={1} marginRight={1}>
               <Text color={isSel ? accent : undefined}>
                 {isSel ? promptIcon : " "}
@@ -67,7 +77,7 @@ export function Complete({
             {c.description ? (
               <Text dimColor>{`  ${c.description}`}</Text>
             ) : null}
-          </Box>
+          </ChoiceRow>
         );
       })}
       {items.length > visible.length ? (

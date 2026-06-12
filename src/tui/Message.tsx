@@ -10,6 +10,7 @@
 // `expanded` (or an errored result) reveals the full input and the head of the
 // tool's output. Errors always show their first line even when collapsed.
 
+import { useRef, useState } from "react";
 import { type Diff, type DiffLine, diffStat } from "../diff.ts";
 import { type MdLine, parseMarkdownBlocks, type Span } from "../markdown.ts";
 import { Card } from "./Card.tsx";
@@ -441,6 +442,9 @@ export function ItemView({
   compact = false,
   width,
   columns = 80,
+  focusedToolId,
+  onFocusTool,
+  onToggleTool,
 }: {
   item: Item;
   /** Kind of the immediately preceding transcript item, for group spacing. */
@@ -459,6 +463,9 @@ export function ItemView({
   /** Terminal width — the rows that paint a full-width highlight band (user
    * lines, diff +/− lines) wrap and pad themselves to it. */
   columns?: number;
+  focusedToolId?: number | null;
+  onFocusTool?: (id: number) => void;
+  onToggleTool?: (id: number) => void;
 }): React.ReactElement {
   switch (item.kind) {
     case "banner":
@@ -504,6 +511,9 @@ export function ItemView({
           width={width}
           columns={columns}
           marginTop={Math.max(1, topGap(item, prevKind))}
+          focused={focusedToolId === item.id}
+          onFocus={() => onFocusTool?.(item.id)}
+          onToggle={() => onToggleTool?.(item.id)}
         />
       );
     case "note": {
@@ -547,6 +557,9 @@ function ToolView({
   width,
   columns = 80,
   marginTop = 0,
+  focused = false,
+  onFocus,
+  onToggle,
 }: {
   item: Extract<Item, { kind: "tool" }>;
   expanded: boolean;
@@ -563,6 +576,9 @@ function ToolView({
   columns?: number;
   /** Blank rows above the card (group spacing from the caller). */
   marginTop?: number;
+  focused?: boolean;
+  onFocus?: () => void;
+  onToggle?: () => void;
 }): React.ReactElement {
   const status = toolStatus(item.pending, item.isError);
   const glyph = useIcon(ROLE.tool.icon);
@@ -573,8 +589,20 @@ function ToolView({
   // The block accent/fill is the soft tool tone for an ordinary call and the soft
   // error tone for a failure, so a failed tool jumps out while still reading as a
   // tool. The status mark (…/✓/✗) carries pending-vs-ok.
+  const [hovered, setHovered] = useState(false);
+  const [pressed, setPressed] = useState(false);
+  const pressedRef = useRef(false);
+  const setPressedState = (next: boolean): void => {
+    pressedRef.current = next;
+    setPressed(next);
+  };
   const cardColor = item.isError ? CARD.error.color : CARD.tool.color;
-  const cardBg = item.isError ? CARD.error.bg : CARD.tool.bg;
+  const baseCardBg = item.isError ? CARD.error.bg : CARD.tool.bg;
+  const cardBg = pressed
+    ? "#161a22"
+    : focused || hovered
+      ? "#2a3444"
+      : baseCardBg;
 
   // `bash` shows the FULL command; every other tool keeps the short summary. Both
   // are truncated for the title so it always fits on the border run.

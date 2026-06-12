@@ -59,8 +59,11 @@ let openTuiRoot: Root | null = null;
 
 function App(props: AppProps): React.ReactNode {
   const dimensions = useTerminalDimensions();
-  const [, bumpResize] = useReducer((n: number) => n + 1, 0);
-  useOnResize(() => bumpResize());
+  const [resizeNonce, bumpResize] = useReducer((n: number) => n + 1, 0);
+  useOnResize(() => {
+    bumpResize();
+    openTuiRenderer?.requestRender();
+  });
 
   // The in-flight request's abort controller is shared between the agent session
   // (which creates/aborts it) and the approval gate (whose AI safety check reads
@@ -300,6 +303,7 @@ function App(props: AppProps): React.ReactNode {
               only flexible child (flexShrink + minHeight:0), so it gives up height
               first and the bottom chrome below it never gets squeezed. */}
           <ScrollBox
+            key={`transcript-${resizeNonce}`}
             flexGrow={1}
             flexShrink={1}
             minHeight={0}
@@ -362,7 +366,11 @@ function App(props: AppProps): React.ReactNode {
 /** Launch the OpenTUI TUI. The caller resolves config/provider/system and passes them in. */
 export function startTui(props: AppProps): void {
   // exitOnCtrlC:false — the App handles Ctrl+C itself (abort once, quit twice).
-  void createCliRenderer({ exitOnCtrlC: false }).then((renderer) => {
+  void createCliRenderer({
+    exitOnCtrlC: false,
+    useMouse: true,
+    enableMouseMovement: true,
+  }).then((renderer) => {
     openTuiRenderer = renderer;
     openTuiRoot = createRoot(renderer);
     openTuiRoot.render(<App {...props} />);

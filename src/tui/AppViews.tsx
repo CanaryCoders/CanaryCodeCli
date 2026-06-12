@@ -5,6 +5,7 @@
 // width-capped so it never overflows Ink's dynamic region); `PromptArea` renders
 // whichever pause-and-ask overlay is active, or the framed input box when none is.
 
+import { ActionChip } from "./Interactive.tsx";
 import { AskUserView } from "./AskUser.tsx";
 import { Complete } from "./Complete.tsx";
 import { ConfirmView } from "./Confirm.tsx";
@@ -138,6 +139,9 @@ export function PromptArea({
         preview={approvals.pendingConfirm}
         reason={approvals.pendingConfirmReason}
         columns={columns}
+        onYes={() => approvals.resolveConfirm(true, false)}
+        onNo={() => approvals.resolveConfirm(false, false)}
+        onAlways={() => approvals.resolveConfirm(true, true)}
       />
     );
   }
@@ -163,18 +167,34 @@ export function PromptArea({
           <Box marginLeft={1}>
             <Text color={tint("yellow")}>
               {`${approvals.pendingCheckpoint} turns in — keep going? `}
-              <Text bold>{"[y]"}</Text>
-              <Text dimColor>{"es / "}</Text>
-              <Text bold>{"[n]"}</Text>
-              <Text dimColor>{"o stop"}</Text>
             </Text>
+            <ActionChip
+              label="[y]"
+              color="yellow"
+              onAction={() => approvals.resolveCheckpoint(true)}
+            />
+            <Text dimColor>{"es / "}</Text>
+            <ActionChip
+              label="[n]"
+              color="yellow"
+              onAction={() => approvals.resolveCheckpoint(false)}
+            />
+            <Text dimColor>{"o stop"}</Text>
           </Box>
         </Box>
       </Box>
     );
   }
   if (approvals.pendingPlan) {
-    return <PlanView plan={approvals.pendingPlan} mode={session.mode} />;
+    return (
+      <PlanView
+        plan={approvals.pendingPlan}
+        mode={session.mode}
+        onAccept={session.acceptPlan}
+        onEdit={session.editPlan}
+        onReject={session.rejectPlan}
+      />
+    );
   }
   if (session.extensionsPicker) {
     return (
@@ -207,6 +227,8 @@ export function PromptArea({
         <Complete
           items={autocomplete.suggestions}
           selected={autocomplete.sel}
+          onSelect={autocomplete.selectCompletion}
+          onAccept={autocomplete.acceptCompletion}
         />
       ) : null}
       {/* Live status: spinner + verb sit on their own row just above the input

@@ -57,8 +57,10 @@ export interface Autocomplete {
   moveSel: (delta: number) => void;
   /** Hide the popover until the input changes. */
   dismissComplete: () => void;
+  /** Select a suggestion row directly (mouse hover). */
+  selectCompletion: (index: number) => void;
   /** Accept the highlighted suggestion into the input. */
-  acceptCompletion: () => void;
+  acceptCompletion: (index?: number) => void;
 }
 
 export function useAutocomplete(opts: {
@@ -121,8 +123,14 @@ export function useAutocomplete(opts: {
     completeDismissedRef.current = true;
     setCompleteDismissed(true);
   }
-  function acceptCompletion(): void {
-    const choice = completionsRef.current[selRef.current];
+  function selectCompletion(index: number): void {
+    const n = completionsRef.current.length;
+    if (index < 0 || index >= n) return;
+    selRef.current = index;
+    setSelected(index);
+  }
+  function acceptCompletion(index = selRef.current): void {
+    const choice = completionsRef.current[index];
     if (!choice) return;
     setInput(choice.value);
     bumpCursor();
@@ -162,6 +170,7 @@ export function useAutocomplete(opts: {
     handleInputChange,
     moveSel,
     dismissComplete,
+    selectCompletion,
     acceptCompletion,
   };
 }

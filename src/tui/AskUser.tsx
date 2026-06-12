@@ -21,6 +21,7 @@ import type { AskAnswer, AskQuestion } from "../assemble.ts";
 // imports the helper directly. The runtime answer flow goes through assembly.
 import { recommendedIndex } from "../extensions/askuser.ts";
 import { useIcon } from "./Icon.tsx";
+import { ChoiceRow } from "./Interactive.tsx";
 import { MultilineInput } from "./Input.tsx";
 import { useTuiInput } from "./keyboard.ts";
 import { Box, Text } from "./primitives.tsx";
@@ -46,6 +47,7 @@ interface State {
 
 type Action =
   | { type: "moveCursor"; rowCount: number; delta: number }
+  | { type: "setCursor"; index: number; rowCount: number }
   | { type: "togglePick"; index: number }
   | { type: "startWriting" }
   | { type: "setDraft"; draft: string }
@@ -61,6 +63,9 @@ function reducer(state: State, action: Action): State {
         cursor: (state.cursor + delta + rowCount) % rowCount,
       };
     }
+    case "setCursor":
+      if (action.index < 0 || action.index >= action.rowCount) return state;
+      return { ...state, cursor: action.index };
     case "togglePick": {
       const picks = new Set(state.picks);
       if (picks.has(action.index)) picks.delete(action.index);
@@ -125,6 +130,19 @@ export function AskUserView({
     });
   };
 
+  const confirmOption = (index: number): void => {
+    const option = q.options[index];
+    if (!option) return;
+    advance({ selected: [option.label] });
+  };
+
+  const toggleOption = (index: number): void => {
+    if (!q.options[index]) return;
+    dispatch({ type: "togglePick", index });
+  };
+
+  const confirmCustom = (): void => dispatch({ type: "startWriting" });
+
   // Confirm the preset selection: toggled picks if any (multiSelect), else the
   // single option under the cursor.
   const confirmPresets = (): void => {
@@ -134,7 +152,7 @@ export function AskUserView({
         .map((i) => q.options[i]!.label);
       advance({ selected: labels });
     } else {
-      advance({ selected: [q.options[cursor]!.label] });
+      confirmOption(cursor);
     }
   };
 
@@ -210,7 +228,17 @@ export function AskUserView({
             const isSel = i === cursor;
             const checked = q.multiSelect && picks.has(i);
             return (
-              <Box key={`${i}:${o.label}`}>
+              <ChoiceRow
+                key={`${i}:${o.label}`}
+                selected={isSel}
+                accentColor={ACCENT}
+                onHover={() =>
+                  dispatch({ type: "setCursor", index: i, rowCount })
+                }
+                onAction={() =>
+                  q.multiSelect ? toggleOption(i) : confirmOption(i)
+                }
+              >
                 <Box width={1} marginRight={1}>
                   <Text color={isSel ? accent : undefined}>
                     {isSel ? promptIcon : " "}
@@ -229,10 +257,17 @@ export function AskUserView({
                 {o.description ? (
                   <Text dimColor>{`  ${o.description}`}</Text>
                 ) : null}
-              </Box>
+              </ChoiceRow>
             );
           })}
-          <Box>
+          <ChoiceRow
+            selected={cursor === customRow}
+            accentColor={ACCENT}
+            onHover={() =>
+              dispatch({ type: "setCursor", index: customRow, rowCount })
+            }
+            onAction={confirmCustom}
+          >
             <Box width={1} marginRight={1}>
               <Text color={cursor === customRow ? accent : undefined}>
                 {cursor === customRow ? promptIcon : " "}
@@ -249,7 +284,7 @@ export function AskUserView({
             >
               {CUSTOM_LABEL}
             </Text>
-          </Box>
+          </ChoiceRow>
           <Text dimColor>
             {q.multiSelect
               ? "↑/↓ move · space toggle · enter submit"

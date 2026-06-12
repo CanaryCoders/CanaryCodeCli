@@ -82,3 +82,36 @@ test("Box forwards title props to the host box element", () => {
   expect(p.titleColor).toBe("cyan");
   expect(p.titleAlignment).toBe("left");
 });
+
+test("Box forwards mouse props and cursor style", () => {
+  const onMouseOver = () => {};
+  const onMouseOut = () => {};
+  const onMouseDown = () => {};
+  const p = props(
+    OpenTuiBox({
+      children: null,
+      cursor: "pointer",
+      onMouseOver,
+      onMouseOut,
+      onMouseDown,
+    }),
+  );
+  expect(p.cursor).toBe("pointer");
+  expect(p.onMouseOver).toBe(onMouseOver);
+  expect(p.onMouseOut).toBe(onMouseOut);
+  expect(p.onMouseDown).toBe(onMouseDown);
+});
+
+test("Text forwards mouse props and cursor style", () => {
+  const onMouseUp = () => {};
+  const onMouseScroll = () => {};
+  const p = props(
+    buildTextElement(
+      { children: "click", cursor: "pointer", onMouseUp, onMouseScroll },
+      false,
+    ),
+  );
+  expect(p.cursor).toBe("pointer");
+  expect(p.onMouseUp).toBe(onMouseUp);
+  expect(p.onMouseScroll).toBe(onMouseScroll);
+});

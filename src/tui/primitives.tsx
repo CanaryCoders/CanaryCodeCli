@@ -6,10 +6,26 @@
 // elements via the `OpenTuiBox`/`OpenTuiText` adapters below. Keeping the public
 // props here means leaf components never touch OpenTUI element names directly.
 
-import { createTextAttributes } from "@opentui/core";
+import {
+  createTextAttributes,
+  type MouseEvent,
+  type MousePointerStyle,
+} from "@opentui/core";
 import { useTerminalDimensions } from "@opentui/react";
 import type { ReactElement, ReactNode } from "react";
 import { createContext, createElement, useContext } from "react";
+
+type MouseHandler = (event: MouseEvent) => void;
+
+interface MouseProps {
+  onMouseDown?: MouseHandler;
+  onMouseUp?: MouseHandler;
+  onMouseOver?: MouseHandler;
+  onMouseOut?: MouseHandler;
+  onMouseScroll?: MouseHandler;
+  /** Terminal pointer style while hovering this renderable, where supported. */
+  cursor?: MousePointerStyle;
+}
 
 // OpenTUI splits Ink's single <Text> into two host elements: a block-level
 // <text> (a TextRenderable) and inline <span> runs (TextNodeRenderable). A
@@ -21,7 +37,7 @@ import { createContext, createElement, useContext } from "react";
 // flag so block layout always starts a fresh text context.
 const InsideText = createContext(false);
 
-export interface BoxProps {
+export interface BoxProps extends MouseProps {
   children?: ReactNode;
   key?: React.Key;
   // Border
@@ -71,7 +87,7 @@ export interface BoxProps {
   paddingRight?: number;
 }
 
-export interface TextProps {
+export interface TextProps extends MouseProps {
   children?: ReactNode;
   key?: React.Key;
   color?: string;

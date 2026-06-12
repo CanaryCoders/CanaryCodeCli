@@ -11,8 +11,17 @@
 // NO_COLOR, leaving the glyphs + spacing.
 
 import type { ReactElement, ReactNode } from "react";
-import { Box, Text } from "./primitives.tsx";
+import { Box, type BoxProps, Text } from "./primitives.tsx";
 import { SPACING, tint } from "./theme.ts";
+
+type CardMouseProps = Pick<
+  BoxProps,
+  | "cursor"
+  | "onMouseOver"
+  | "onMouseOut"
+  | "onMouseDown"
+  | "onMouseUp"
+>;
 
 export function Card({
   color,
@@ -20,6 +29,7 @@ export function Card({
   title,
   marginTop = 0,
   children,
+  ...mouseProps
 }: {
   /** Soft accent for the title label (muted truecolor hex). */
   color: string;
@@ -30,7 +40,7 @@ export function Card({
   /** Blank rows above the card (turn/group spacing from the caller). */
   marginTop?: number;
   children: ReactNode;
-}): ReactElement {
+} & CardMouseProps): ReactElement {
   return (
     <Box
       flexDirection="column"
@@ -38,6 +48,7 @@ export function Card({
       paddingX={SPACING.boxPadX}
       paddingY={SPACING.boxPadY}
       marginTop={marginTop}
+      {...mouseProps}
     >
       <Text color={tint(color)} bold wrap="truncate">
         {title}

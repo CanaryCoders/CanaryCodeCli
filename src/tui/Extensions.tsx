@@ -10,6 +10,7 @@
 
 import { useState } from "react";
 import { useIcon } from "./Icon.tsx";
+import { ChoiceRow } from "./Interactive.tsx";
 import { useTuiInput } from "./keyboard.ts";
 import { Box, Text } from "./primitives.tsx";
 import { SPACING, tint } from "./theme.ts";
@@ -38,7 +39,8 @@ export interface ExtensionPickerState {
 export type ExtensionPickerAction =
   | { kind: "up" }
   | { kind: "down" }
-  | { kind: "toggle" };
+  | { kind: "setCursor"; index: number }
+  | { kind: "toggle"; index?: number };
 
 export function initialExtensionPickerState(
   items: ExtensionToggle[],
@@ -64,8 +66,13 @@ export function reduceExtensionPicker(
   if (action.kind === "down") {
     return { ...state, cursor: (state.cursor + 1) % items.length };
   }
+  if (action.kind === "setCursor") {
+    if (action.index < 0 || action.index >= items.length) return state;
+    return { ...state, cursor: action.index };
+  }
 
-  const name = items[state.cursor]?.name;
+  const index = action.index ?? state.cursor;
+  const name = items[index]?.name;
   if (!name) return state;
   const checked = new Set(state.checked);
   if (checked.has(name)) checked.delete(name);
@@ -124,7 +131,17 @@ export function ExtensionsView({
         const on = state.checked.has(item.name);
         const changedMark = on !== item.enabled ? "*" : " ";
         return (
-          <Box key={item.name}>
+          <ChoiceRow
+            key={item.name}
+            selected={isSel}
+            accentColor={ACCENT}
+            onHover={() =>
+              setState((s) => reduceExtensionPicker(s, items, { kind: "setCursor", index: i }))
+            }
+            onAction={() =>
+              setState((s) => reduceExtensionPicker(s, items, { kind: "toggle", index: i }))
+            }
+          >
             <Box width={1} marginRight={1}>
               <Text color={isSel ? accent : undefined}>
                 {isSel ? promptIcon : " "}
@@ -139,7 +156,7 @@ export function ExtensionsView({
               {`${item.name.padEnd(width)}${changedMark}`}
             </Text>
             <Text dimColor>{` ${item.description}`}</Text>
-          </Box>
+          </ChoiceRow>
         );
       })}
       <Text dimColor>
