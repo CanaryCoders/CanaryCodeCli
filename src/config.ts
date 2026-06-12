@@ -186,6 +186,21 @@ function configPath(): string {
   return join(homedir(), ".cc", "config.json");
 }
 
+// Human-facing names for the built-in provider keys, so the model selector and
+// banner can say where a model comes from ("CanaryLLM", "Codex", …) instead of
+// the raw config key. Unknown (user-defined) provider keys show verbatim.
+const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
+  anthropic: "Anthropic",
+  canaryllm: "CanaryLLM",
+  openai: "Codex",
+  opencode: "OpenCode",
+};
+
+/** Display name for a provider config key (the model's source). */
+export function providerDisplayName(key: string): string {
+  return PROVIDER_DISPLAY_NAMES[key] ?? key;
+}
+
 /** Built-in defaults — a usable config with zero user setup (needs ANTHROPIC_API_KEY in env). */
 export function defaultConfig(): Config {
   return {

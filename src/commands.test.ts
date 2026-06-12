@@ -26,7 +26,11 @@ const dispatchCommand = set.dispatch;
 const completions = set.completions;
 
 const ctx = {
-  models: ["opus", "sonnet", "gpt-5"],
+  models: [
+    { id: "opus", source: "Anthropic" },
+    { id: "sonnet", source: "Anthropic" },
+    { id: "gpt-5", source: "Codex" },
+  ],
   sessions: [{ id: "abcdef123456", title: "recent work" }],
 };
 

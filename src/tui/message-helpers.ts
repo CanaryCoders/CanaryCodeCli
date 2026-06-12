@@ -3,6 +3,7 @@
 // from the component module so Message.tsx only exports components (clean
 // fast-refresh boundaries) and so they can be unit-tested without a renderer.
 
+import type { Message } from "../provider.ts";
 import {
   pickVerb,
   RESPONDING_VERBS,
@@ -10,7 +11,7 @@ import {
   TOOL_VERB,
 } from "../verbs.ts";
 import { charWidth } from "./input-helpers.ts";
-import type { Item } from "./Message.tsx";
+import type { Item, ItemInput } from "./Message.tsx";
 
 // ── display-width helpers ────────────────────────────────────────────────────────
 
@@ -197,6 +198,64 @@ export function head(
     lines: all.slice(0, n).map((l) => truncate(l, 200)),
     more: Math.max(0, all.length - n),
   };
+}
+
+// ── Session resume ───────────────────────────────────────────────────────────────
+
+/**
+ * Convert a persisted Message transcript back into renderable scrollback items
+ * (session resume). tool_use blocks pair with their tool_result by id, so a
+ * resumed tool call shows its outcome; image blocks have no transcript
+ * rendering and are skipped (the model still received them in the original
+ * turn). Ids are assigned by the caller (the transcript owns the id counter).
+ */
+export function itemsFromMessages(messages: Message[]): ItemInput[] {
+  const results = new Map<string, { content: string; is_error?: boolean }>();
+  for (const m of messages) {
+    for (const b of m.content) {
+      if (b.type === "tool_result")
+        results.set(b.tool_use_id, {
+          content: b.content,
+          is_error: b.is_error,
+        });
+    }
+  }
+  const out: ItemInput[] = [];
+  for (const m of messages) {
+    for (const b of m.content) {
+      switch (b.type) {
+        case "text":
+          if (!b.text.trim()) break;
+          out.push(
+            m.role === "user"
+              ? { kind: "user", text: b.text }
+              : { kind: "assistant", text: b.text },
+          );
+          break;
+        case "thinking":
+          if (b.thinking.trim())
+            out.push({ kind: "thinking", text: b.thinking });
+          break;
+        case "tool_use": {
+          const r = results.get(b.id);
+          out.push({
+            kind: "tool",
+            toolId: b.id,
+            name: b.name,
+            input: b.input,
+            // Never resume into a spinner: an unmatched call (interrupted turn)
+            // still renders as finished, just without a result.
+            pending: false,
+            result: r?.content,
+            isError: r?.is_error,
+          });
+          break;
+        }
+        // tool_result renders via its tool_use; images are skipped.
+      }
+    }
+  }
+  return out;
 }
 
 // ── Live status verb ───────────────────────────────────────────────────────────

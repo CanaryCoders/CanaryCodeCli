@@ -3,7 +3,9 @@
 // OpenTUI port because Ink's React 18 reconciler is incompatible with React 19.
 
 import { describe, expect, test } from "bun:test";
+import type { Message } from "./provider.ts";
 import {
+  itemsFromMessages,
   padRow,
   truncateWidth,
   visibleWidth,
@@ -155,4 +157,102 @@ describe("transcript wrapping widths", () => {
       }
     });
   }
+});
+
+// ── itemsFromMessages (session resume) ─────────────────────────────────────────
+
+describe("itemsFromMessages", () => {
+  test("converts a user/assistant/tool transcript into scrollback items", () => {
+    const messages: Message[] = [
+      { role: "user", content: [{ type: "text", text: "list the files" }] },
+      {
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "I should run ls" },
+          { type: "text", text: "Listing now." },
+          {
+            type: "tool_use",
+            id: "t1",
+            name: "bash",
+            input: { command: "ls" },
+          },
+        ],
+      },
+      {
+        role: "user",
+        content: [
+          { type: "tool_result", tool_use_id: "t1", content: "a.ts\nb.ts" },
+        ],
+      },
+      { role: "assistant", content: [{ type: "text", text: "Two files." }] },
+    ];
+    const items = itemsFromMessages(messages);
+    expect(items.map((i) => i.kind)).toEqual([
+      "user",
+      "thinking",
+      "assistant",
+      "tool",
+      "assistant",
+    ]);
+    const tool = items[3]!;
+    if (tool.kind !== "tool") throw new Error("expected tool item");
+    expect(tool.name).toBe("bash");
+    expect(tool.result).toBe("a.ts\nb.ts");
+    expect(tool.pending).toBe(false);
+    expect(tool.isError).toBeUndefined();
+  });
+
+  test("an unmatched tool_use renders finished without a result", () => {
+    const messages: Message[] = [
+      {
+        role: "assistant",
+        content: [
+          { type: "tool_use", id: "t9", name: "grep", input: { pattern: "x" } },
+        ],
+      },
+    ];
+    const [tool] = itemsFromMessages(messages);
+    if (tool?.kind !== "tool") throw new Error("expected tool item");
+    expect(tool.pending).toBe(false);
+    expect(tool.result).toBeUndefined();
+  });
+
+  test("error results and images: errors carried, images skipped", () => {
+    const messages: Message[] = [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "look" },
+          { type: "image", mediaType: "image/png", data: "aaaa" },
+        ],
+      },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: "t2",
+            name: "bash",
+            input: { command: "nope" },
+          },
+        ],
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "t2",
+            content: "command not found",
+            is_error: true,
+          },
+        ],
+      },
+    ];
+    const items = itemsFromMessages(messages);
+    expect(items.map((i) => i.kind)).toEqual(["user", "tool"]);
+    const tool = items[1]!;
+    if (tool.kind !== "tool") throw new Error("expected tool item");
+    expect(tool.isError).toBe(true);
+  });
 });

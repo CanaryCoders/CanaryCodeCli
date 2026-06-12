@@ -11,9 +11,10 @@ import { availableCommands, listExtensions } from "../assemble.ts";
 import {
   type Completion,
   type CompletionContext,
+  type ModelOption,
   makeCommandSet,
 } from "../commands.ts";
-import type { Config } from "../config.ts";
+import { type Config, providerDisplayName } from "../config.ts";
 import type { SessionStore } from "../session.ts";
 import {
   fileMentionCompletions,
@@ -25,9 +26,10 @@ function buildCompletionContext(
   config: Config,
   store: SessionStore,
 ): CompletionContext {
-  const models: string[] = [];
-  for (const pc of Object.values(config.providers)) {
-    for (const m of pc.models ?? []) models.push(m.id);
+  const models: ModelOption[] = [];
+  for (const [key, pc] of Object.entries(config.providers)) {
+    for (const m of pc.models ?? [])
+      models.push({ id: m.id, source: providerDisplayName(key) });
   }
   const sessions = store
     .listSessions(20)

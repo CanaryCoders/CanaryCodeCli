@@ -267,10 +267,17 @@ export interface Completion {
   description?: string;
 }
 
+/** A selectable model and where it comes from (provider display name). */
+export interface ModelOption {
+  id: string;
+  /** Source label shown beside the id: "CanaryLLM", "Codex", "OpenCode", … */
+  source?: string;
+}
+
 /** Known parameter values the host can supply for parameter completion. */
 export interface CompletionContext {
-  /** Configured model ids (for `/model` and model-valued `/config` paths). */
-  models?: string[];
+  /** Configured models (for `/model` and model-valued `/config` paths). */
+  models?: ModelOption[];
   /** Recent sessions, newest first (for `/resume`). */
   sessions?: { id: string; title: string | null }[];
   /** Optional config paths supplied by the host; defaults to built-in common paths. */
@@ -314,12 +321,18 @@ function configValueCompletions(
   path: string,
   ctx: CompletionContext,
 ): Completion[] {
-  const values =
+  if (
     path === "model" ||
     path.startsWith("models.") ||
     path === "permission.model"
-      ? (ctx.models ?? [])
-      : (CONFIG_ENUM_VALUES[path] ?? []);
+  ) {
+    return (ctx.models ?? []).map((m) => ({
+      value: `${prefix}${m.id}`,
+      label: m.id,
+      description: m.source,
+    }));
+  }
+  const values = CONFIG_ENUM_VALUES[path] ?? [];
   return values.map((value) => ({ value: `${prefix}${value}`, label: value }));
 }
 
@@ -358,9 +371,12 @@ function paramValues(
 ): Completion[] {
   switch (name) {
     case "model":
-      return (ctx.models ?? []).map((id) => ({
-        value: `/model ${id}`,
-        label: id,
+      // The description names the model's source (CanaryLLM, Codex, OpenCode, …)
+      // so identically-named models from different providers stay tellable apart.
+      return (ctx.models ?? []).map((m) => ({
+        value: `/model ${m.id}`,
+        label: m.id,
+        description: m.source,
       }));
     case "think":
       return THINK_LEVELS.map((l) => ({ value: `/think ${l}`, label: l }));

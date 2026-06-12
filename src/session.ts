@@ -365,3 +365,19 @@ export class SessionStore {
     this.db.close();
   }
 }
+
+/**
+ * Resolve a session by exact id, then by unique id prefix among recent
+ * sessions. Shared by `--resume <id>` (CLI) and `/resume <id>` (TUI).
+ */
+export function resolveSession(
+  store: SessionStore,
+  idOrPrefix: string,
+): SessionRow | undefined {
+  const exact = store.getSession(idOrPrefix);
+  if (exact) return exact;
+  const matches = store
+    .listSessions(100)
+    .filter((s) => s.id.startsWith(idOrPrefix));
+  return matches.length === 1 ? matches[0] : undefined;
+}

@@ -6,7 +6,7 @@ import { rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Message } from "./provider.ts";
-import { SessionStore } from "./session.ts";
+import { resolveSession, SessionStore } from "./session.ts";
 
 describe("SessionStore.loadMessages", () => {
   test("skips a corrupt turn row instead of throwing", () => {
@@ -67,6 +67,26 @@ describe("SessionStore.loadMessages", () => {
       const messages = store.loadMessages(id);
 
       expect(messages).toEqual(turns);
+    } finally {
+      store.close();
+    }
+  });
+});
+
+describe("resolveSession", () => {
+  test("resolves exact ids and unique prefixes; ambiguous prefixes fail", () => {
+    const store = SessionStore.open(":memory:");
+    try {
+      const a = store.createSession({ model: "m", cwd: "/tmp" });
+      const b = store.createSession({ model: "m", cwd: "/tmp" });
+
+      expect(resolveSession(store, a)?.id).toBe(a);
+      // A long unique prefix resolves; UUIDs share no 12-char prefix in practice.
+      expect(resolveSession(store, a.slice(0, 12))?.id).toBe(a);
+      expect(resolveSession(store, b.slice(0, 12))?.id).toBe(b);
+      // The empty prefix matches both sessions → ambiguous → undefined.
+      expect(resolveSession(store, "")).toBeUndefined();
+      expect(resolveSession(store, "zz-no-such")).toBeUndefined();
     } finally {
       store.close();
     }

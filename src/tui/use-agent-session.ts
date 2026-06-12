@@ -39,6 +39,7 @@ import {
   loadConfig,
   modelSupportsVision,
   parseConfigValue,
+  providerDisplayName,
   redactConfig,
   replaceConfigInPlace,
   resolveModel,
@@ -62,10 +63,11 @@ import { iconFor } from "../icons.ts";
 import { extractImagePaths, type ImageData, readImageFile } from "../image.ts";
 import type { ContentBlock, Message } from "../provider.ts";
 import { createProvider, type Provider } from "../provider.ts";
-import { hasPriceData } from "../session.ts";
+import { hasPriceData, resolveSession } from "../session.ts";
 import {
   budgetFor,
   describeLevel,
+  parseLevel,
   supportsThinking,
   type ThinkingLevel,
 } from "../thinking.ts";
@@ -78,6 +80,7 @@ import {
 import type { ExtensionToggle } from "./Extensions.tsx";
 import { drainInputQuiet, expandPastes } from "./input-helpers.ts";
 import type { Item } from "./Message.tsx";
+import { itemsFromMessages } from "./message-helpers.ts";
 import type { TuiRuntime } from "./runtime.tsx";
 import type { Approvals } from "./use-approvals.ts";
 import type { PasteChips } from "./use-paste-chips.ts";
@@ -263,9 +266,15 @@ export function useAgentSession(deps: {
     );
   };
   const [modelLabel, setModelLabel] = useState(props.modelLabel);
-  const [cost, setCost] = useState(0);
+  // A resumed session starts from its stored running totals, not zero.
+  const [cost, setCost] = useState(
+    () => props.store.getSession(props.sessionId)?.costUsd ?? 0,
+  );
   const [costKnown, setCostKnown] = useState(hasPriceData(props.modelName));
-  const [tokens, setTokens] = useState(0);
+  const [tokens, setTokens] = useState(() => {
+    const s = props.store.getSession(props.sessionId);
+    return s ? s.inputTokens + s.outputTokens : 0;
+  });
   // Verbose expands tool calls to show full input + output head (Ctrl+R toggles).
   const [verbose, setVerbose] = useState(false);
   // The agent's live task list (from the update_tasks tool), shown in the Tasks
@@ -707,10 +716,11 @@ export function useAgentSession(deps: {
     }
     modelNameRef.current = resolved.model.name ?? resolved.model.id;
     const label = resolved.model.id;
+    const source = providerDisplayName(resolved.provider);
     setModelLabel(label);
     setCostKnown(hasPriceData(modelNameRef.current));
     if (!hasConversation()) {
-      updateBanner({ model: label, provider: providerRef.current.id });
+      updateBanner({ model: label, provider: source });
     }
     // Persist: update the session row (so --resume restores this model) and write
     // the preference to ~/.cc/config.json (so it's the default next launch).
@@ -721,7 +731,7 @@ export function useAgentSession(deps: {
         "error",
       ),
     );
-    note(`model → ${label}`);
+    note(`model → ${label} (${source})`);
   }
 
   function formatConfigValue(value: unknown): string {
@@ -779,6 +789,15 @@ export function useAgentSession(deps: {
     if (assemblyRef.current) {
       await assemblyRef.current;
       return;
+    }
+    // Seed the resumed transcript into the scrollback (once, on the first
+    // call) so a `--resume` launch shows the prior conversation it continues.
+    const resumed = props.resumedMessages;
+    if (resumed?.length) {
+      const items = itemsFromMessages(resumed).map(
+        (it) => ({ ...it, id: nextId() }) as Item,
+      );
+      setHistory((prev) => [...prev, ...items]);
     }
     const p = (async () => {
       assembledRef.current = await assemble();
@@ -855,14 +874,20 @@ export function useAgentSession(deps: {
     }
   }
 
-  /** List every configured model id (/model with no argument). */
+  /** List every configured model, grouped by source (/model with no argument). */
   function listModels(): void {
-    const ids: string[] = [];
-    for (const pc of Object.values(props.config.providers)) {
-      for (const m of pc.models ?? [])
-        ids.push(m.name ? `${m.id} (${m.name})` : m.id);
+    const lines: string[] = [];
+    for (const [key, pc] of Object.entries(props.config.providers)) {
+      const models = pc.models ?? [];
+      if (models.length === 0) continue;
+      const ids = models.map((m) =>
+        m.name && m.name !== m.id ? `${m.id} (${m.name})` : m.id,
+      );
+      lines.push(`  ${providerDisplayName(key)}: ${ids.join(", ")}`);
     }
-    note(ids.length ? `models: ${ids.join(", ")}` : "no models configured");
+    note(
+      lines.length ? `models:\n${lines.join("\n")}` : "no models configured",
+    );
   }
 
   async function submitPrompt(
@@ -1113,9 +1138,7 @@ export function useAgentSession(deps: {
         break;
       }
       case "resume":
-        note(
-          "resume from the TUI isn't supported yet — start with `cc --resume`",
-        );
+        handleResume(action.id);
         break;
       case "copy-last":
         copyLast();
@@ -1149,6 +1172,89 @@ export function useAgentSession(deps: {
         note(action.message, "error");
         break;
     }
+  }
+
+  // `/resume` — bare lists recent sessions; with an id (or unique prefix) it
+  // swaps the running conversation for the saved one: messages, session row,
+  // mode/thinking/model, and running totals all restore from the store, and the
+  // scrollback is rebuilt from the stored transcript. Deferred while busy
+  // (classifyBusyAction), so it never races an in-flight turn.
+  function handleResume(id?: string): void {
+    if (!id) {
+      const rows = props.store.listSessions(10);
+      if (rows.length === 0) {
+        note("no saved sessions yet");
+        return;
+      }
+      const lines = rows.map((s) => {
+        const when = new Date(s.updatedAt)
+          .toISOString()
+          .replace("T", " ")
+          .slice(0, 16);
+        return `  ${s.id.slice(0, 8)}  ${when}  ${s.title ?? "(untitled)"}`;
+      });
+      note(
+        `sessions (newest first):\n${lines.join("\n")}\n\nresume one with /resume <id>`,
+      );
+      return;
+    }
+    const target = resolveSession(props.store, id);
+    if (!target) {
+      note(`no session matching "${id}"`, "error");
+      return;
+    }
+    if (target.id === sessionIdRef.current) {
+      note("that session is already active");
+      return;
+    }
+    const messages = props.store.loadMessages(target.id);
+    messagesRef.current = messages;
+    persistedRef.current = messages.length;
+    sessionIdRef.current = target.id;
+    // Restore the session's last-active mode/thinking via the raw state setters
+    // — the wrappers would write the values straight back to the row.
+    if (
+      target.mode === "normal" ||
+      target.mode === "plan" ||
+      target.mode === "auto"
+    ) {
+      modeRef.current = target.mode;
+      setModeState(target.mode);
+    }
+    const level = parseLevel(target.thinking ?? undefined);
+    if (level !== undefined) {
+      thinkingRef.current = level;
+      setThinkingState(level);
+    }
+    // Restore the session's model when it still resolves (the provider may have
+    // been removed since). Session-local: the saved config default is untouched.
+    const restored = resolveModel(props.config, target.model);
+    if (restored) {
+      try {
+        providerRef.current = createProvider(restored.providerConfig);
+        modelNameRef.current = restored.model.name ?? restored.model.id;
+        setModelLabel(restored.model.id);
+        setCostKnown(hasPriceData(modelNameRef.current));
+      } catch {
+        // unresolvable credentials — keep the current model
+      }
+    }
+    setCost(target.costUsd);
+    setTokens(target.inputTokens + target.outputTokens);
+    setTasks([]);
+    // Rebuild the scrollback from the stored transcript (replaces the old one).
+    setHistory(
+      itemsFromMessages(messages).map(
+        (it) => ({ ...it, id: nextId() }) as Item,
+      ),
+    );
+    queueMicrotask(() => runtime.clear());
+    if (props.config.hooks.SessionStart?.length) {
+      void runSessionStartHooks(props.config.hooks, "resume", hookContext());
+    }
+    note(
+      `↻ resumed session ${target.id.slice(0, 8)} (${messages.length} prior messages)`,
+    );
   }
 
   // `/init` — drive a real agent turn that investigates the repo and writes a
