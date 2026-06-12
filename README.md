@@ -1,8 +1,18 @@
-# cc
+# CanaryCode CLI
 
-A fast, minimal terminal coding agent. It runs on the Bun runtime with an [OpenTUI](https://github.com/sst/opentui) TUI and flexible model support. The core stays small. You get the quality-of-life features that matter: plan mode, auto mode, thinking modes, web search, sub-agents, custom agents, MCP, skills, hooks, an AI permission engine, and project-context files.
+A fast, minimal terminal coding agent (the `cc` command). It runs on the Bun runtime with an [OpenTUI](https://github.com/sst/opentui) TUI and flexible model support. The core stays small. You get the quality-of-life features that matter: plan mode, auto mode, thinking modes, web search, sub-agents, custom agents, MCP, skills, hooks, an AI permission engine, and project-context files.
 
 One engine drives two front-ends. A headless `-p` print mode handles scripting. An interactive TUI handles live work. Both run the same agent loop.
+
+## Powered by CanaryLLM
+
+CanaryCode CLI is built to run on **[CanaryLLM](https://canaryllm.canarycoders.es)** — our hosted multi-provider model gateway. It ships baked in as the `canaryllm` provider, so all you need is a key.
+
+> ### 🔑 Get an API key
+> Email **[contact@canarycoders.es](mailto:contact@canarycoders.es)** to request one. **Every CanaryLLM key starts with `clk…`.**
+> Plans, pricing, and signup: **<https://canaryllm.canarycoders.es/>**
+
+Set your key and you're ready — see [CanaryLLM](#canaryllm) under Configuration for the env-var and manual setup.
 
 ## Install
 
@@ -233,12 +243,22 @@ The TUI defaults to ASCII-safe icons. If your terminal uses a Nerd Font, enable 
 
 ### CanaryLLM
 
-[CanaryLLM](https://canaryllm.canarycoders.es) is a multi-provider gateway with OpenAI- and Anthropic-compatible endpoints. It ships baked in as a `canaryllm` provider. It stays inert until you set `CANARYLLM_API_KEY`. Once the key is present, `cc` discovers the gateway's chat models from the unauthenticated `GET /api/public/models` and makes them selectable through `--model <id>` and `/model`. You need no extra config:
+[CanaryLLM](https://canaryllm.canarycoders.es) ships baked in as the `canaryllm` provider and stays inert until you supply your key (every key starts with `clk…` — request one at [contact@canarycoders.es](mailto:contact@canarycoders.es)). Once the key is present, `cc` discovers the gateway's chat models from the unauthenticated `GET /api/public/models` and makes them selectable through `--model <id>` and `/model`.
+
+Supply the key by environment variable:
 
 ```bash
-export CANARYLLM_API_KEY=sk-...
+export CANARYLLM_API_KEY=clk...
 cc --model <a-canary-model-id> -p "say hi"
 ```
+
+…or set it manually on the baked-in provider with `/config set` (persists to `~/.cc/config.json` under `providers.canaryllm.apiKey`):
+
+```
+/config set providers.canaryllm.apiKey clk...
+```
+
+Display output redacts the key, and a literal `${CANARYLLM_API_KEY}` reference is preserved in the file rather than written as an interpolated secret.
 
 The preset is an `openai-compat` provider pinned to `https://canaryllm.canarycoders.es/v1`. The spec's `servers` list is localhost-only, so the base URL is hard-set. To use the Anthropic-compatible path instead, declare your own provider against `/v1/messages` with `"api": "anthropic"`.
 
