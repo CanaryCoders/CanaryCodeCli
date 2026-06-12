@@ -16,7 +16,7 @@ export interface BoxProps {
   children?: ReactNode;
   key?: React.Key;
   // Border
-  borderStyle?: "single" | "double" | "round" | "bold" | "classic";
+  borderStyle?: "single" | "double" | "round";
   borderColor?: string;
   borderDimColor?: boolean;
   // Flexbox layout
@@ -62,7 +62,7 @@ export interface TextProps {
   underline?: boolean;
   strikethrough?: boolean;
   inverse?: boolean;
-  wrap?: "wrap" | "truncate" | "end";
+  wrap?: "wrap" | "truncate";
 }
 
 export function Box(props: BoxProps): ReactElement {
@@ -83,10 +83,10 @@ function mapBorderStyle(
 ): string | boolean | undefined {
   if (style === undefined) return undefined;
   if (style === "round") return "rounded";
-  return typeof style === "string" ? style : "single";
+  return style;
 }
 
-/** OpenTUI-backed twin for future root-switch work. */
+/** Adapter: maps Box props onto OpenTUI's native <box> element. */
 export function OpenTuiBox({
   children,
   borderStyle,
@@ -112,7 +112,7 @@ function mapWrapMode(wrap: TextProps["wrap"]): "none" | "char" | "word" {
   return "none";
 }
 
-/** OpenTUI-backed twin for future root-switch work. */
+/** Adapter: maps Text props onto OpenTUI's native <text> element. */
 export function OpenTuiText({
   children,
   color,
