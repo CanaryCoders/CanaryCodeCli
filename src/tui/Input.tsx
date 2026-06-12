@@ -18,7 +18,7 @@
 // tested without a render; this component is a thin shell that mirrors the cursor
 // in state and renders the value with a fake inverse-block cursor (no chalk dep).
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import {
   cursorLineCol,
   EMPTY_PASTES,
@@ -29,7 +29,7 @@ import {
   stripEscapes,
   wrapDisplayLine,
 } from "./input-helpers.ts";
-import { useTuiInput } from "./keyboard.ts";
+import { useTuiInput, useTuiPaste } from "./keyboard.ts";
 import { Box, Text } from "./primitives.tsx";
 
 // ── the component ─────────────────────────────────────────────────────────────
@@ -96,26 +96,14 @@ export function MultilineInput({
   }
   const effectiveCursor = Math.min(cursor, value.length);
 
-  // Paste coalescing: a terminal delivers a large paste as several back-to-back
-  // stdin chunks, so Ink fires `useInput` once per chunk — each chunk would
-  // otherwise become its *own* `[Pasted …]` chip. We buffer consecutive printable
-  // input that arrives within the same event-loop turn and process it as one
-  // string on a deferred flush, so a single paste collapses into a single chip.
-  // The live `value`/`cursor` are mirrored in refs because the flush runs after
-  // React's state has moved on from the closure that scheduled it.
+  // The live value/cursor are mirrored in refs so each event applies against the
+  // newest edit even when several land in one tick (the `value` prop only catches
+  // up on the next render). `applyResult` updates the refs synchronously, so
+  // back-to-back keystrokes and pastes chain correctly.
   const valueRef = useRef(value);
   valueRef.current = value;
   const cursorRef = useRef(effectiveCursor);
   cursorRef.current = effectiveCursor;
-  const pasteBufRef = useRef("");
-  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // A queued paste flush must not fire onChange/onSubmit after unmount.
-  useEffect(
-    () => () => {
-      if (flushTimerRef.current) clearTimeout(flushTimerRef.current);
-    },
-    [],
-  );
 
   const applyResult = (result: InputResult): void => {
     if (result.type === "submit") {
@@ -134,67 +122,41 @@ export function MultilineInput({
     }
   };
 
-  // Drain the buffered paste/typed-text burst as a single insert, so a chunked
-  // paste is registered once (one chip) rather than per-chunk.
-  const flushPaste = (): void => {
-    if (flushTimerRef.current) {
-      clearTimeout(flushTimerRef.current);
-      flushTimerRef.current = null;
-    }
-    const text = pasteBufRef.current;
-    pasteBufRef.current = "";
-    if (!text) return;
-    applyResult(
-      reduceInput(
-        { value: valueRef.current, cursor: cursorRef.current },
-        text,
-        {},
-        { capture, registerPaste },
-      ),
-    );
-  };
-
+  // Key events apply immediately — one keystroke is one edit. (Ink used to
+  // deliver a paste as a flurry of keystrokes, so the input buffered printable
+  // input on a deferred flush to rebuild a paste as a single chip. OpenTUI
+  // delivers a bracketed paste as one atomic event instead — see useTuiPaste
+  // below — so that coalescing is no longer needed.)
   useTuiInput(
     (input, key) => {
-      // Raw Esc bursts can arrive with key.escape missing when the key is spammed.
-      // They are handled by App's global cancel listener; never buffer/render them.
+      // Raw Esc bursts can arrive with key.escape missing when the key is
+      // spammed. They are handled by App's global cancel listener; never render
+      // them as input.
       const cleanInput = stripEscapes(input);
       if (input && !cleanInput) return;
-
-      // Printable input with no key chord is either a keystroke or one chunk of a
-      // paste — buffer it and flush the whole burst together on the next tick.
-      const printable =
-        cleanInput &&
-        !key.ctrl &&
-        !key.return &&
-        !key.backspace &&
-        !key.delete &&
-        !key.leftArrow &&
-        !key.rightArrow &&
-        !key.upArrow &&
-        !key.downArrow &&
-        !key.escape &&
-        !key.tab;
-      if (printable) {
-        // Buffer and flush on the next tick. All the chunks of one paste (whether
-        // the terminal sends it as a few big blocks or many single chars) arrive
-        // within the *same* event-loop turn, so they accumulate into one buffer
-        // and are inserted as a single chip; an ordinary keystroke is a lone chunk
-        // flushed a sub-millisecond tick later, which is imperceptible.
-        pasteBufRef.current += cleanInput;
-        if (!flushTimerRef.current) {
-          flushTimerRef.current = setTimeout(flushPaste, 0);
-        }
-        return;
-      }
-      // Any control/navigation key first commits the buffered burst (preserving
-      // order), then applies its own effect against the now-current value.
-      flushPaste();
       applyResult(
         reduceInput(
           { value: valueRef.current, cursor: cursorRef.current },
           cleanInput,
           key,
+          { capture, registerPaste },
+        ),
+      );
+    },
+    { isActive },
+  );
+
+  // A terminal paste arrives as a single bracketed-paste event, so it goes
+  // straight through `reduceInput` as one insert with an empty key — which
+  // collapses a large paste into a single `[Pasted …]` chip. The chip threshold
+  // lives in reduceInput, so chip semantics match the old coalescing path.
+  useTuiPaste(
+    (text) => {
+      applyResult(
+        reduceInput(
+          { value: valueRef.current, cursor: cursorRef.current },
+          text,
+          {},
           { capture, registerPaste },
         ),
       );

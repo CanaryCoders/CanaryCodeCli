@@ -6,8 +6,13 @@
 // switch can replace only this boundary.
 
 import type { KeyEvent as OpenTuiKeyEvent } from "@opentui/core";
-import { useKeyboard } from "@opentui/react";
+import { useKeyboard, usePaste } from "@opentui/react";
 import type { InputKey } from "./input-helpers.ts";
+
+// OpenTUI's PasteEvent carries the paste as raw UTF-8 bytes; core decodes it with
+// a shared TextDecoder (its exported decoder isn't in the public type surface, so
+// we mirror it here rather than import an untyped symbol).
+const pasteDecoder = new TextDecoder();
 
 export type TuiKey = InputKey;
 
@@ -57,6 +62,24 @@ export function useTuiInput(
     if (options?.isActive === false) return;
     const { input, key } = normalizeOpenTuiKey(event);
     handler(input, key);
+  });
+}
+
+/**
+ * Production adapter: OpenTUI bracketed-paste event → decoded text.
+ *
+ * OpenTUI parses a bracketed paste as a single `paste` event carrying the raw
+ * bytes, separate from key events — so the host receives the whole paste at once
+ * and no longer has to coalesce per-keystroke chunks to reconstruct it (which is
+ * what Ink forced, since it delivered a paste as a flurry of `useInput` calls).
+ */
+export function useTuiPaste(
+  handler: (text: string) => void,
+  options?: TuiInputOptions,
+): void {
+  usePaste((event) => {
+    if (options?.isActive === false) return;
+    handler(pasteDecoder.decode(event.bytes));
   });
 }
 
