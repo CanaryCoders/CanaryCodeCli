@@ -1,11 +1,11 @@
-# cc
+# canarycode
 
-Project context for `cc`. This file is prepended to the system prompt so the
+Project context for `canarycode`. This file is prepended to the system prompt so the
 agent knows how to work in this repo. Keep it short and high-signal.
 
 ## Overview
 
-`cc` is a fast, minimal terminal coding agent. One agent loop drives two
+`canarycode` is a fast, minimal terminal coding agent. One agent loop drives two
 front-ends: a headless `-p` print mode for scripting and an interactive OpenTUI TUI.
 Core stays small (target ~2000 LOC); QoL features include plan/auto/thinking
 modes, web search, sub-agents, custom agents, MCP, skills, hooks, an AI
@@ -18,7 +18,7 @@ docs.
 - Language: **TypeScript**, ESNext modules, `strict` on, `verbatimModuleSyntax`
   (use `import type` for type-only imports; `.ts`/`.tsx` extensions in imports).
 - TUI: **OpenTUI** (`@opentui/core`, `@opentui/react`) + React 19.
-- Lint/format: **Biome**. Storage: SQLite via Bun (`~/.cc/sessions.db`).
+- Lint/format: **Biome**. Storage: SQLite via Bun (`~/.canarycode/sessions.db`).
 
 ## Layout (`src/`)
 
@@ -36,7 +36,7 @@ docs.
   opencode's credentials); `registry.ts` is the single config-aware authority
   (built-in + user extension lists, toggle enforcement, startup, presets,
   command dispatch); `loader.ts` discovers and trust-checks user extensions
-  from `~/.cc/extensions/` and `./.cc/extensions/`.
+  from `~/.canarycode/extensions/` and `./.canarycode/extensions/`.
 - `config.ts`, `session.ts`, `context.ts`, `commands.ts`, `thinking.ts`,
   `diff.ts`, `markdown.ts`, `fuzzy.ts` — supporting modules.
 - `tui/` — OpenTUI components (`App.tsx`, `Message.tsx`, `Input.tsx`, …) routed
@@ -60,7 +60,7 @@ Validate changes with `bun test && bun run check`.
 - Keep the core lean; justify any new dependency in the PR or commit message.
 - Every tool carries a `readOnly` flag — plan mode filters on it; preserve it
   when adding tools.
-- Config lives at `~/.cc/config.json`; `${VAR}` references interpolate from env.
+- Config lives at `~/.canarycode/config.json`; `${VAR}` references interpolate from env.
 - Layering: core (`agent.ts`, `provider.ts`, `tools.ts`, `session.ts`) never
   imports from `extensions/` or `tui/`. Extensions import core +
   `extension.ts`, never each other and never frontends. Frontends import

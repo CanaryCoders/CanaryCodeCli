@@ -158,7 +158,7 @@ async function duckDuckGoSearch(
     throw new Error(
       "duckduckgo blocked this request (rate limit / anomaly page). " +
         "Retry shortly, or configure a keyed provider: set " +
-        'webSearch.provider to "brave" or "tavily" with an apiKey in ~/.cc/config.json.',
+        'webSearch.provider to "brave" or "tavily" with an apiKey in ~/.canarycode/config.json.',
     );
   }
   return [];
@@ -302,7 +302,7 @@ interface TavilyResult {
 
 // ── direct URL fetching ─────────────────────────────────────────────────────
 
-const WEB_FETCH_UA = `cc/${Bun.version} (+https://github.com/kyletsang/cc)`;
+const WEB_FETCH_UA = `canarycode/${Bun.version} (+https://github.com/kyletsang/canarycode)`;
 const DEFAULT_MAX_CHARS = 20_000;
 const MAX_CHARS = 50_000;
 

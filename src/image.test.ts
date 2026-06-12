@@ -56,7 +56,7 @@ describe("extractImagePaths", () => {
 });
 
 describe("readImageFile", () => {
-  const path = join(tmpdir(), "cc-image-test.png");
+  const path = join(tmpdir(), "canarycode-image-test.png");
   afterEach(async () => {
     await rm(path, { force: true });
   });
@@ -71,7 +71,7 @@ describe("readImageFile", () => {
 
   test("throws on a missing file", async () => {
     await expect(
-      readImageFile(join(tmpdir(), "cc-nope.png")),
+      readImageFile(join(tmpdir(), "canarycode-nope.png")),
     ).rejects.toThrow();
   });
 

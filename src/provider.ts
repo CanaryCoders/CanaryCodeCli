@@ -569,7 +569,7 @@ function openaiCompatProvider(opts: OpenAICompatOptions): Provider {
 //
 // The subscription path is NOT the Chat Completions API above: it speaks the
 // Responses API served from a special host, authenticated with the OAuth bearer
-// token in ~/.cc/auth.json (see auth.ts). The request body must force a stateless,
+// token in ~/.canarycode/auth.json (see auth.ts). The request body must force a stateless,
 // streaming shape (`store:false`, encrypted reasoning carried server-side) and use
 // the Responses item vocabulary (`input_text`/`output_text`, `function_call`).
 
@@ -678,7 +678,7 @@ export function toResponsesInput(messages: Message[]): ResponsesInputItem[] {
 
 /**
  * Map an extended-thinking token budget onto a Codex reasoning effort. This is how
- * cc's thinking levels drive Codex: the four `/think` levels (off / think /
+ * canarycode's thinking levels drive Codex: the four `/think` levels (off / think /
  * think-hard / ultrathink → budgets 0 / 4k / 10k / 32k) map onto the four useful
  * Codex efforts low / medium / high / xhigh. Codex models always reason, so "off"
  * floors at "low" rather than disabling it; "ultrathink" reaches the top "xhigh".
@@ -888,7 +888,7 @@ function openaiResponsesProvider(opts: OpenAIResponsesOptions): Provider {
 /**
  * Build a Provider from a resolved ProviderConfig. The optional `tokenGetter` is
  * only consulted by the `openai-responses` (Codex) provider; it defaults to one
- * backed by ~/.cc/auth.json, so existing call sites need not pass anything.
+ * backed by ~/.canarycode/auth.json, so existing call sites need not pass anything.
  */
 export function createProvider(
   cfg: ProviderConfig,
@@ -898,13 +898,15 @@ export function createProvider(
     case "anthropic":
       if (!cfg.apiKey) {
         throw new Error(
-          "cc: anthropic provider requires an apiKey (set ANTHROPIC_API_KEY)",
+          "canarycode: anthropic provider requires an apiKey (set ANTHROPIC_API_KEY)",
         );
       }
       return anthropicProvider({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl });
     case "openai-compat":
       if (!cfg.baseUrl) {
-        throw new Error("cc: openai-compat provider requires a baseUrl");
+        throw new Error(
+          "canarycode: openai-compat provider requires a baseUrl",
+        );
       }
       return openaiCompatProvider({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl });
     case "openai-responses":
@@ -913,7 +915,7 @@ export function createProvider(
       });
     default:
       throw new Error(
-        `cc: unknown provider api "${(cfg as ProviderConfig).api}"`,
+        `canarycode: unknown provider api "${(cfg as ProviderConfig).api}"`,
       );
   }
 }

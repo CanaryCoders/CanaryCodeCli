@@ -29,7 +29,7 @@ export interface ExtensionCommandContext {
   readLine?: () => Promise<string>;
 }
 
-/** A login-style command surfaced as `cc <name>` and `/<name>`. */
+/** A login-style command surfaced as `canarycode <name>` and `/<name>`. */
 export interface ExtensionCommand {
   /** Command word, e.g. "login-codex". */
   name: string;
@@ -63,7 +63,7 @@ export interface Extension {
    * optional one-line note.
    */
   startup?(config: Config, mode: "fast" | "live"): Promise<string | undefined>;
-  /** Login-style commands, surfaced as `cc <name>` and `/<name>` while enabled. */
+  /** Login-style commands, surfaced as `canarycode <name>` and `/<name>` while enabled. */
   commands?: ExtensionCommand[];
   /** Per-session factory. A fresh instance per assembly keeps session state
    * (MCP connections, …) from leaking across sessions. */

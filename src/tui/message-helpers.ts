@@ -107,7 +107,7 @@ const TOOL_SUMMARY_FIELD: Record<string, string> = {
   spawn_agent: "task",
 };
 
-/** Split cc's MCP namespace (`mcp__server__tool`) into display-friendly parts. */
+/** Split canarycode's MCP namespace (`mcp__server__tool`) into display-friendly parts. */
 export function parseMcpToolName(
   name: string,
 ): { server: string; tool: string } | null {

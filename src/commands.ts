@@ -146,7 +146,7 @@ const BASE_COMMANDS: CommandSpec[] = [
   },
   {
     name: "init",
-    description: "generate a starter CC.md project-context file",
+    description: "generate a starter CANARYCODE.md project-context file",
   },
   {
     name: "extensions",
@@ -157,14 +157,14 @@ const BASE_COMMANDS: CommandSpec[] = [
 
 /** The static commands that close the `/help` listing. */
 const TAIL_COMMANDS: CommandSpec[] = [
-  { name: "update", description: "update cc to the latest release" },
+  { name: "update", description: "update canarycode to the latest release" },
   {
     name: "changelog",
     usage: "[version]",
     description: "show release notes (default: this version)",
   },
   { name: "help", aliases: ["?"], description: "show this command list" },
-  { name: "exit", aliases: ["quit", "q"], description: "exit cc" },
+  { name: "exit", aliases: ["quit", "q"], description: "exit canarycode" },
 ];
 
 /** Command words owned by the base command set (names and aliases). An

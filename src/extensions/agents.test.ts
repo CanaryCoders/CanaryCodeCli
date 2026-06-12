@@ -133,7 +133,7 @@ describe("agentsExtension factory", () => {
   });
 
   test("custom agents are discovered and announced via the factory", async () => {
-    const root = await mkdtemp(join(tmpdir(), "cc-agents-test-"));
+    const root = await mkdtemp(join(tmpdir(), "canarycode-agents-test-"));
     try {
       await mkdir(root, { recursive: true });
       await writeFile(

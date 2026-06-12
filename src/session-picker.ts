@@ -1,4 +1,4 @@
-// session-picker.ts — the interactive list a bare `cc --resume` opens.
+// session-picker.ts — the interactive list a bare `canarycode --resume` opens.
 //
 // Runs on the launching terminal BEFORE the OpenTUI renderer mounts (the same
 // window where extension trust confirms happen), so it needs no React: a few

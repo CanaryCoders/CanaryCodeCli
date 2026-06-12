@@ -5,7 +5,7 @@ name: release
 # This builds all platform binaries, publishes a GitHub Release whose notes are
 # the tag's section of CHANGELOG.md (add one before tagging — the job fails
 # without it), and updates the Nix flake (nix/release.nix) on main so `nix run`
-# tracks the new release. The CLI surfaces those notes via `cc changelog` and
+# tracks the new release. The CLI surfaces those notes via `canarycode changelog` and
 # the post-update what's-new banner.
 #
 # Security note: the only workflow inputs used are the built-in GITHUB_REF_NAME
@@ -53,10 +53,10 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           mkdir -p dist
           for entry in \
-            "bun-linux-x64:cc-linux-x64" \
-            "bun-linux-arm64:cc-linux-arm64" \
-            "bun-darwin-x64:cc-darwin-x64" \
-            "bun-darwin-arm64:cc-darwin-arm64"; do
+            "bun-linux-x64:canarycode-linux-x64" \
+            "bun-linux-arm64:canarycode-linux-arm64" \
+            "bun-darwin-x64:canarycode-darwin-x64" \
+            "bun-darwin-arm64:canarycode-darwin-arm64"; do
             target="${entry%%:*}"
             out="${entry##*:}"
             echo "building $out ($target)"
@@ -67,7 +67,7 @@ jobs:
 
       - name: Generate checksums
         working-directory: dist
-        run: sha256sum cc-* > checksums.txt
+        run: sha256sum canarycode-* > checksums.txt
 
       - name: Extract release notes from CHANGELOG.md
         run: |
@@ -107,10 +107,10 @@ jobs:
           {
             version = "$VERSION";
             hashes = {
-              "x86_64-linux" = "$(h cc-linux-x64)";
-              "aarch64-linux" = "$(h cc-linux-arm64)";
-              "x86_64-darwin" = "$(h cc-darwin-x64)";
-              "aarch64-darwin" = "$(h cc-darwin-arm64)";
+              "x86_64-linux" = "$(h canarycode-linux-x64)";
+              "aarch64-linux" = "$(h canarycode-linux-arm64)";
+              "x86_64-darwin" = "$(h canarycode-darwin-x64)";
+              "aarch64-darwin" = "$(h canarycode-darwin-arm64)";
             };
           }
           EOF

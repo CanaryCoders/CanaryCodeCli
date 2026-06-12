@@ -1,13 +1,13 @@
-# Home Manager module for cc (CanaryCode). Imported by flake.nix as
+# Home Manager module for canarycode (CanaryCode). Imported by flake.nix as
 # `homeManagerModules.default`, curried with the flake's `self` so the default
 # package resolves to this flake's release for the user's system.
 #
-# Usage (in a Home Manager config that has this flake as an input named `cc`):
+# Usage (in a Home Manager config that has this flake as an input named `canarycode`):
 #
-#   imports = [ cc.homeManagerModules.default ];
-#   programs.cc = {
+#   imports = [ canarycode.homeManagerModules.default ];
+#   programs.canarycode = {
 #     enable = true;
-#     # optional — when set, renders a read-only ~/.cc/config.json:
+#     # optional — when set, renders a read-only ~/.canarycode/config.json:
 #     settings = {
 #       model = "opus";
 #       thinking = "off";
@@ -21,26 +21,26 @@ self:
   ...
 }:
 let
-  cfg = config.programs.cc;
+  cfg = config.programs.canarycode;
 in
 {
-  options.programs.cc = {
-    enable = lib.mkEnableOption "cc, a fast minimal terminal coding agent";
+  options.programs.canarycode = {
+    enable = lib.mkEnableOption "canarycode, a fast minimal terminal coding agent";
 
     package = lib.mkOption {
       type = lib.types.package;
       default = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
-      defaultText = lib.literalExpression "cc.packages.\${system}.default";
-      description = "The cc package to install.";
+      defaultText = lib.literalExpression "canarycode.packages.\${system}.default";
+      description = "The canarycode package to install.";
     };
 
     settings = lib.mkOption {
       type = lib.types.nullOr (lib.types.attrsOf lib.types.anything);
       default = null;
       description = ''
-        Declarative contents of ~/.cc/config.json. When set, the file is managed
+        Declarative contents of ~/.canarycode/config.json. When set, the file is managed
         by Home Manager (read-only). When null (the default), the config file is
-        left mutable and user-managed, as `cc` writes it itself.
+        left mutable and user-managed, as `canarycode` writes it itself.
       '';
       example = lib.literalExpression ''
         {
@@ -55,9 +55,9 @@ in
   config = lib.mkIf cfg.enable {
     home.packages = [ cfg.package ];
 
-    # Self-update is already disabled by the package wrapper (CC_DISABLE_UPDATE=1);
+    # Self-update is already disabled by the package wrapper (CANARYCODE_DISABLE_UPDATE=1);
     # only manage the config file when the user opts in with `settings`.
-    home.file.".cc/config.json" = lib.mkIf (cfg.settings != null) {
+    home.file.".canarycode/config.json" = lib.mkIf (cfg.settings != null) {
       text = builtins.toJSON cfg.settings;
     };
   };

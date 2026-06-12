@@ -20,7 +20,7 @@ export async function readClipboardImage(
 ): Promise<ImageData | null> {
   if (platform !== "darwin") return null;
 
-  const out = join(tmpdir(), `cc-clip-${process.pid}.png`);
+  const out = join(tmpdir(), `canarycode-clip-${process.pid}.png`);
   // AppleScript: cast the clipboard to PNG data and write it out; "none" when the
   // clipboard holds no image (the «class PNGf» coercion fails).
   const script = [

@@ -1,11 +1,11 @@
 #!/usr/bin/env bun
 
-// cc — a fast, minimal terminal coding agent.
+// canarycode — a fast, minimal terminal coding agent.
 // Entry point: arg parse + mode dispatch (headless vs TUI).
 //
-// The headless print path (`cc -p "<prompt>"`) runs the shared agent loop once
+// The headless print path (`canarycode -p "<prompt>"`) runs the shared agent loop once
 // and streams the result to stdout, then exits. Piped stdin is folded into the
-// prompt as context (`git diff | cc -p "commit message"`). Without a prompt,
+// prompt as context (`git diff | canarycode -p "commit message"`). Without a prompt,
 // the interactive TUI starts instead.
 
 import { type AgentMode, roleForMode, runAgent } from "./agent.ts";
@@ -184,21 +184,21 @@ function printUsage(
 ): void {
   // Subcommand lines for extension commands, aligned like the rest.
   const builtin = extCommands.map((c) => {
-    const left = `cc ${c.name}${c.usage ? ` ${c.usage}` : ""}`;
-    return `  ${left.padEnd(25)}  ${c.description}`;
+    const left = `canarycode ${c.name}${c.usage ? ` ${c.usage}` : ""}`;
+    return `  ${left.padEnd(33)}  ${c.description}`;
   });
   console.log(
     [
-      "cc — minimal AI coding CLI",
+      "canarycode — minimal AI coding CLI",
       "",
       "Usage:",
-      '  cc -p "<prompt>"   headless print mode (streams to stdout, exits)',
-      "  cc                 interactive TUI",
+      '  canarycode -p "<prompt>"   headless print mode (streams to stdout, exits)',
+      "  canarycode                 interactive TUI",
       "",
       "Subcommands:",
       ...builtin,
-      "  cc update                  update cc to the latest release (binary installs)",
-      "  cc changelog [version]     show release notes (default: this version)",
+      "  canarycode update                  update canarycode to the latest release (binary installs)",
+      "  canarycode changelog [version]     show release notes (default: this version)",
       "",
       "Flags:",
       "  -p, --print <s>    run a single prompt headless",
@@ -218,13 +218,13 @@ function printUsage(
       "  --version          show version",
       "",
       "Stdin is folded into the prompt as context:",
-      '  git diff | cc -p "write a commit message"',
+      '  git diff | canarycode -p "write a commit message"',
       "",
       "Resume a conversation:",
-      "  cc --resume                 pick a recent session to reopen in the TUI",
-      "  cc --resume 1a2b3c4d        reopen a session by id (prefix ok)",
-      "  cc --continue               reopen the most recent session",
-      '  cc -c -p "and now?"         continue the most recent session headless',
+      "  canarycode --resume                 pick a recent session to reopen in the TUI",
+      "  canarycode --resume 1a2b3c4d        reopen a session by id (prefix ok)",
+      "  canarycode --continue               reopen the most recent session",
+      '  canarycode -c -p "and now?"         continue the most recent session headless',
       "  (inside the TUI, /resume lists sessions and /resume <id> switches)",
     ].join("\n"),
   );
@@ -254,7 +254,7 @@ async function runHeadless(args: Args): Promise<number> {
     prompt = prompt ? `${prompt}\n\n--- stdin ---\n${stdin}` : stdin;
   }
   if (!prompt.trim()) {
-    console.error('cc: empty prompt (pass -p "..." or pipe stdin)');
+    console.error('canarycode: empty prompt (pass -p "..." or pipe stdin)');
     return 1;
   }
 
@@ -295,7 +295,9 @@ async function runHeadless(args: Args): Promise<number> {
   const wantedId = args.model ?? modelForRole(config, roleForMode(mode));
   const resolved = resolveModel(config, wantedId);
   if (!resolved) {
-    console.error("cc: no model available; check ~/.cc/config.json providers");
+    console.error(
+      "canarycode: no model available; check ~/.canarycode/config.json providers",
+    );
     return 1;
   }
 
@@ -342,9 +344,9 @@ async function runHeadless(args: Args): Promise<number> {
     if (!target) {
       store.close();
       if (typeof args.resume === "string") {
-        console.error(`cc: no session matching "${args.resume}"`);
+        console.error(`canarycode: no session matching "${args.resume}"`);
       } else {
-        console.error("cc: no sessions to resume");
+        console.error("canarycode: no sessions to resume");
       }
       return 1;
     }
@@ -656,7 +658,7 @@ async function runHeadless(args: Args): Promise<number> {
       flushMarkdown();
       process.stdout.write("\n");
     }
-    console.error(`cc: ${(err as Error).message}`);
+    console.error(`canarycode: ${(err as Error).message}`);
     sawError = true;
   } finally {
     process.off("SIGINT", onSigint);
@@ -735,8 +737,8 @@ async function runTui(args: Args): Promise<number> {
     confirm: async ({ name, path, changed }) =>
       confirm(
         changed
-          ? `cc: project extension "${name}" (${path}) CHANGED since you approved it — load the new version?`
-          : `cc: load project extension "${name}" from ${path}?`,
+          ? `canarycode: project extension "${name}" (${path}) CHANGED since you approved it — load the new version?`
+          : `canarycode: load project extension "${name}" from ${path}?`,
       ),
   });
 
@@ -754,7 +756,7 @@ async function runTui(args: Args): Promise<number> {
     const target = resolveSession(store, args.resume);
     if (!target) {
       store.close();
-      console.error(`cc: no session matching "${args.resume}"`);
+      console.error(`canarycode: no session matching "${args.resume}"`);
       return 1;
     }
     resumedSession = target;
@@ -763,7 +765,7 @@ async function runTui(args: Args): Promise<number> {
     const target = store.listSessions(1)[0];
     if (!target) {
       store.close();
-      console.error("cc: no sessions to resume");
+      console.error("canarycode: no sessions to resume");
       return 1;
     }
     resumedSession = target;
@@ -773,13 +775,13 @@ async function runTui(args: Args): Promise<number> {
     const rows = store.listSessions(15);
     if (rows.length === 0) {
       store.close();
-      console.error("cc: no sessions to resume");
+      console.error("canarycode: no sessions to resume");
       return 1;
     }
     const picked = await pickSession(rows);
     if (!picked) {
       store.close();
-      console.log("cc: resume cancelled");
+      console.log("canarycode: resume cancelled");
       return 0;
     }
     resumedSession = picked;
@@ -793,7 +795,9 @@ async function runTui(args: Args): Promise<number> {
   const resolved = resolveModel(config, args.model ?? resumedSession?.model);
   if (!resolved) {
     store.close();
-    console.error("cc: no model available; check ~/.cc/config.json providers");
+    console.error(
+      "canarycode: no model available; check ~/.canarycode/config.json providers",
+    );
     return 1;
   }
 
@@ -898,7 +902,7 @@ async function runTui(args: Args): Promise<number> {
   return 0;
 }
 
-/** Run an extension command (`cc login-codex`, …) as a CLI subcommand:
+/** Run an extension command (`canarycode login-codex`, …) as a CLI subcommand:
  * console output, prompt() for manual paste flows. */
 async function runExtensionCli(
   config: Config,
@@ -916,13 +920,13 @@ async function runExtensionCli(
     );
     return 0;
   } catch (err) {
-    console.error(`cc ${cmd.name} failed: ${errorMessage(err)}`);
+    console.error(`canarycode ${cmd.name} failed: ${errorMessage(err)}`);
     return 1;
   }
 }
 
 /** The extension commands /help and usage should list — config-aware, but a
- * broken config must not break `cc --help`. */
+ * broken config must not break `canarycode --help`. */
 async function usageCommands(): Promise<
   { name: string; usage?: string; description: string }[]
 > {
@@ -960,7 +964,7 @@ async function tryExtensionSubcommand(
   const owner = findCommandAnywhere(word);
   if (owner) {
     console.error(
-      `cc: "${word}" belongs to the disabled extension "${owner.extension.name}" — enable it with /extensions in the TUI, or set {"extensions":{"${owner.extension.name}":true}} in ~/.cc/config.json`,
+      `canarycode: "${word}" belongs to the disabled extension "${owner.extension.name}" — enable it with /extensions in the TUI, or set {"extensions":{"${owner.extension.name}":true}} in ~/.canarycode/config.json`,
     );
     return 1;
   }
@@ -968,7 +972,7 @@ async function tryExtensionSubcommand(
 }
 
 /**
- * `cc update` — check GitHub releases and, if newer, download + verify + swap the
+ * `canarycode update` — check GitHub releases and, if newer, download + verify + swap the
  * running binary. No-ops with a clear message when self-update is unavailable
  * (source run, Nix install, non-writable dir, or disabled in config).
  */
@@ -982,7 +986,7 @@ async function runUpdate(): Promise<number> {
   }
   const reason = updateDisabledReason(config);
   if (reason) {
-    console.error(`cc update: unavailable — ${reason}`);
+    console.error(`canarycode update: unavailable — ${reason}`);
     return 1;
   }
   const result = await applyUpdate(config, (msg) => console.log(`  ${msg}`));
@@ -991,7 +995,7 @@ async function runUpdate(): Promise<number> {
 }
 
 /**
- * `cc changelog [version]` — print a release's notes. Bare asks for the running
+ * `canarycode changelog [version]` — print a release's notes. Bare asks for the running
  * version and falls back to the latest release (covers source runs whose
  * version was never published); an explicit version must exist.
  */
@@ -1002,12 +1006,12 @@ async function runChangelog(version?: string): Promise<number> {
   if (!result) {
     console.error(
       version
-        ? `cc changelog: no release notes found for ${version}`
-        : "cc changelog: no release notes available (couldn't reach GitHub releases)",
+        ? `canarycode changelog: no release notes found for ${version}`
+        : "canarycode changelog: no release notes available (couldn't reach GitHub releases)",
     );
     return 1;
   }
-  console.log(`cc ${result.version}\n\n${result.notes.trim()}`);
+  console.log(`canarycode ${result.version}\n\n${result.notes.trim()}`);
   return 0;
 }
 
@@ -1032,12 +1036,12 @@ async function main(): Promise<void> {
     return;
   }
   if (args.version) {
-    console.log(`cc ${VERSION}`);
+    console.log(`canarycode ${VERSION}`);
     return;
   }
   // Headless when a prompt is given (resume included), or when --resume is used
   // without a terminal (the prompt then comes from piped stdin). An interactive
-  // `cc --resume [id]` with no prompt reopens the session in the TUI instead.
+  // `canarycode --resume [id]` with no prompt reopens the session in the TUI instead.
   if (
     args.prompt !== undefined ||
     ((args.resume !== undefined || args.continueLatest) && !process.stdin.isTTY)

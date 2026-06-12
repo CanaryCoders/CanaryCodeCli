@@ -1,8 +1,8 @@
 // hooks.ts — Claude Code-compatible lifecycle hooks.
 //
 // Hooks are shell commands run via the system shell (see shell.ts) at agent
-// lifecycle events. cc accepts
-// Claude Code's nested matcher-group schema and the older cc flat shorthand. Hook
+// lifecycle events. canarycode accepts
+// Claude Code's nested matcher-group schema and the older canarycode flat shorthand. Hook
 // commands receive a JSON payload on stdin with Claude-style field names
 // (`hook_event_name`, `tool_name`, `tool_input`, etc.) plus legacy aliases
 // (`event`, `tool`, `input`) so existing scripts keep working.
@@ -50,11 +50,11 @@ function hasNestedHooks(
 
 function timeoutMs(raw: number | undefined, nested: boolean): number {
   if (!raw || raw <= 0) return DEFAULT_TIMEOUT_MS;
-  // Claude-style nested hooks use seconds; cc's legacy flat shorthand used ms.
+  // Claude-style nested hooks use seconds; canarycode's legacy flat shorthand used ms.
   return nested ? raw * 1000 : raw;
 }
 
-/** Flatten Claude matcher groups and cc legacy entries into command hooks. */
+/** Flatten Claude matcher groups and canarycode legacy entries into command hooks. */
 function normalizeEventHooks(
   event: HookEventName,
   entries: HookConfig[] | undefined,
@@ -116,7 +116,7 @@ function basePayload(event: HookEventName, ctx: HookContext = {}) {
     transcript_path: ctx.transcriptPath,
     cwd: ctx.cwd ?? process.cwd(),
     hook_event_name: event,
-    // Legacy aliases retained for old cc hook scripts.
+    // Legacy aliases retained for old canarycode hook scripts.
     event,
   };
 }
@@ -206,7 +206,7 @@ function preToolJsonDecision(stdout: string): PreToolDecision | undefined {
     case "block":
       return { allow: false, reason: reason || "blocked by a PreToolUse hook" };
     case "ask":
-      // cc has no hook-driven ask escalation yet; fail closed with the hook reason.
+      // canarycode has no hook-driven ask escalation yet; fail closed with the hook reason.
       return {
         allow: false,
         reason: reason || "PreToolUse hook requested user approval",
@@ -225,7 +225,7 @@ export interface PreToolDecision {
 /**
  * Run all matching `PreToolUse` hooks in order. Claude-style JSON stdout can
  * allow/deny; exit code 2 blocks; legacy compatibility also blocks on any other
- * non-zero exit because older cc documented that behavior.
+ * non-zero exit because older canarycode documented that behavior.
  */
 export async function runPreToolHooks(
   hooks: HooksConfig,

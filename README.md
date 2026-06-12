@@ -1,6 +1,6 @@
 # CanaryCode CLI
 
-A fast, minimal terminal coding agent (the `cc` command). It runs on the Bun runtime with an [OpenTUI](https://github.com/sst/opentui) TUI and flexible model support. The core stays small. You get the quality-of-life features that matter: plan mode, auto mode, thinking modes, web search, sub-agents, custom agents, MCP, skills, hooks, an AI permission engine, and project-context files.
+A fast, minimal terminal coding agent (the `canarycode` command). It runs on the Bun runtime with an [OpenTUI](https://github.com/sst/opentui) TUI and flexible model support. The core stays small. You get the quality-of-life features that matter: plan mode, auto mode, thinking modes, web search, sub-agents, custom agents, MCP, skills, hooks, an AI permission engine, and project-context files.
 
 One engine drives two front-ends. A headless `-p` print mode handles scripting. An interactive TUI handles live work. Both run the same agent loop.
 
@@ -14,6 +14,8 @@ CanaryCode CLI is built to run on **[CanaryLLM](https://canaryllm.canarycoders.e
 
 Set your key and you're ready — see [CanaryLLM](#canaryllm) under Configuration for the env-var and manual setup.
 
+CanaryLLM is the recommended path, but it's not the only one: `canarycode` works with any OpenAI- or Anthropic-compatible gateway, and you can bring or build your own provider — see [Custom providers](#custom-providers).
+
 ## Install
 
 ### Quick install (prebuilt binary)
@@ -24,7 +26,7 @@ A single self-contained binary — no Bun or Node required:
 curl -fsSL https://raw.githubusercontent.com/CanaryCoders/CanaryCodeCli/main/install.sh | sh
 ```
 
-It downloads the binary for your platform from the latest [GitHub Release](https://github.com/CanaryCoders/CanaryCodeCli/releases), verifies its checksum, and installs it to `~/.local/bin` (override with `CC_INSTALL_DIR`, or pin a version with `CC_VERSION=v0.1.0`). Update later with `cc update`.
+It downloads the binary for your platform from the latest [GitHub Release](https://github.com/CanaryCoders/CanaryCodeCli/releases), verifies its checksum, and installs it to `~/.local/bin` (override with `CANARYCODE_INSTALL_DIR`, or pin a version with `CANARYCODE_VERSION=v0.1.0`). Update later with `canarycode update`.
 
 ### Nix
 
@@ -34,17 +36,17 @@ Run without installing:
 nix run github:CanaryCoders/CanaryCodeCli
 ```
 
-Or add it to a Home Manager config (flake input named `cc`):
+Or add it to a Home Manager config (flake input named `canarycode`):
 
 ```nix
 {
-  inputs.cc.url = "github:CanaryCoders/CanaryCodeCli";
+  inputs.canarycode.url = "github:CanaryCoders/CanaryCodeCli";
 
   # in your home-manager configuration:
-  imports = [ cc.homeManagerModules.default ];
-  programs.cc = {
+  imports = [ canarycode.homeManagerModules.default ];
+  programs.canarycode = {
     enable = true;
-    # optional — renders a read-only ~/.cc/config.json:
+    # optional — renders a read-only ~/.canarycode/config.json:
     # settings = { model = "opus"; thinking = "off"; };
   };
 }
@@ -58,7 +60,7 @@ You need [Bun](https://bun.sh).
 
 ```bash
 bun install
-bun add -g .          # installs the `cc` binary globally
+bun add -g .          # installs the `canarycode` binary globally
 ```
 
 Run it from the repo without installing:
@@ -71,26 +73,26 @@ bun run dev
 
 ## Updating
 
-Binary installs (via `install.sh`) self-update. On startup `cc` checks GitHub Releases at most once a day in the background; when a newer version is available the TUI banner shows a notice. Apply it with:
+Binary installs (via `install.sh`) self-update. On startup `canarycode` checks GitHub Releases at most once a day in the background; when a newer version is available the TUI banner shows a notice. Apply it with:
 
 ```bash
-cc update     # or /update inside the TUI
+canarycode update     # or /update inside the TUI
 ```
 
-Auto-update never mutates anything on its own — it only checks and notifies. Disable the check entirely with `autoUpdate.enabled: false` in `~/.cc/config.json` or by setting `CC_DISABLE_UPDATE=1`. Source checkouts (update with `git`) and Nix installs never self-update.
+Auto-update never mutates anything on its own — it only checks and notifies. Disable the check entirely with `autoUpdate.enabled: false` in `~/.canarycode/config.json` or by setting `CANARYCODE_DISABLE_UPDATE=1`. Source checkouts (update with `git`) and Nix installs never self-update.
 
 Release notes live in [CHANGELOG.md](CHANGELOG.md) and are published with each GitHub release. After an update lands, the next launch shows a one-line what's-new notice; read the full notes anytime with:
 
 ```bash
-cc changelog          # notes for the version you're running
-cc changelog 0.1.0    # or any released version — /changelog inside the TUI
+canarycode changelog          # notes for the version you're running
+canarycode changelog 0.1.0    # or any released version — /changelog inside the TUI
 ```
 
 ## Usage
 
 ```bash
-cc -p "<prompt>"   # headless print mode: streams to stdout, then exits
-cc                 # interactive TUI in the current directory
+canarycode -p "<prompt>"   # headless print mode: streams to stdout, then exits
+canarycode                 # interactive TUI in the current directory
 ```
 
 ### Flags
@@ -113,16 +115,16 @@ cc                 # interactive TUI in the current directory
 Stdin folds into the prompt as context:
 
 ```bash
-git diff | cc -p "write a commit message"
+git diff | canarycode -p "write a commit message"
 ```
 
 Resume a conversation:
 
 ```bash
-cc --resume                   # pick a recent session to reopen in the TUI
-cc --resume 1a2b3c4d          # reopen a session by id (prefix is fine)
-cc --continue                 # reopen the most recent session
-cc -c -p "and now?"           # continue the most recent session headless
+canarycode --resume                   # pick a recent session to reopen in the TUI
+canarycode --resume 1a2b3c4d          # reopen a session by id (prefix is fine)
+canarycode --continue                 # reopen the most recent session
+canarycode -c -p "and now?"           # continue the most recent session headless
 ```
 
 Inside the TUI, `/resume` lists recent sessions and `/resume <id>` switches to one in place (transcript, model, mode, and thinking level all restore).
@@ -130,7 +132,7 @@ Inside the TUI, `/resume` lists recent sessions and `/resume <id>` switches to o
 Pipe structured events into a script:
 
 ```bash
-cc -p "list the files then read package.json" --json | jq -c 'select(.type=="tool_start")'
+canarycode -p "list the files then read package.json" --json | jq -c 'select(.type=="tool_start")'
 ```
 
 Each line is a JSON `AgentEvent`: `text`, `thinking`, `tool_start {id,name,input}`, `tool_end {id,name,isError,result,diff?}`, `usage`, `compaction`, `done {reason}`, or `{type:"error",message}`. JSON mode suppresses human formatting. Startup notes stay on stderr.
@@ -139,19 +141,19 @@ Each line is a JSON `AgentEvent`: `text`, `thinking`, `tool_start {id,name,input
 
 - Plan mode. Runs read-only and allows `read_file`, `list_dir`, `grep`, and `web_search`. It blocks write, edit, and bash. It emits a structured plan with steps, files to touch, and risks.
 - Auto mode. Runs autonomous multi-turn execution with no per-step input, bounded by `autoMaxTurns`. `Esc` aborts.
-- Thinking modes. They map to Anthropic extended-thinking budgets: `off`, `think` at 4k, `think-hard` at 10k, `ultrathink` at 32k. Non-Anthropic providers degrade gracefully. Setting a level with `/think` writes it to `~/.cc/config.json` under the `thinking` key, so it becomes the default on the next launch. `--think` overrides it for one run without changing the saved default.
+- Thinking modes. They map to Anthropic extended-thinking budgets: `off`, `think` at 4k, `think-hard` at 10k, `ultrathink` at 32k. Non-Anthropic providers degrade gracefully. Setting a level with `/think` writes it to `~/.canarycode/config.json` under the `thinking` key, so it becomes the default on the next launch. `--think` overrides it for one run without changing the saved default.
 - Web search. A read-only `web_search` tool works with no key by default through a free DuckDuckGo backend. You can configure Brave or Tavily backends under `webSearch`.
 - Sub-agents. A `spawn_agent` tool delegates focused work to a child agent with its own fresh context, bounded by `maxConcurrent` and `maxDepth`.
-- OpenCode Zen. Use [opencode](https://opencode.ai)'s model gateway inside cc: sign in once with `opencode auth login` (or set `OPENCODE_API_KEY`) and `/login-opencode` makes the whole Zen catalog (Claude, GPT, Qwen, Kimi, GLM, the free stealth models, …) available to `/model`.
-- Extension toggles. `/extensions` lists every toggleable feature — `canaryllm`, `codex`, `opencode`, `websearch`, `skills`, `agents`, `mcp`, `hooks` — and `/extensions enable|disable <name>` flips one, persisted to `~/.cc/config.json` under `extensions.<name>`. A disabled extension contributes nothing: no tools, no prompt text, no startup work.
-- Custom agents. You define personas as files in `~/.cc/agents/` and `./.cc/agents/`. Frontmatter sets `name`, `description`, an optional `model`, and an optional `tools` allowlist. The body is the system prompt. Each name and description loads into the prompt. `spawn_agent` dispatches to one by `agent` name and applies its persona, model, and tool restrictions.
+- OpenCode Zen. Use [opencode](https://opencode.ai)'s model gateway inside canarycode: sign in once with `opencode auth login` (or set `OPENCODE_API_KEY`) and `/login-opencode` makes the whole Zen catalog (Claude, GPT, Qwen, Kimi, GLM, the free stealth models, …) available to `/model`.
+- Extension toggles. `/extensions` lists every toggleable feature — `canaryllm`, `codex`, `opencode`, `websearch`, `skills`, `agents`, `mcp`, `hooks` — and `/extensions enable|disable <name>` flips one, persisted to `~/.canarycode/config.json` under `extensions.<name>`. A disabled extension contributes nothing: no tools, no prompt text, no startup work.
+- Custom agents. You define personas as files in `~/.canarycode/agents/` and `./.canarycode/agents/`. Frontmatter sets `name`, `description`, an optional `model`, and an optional `tools` allowlist. The body is the system prompt. Each name and description loads into the prompt. `spawn_agent` dispatches to one by `agent` name and applies its persona, model, and tool restrictions.
 - AI permission engine. Opt in with `permission.mode: "ai"`. A separate cheap model classifies each gated mutating tool call as safe or unsafe before it runs. Safe calls run silently. Unsafe calls escalate to the human y/n/a box in the TUI with the reason, or block the call when headless. Auto and `--yolo` skip it.
 - Hooks. Shell commands fire on lifecycle events: `PreToolUse`, `PostToolUse`, and `Stop`. A regex on the tool name matches them. A non-zero `PreToolUse` exit blocks the call and its output becomes the reason the model sees. The rest observe only. Hooks run in every mode.
 - MCP. Connect stdio and SSE MCP servers from config. Their tools merge in namespaced as `mcp__<server>__<tool>`.
-- Skills. Progressive-disclosure capabilities live in `~/.cc/skills/` and `./.cc/skills/`. Only the name and description load into the prompt. The agent reads bodies on demand through `read_skill`.
+- Skills. Progressive-disclosure capabilities live in `~/.canarycode/skills/` and `./.canarycode/skills/`. Only the name and description load into the prompt. The agent reads bodies on demand through `read_skill`.
 - Tasks. The agent tracks its own todo list through `update_tasks`. The TUI renders it live as a panel. Headless prints a compact checklist to stderr. The list is read-only and ephemeral.
 - Ask user. The `ask_user` tool lets the agent ask you multiple-choice questions and wait for your answer. The TUI shows the choices. Headless auto-picks each question's recommended option.
-- Project context. Walking up to the repo root, it prepends the first file it finds in this order: `CC.md`, then `AGENTS.md`, then `CLAUDE.md`. `/init` scaffolds a starter `CC.md`.
+- Project context. Walking up to the repo root, it prepends the first file it finds in this order: `CANARYCODE.md`, then `AGENTS.md`, then `CLAUDE.md`. `/init` scaffolds a starter `CANARYCODE.md`.
 - Diff preview. Every `write_file` and `edit_file` shows a unified diff of the change. It colorizes on a TTY. The TUI collapses it to a `+N -M` summary you can expand.
 - Markdown rendering. Assistant text renders as styled terminal output with bold, headings, lists, and code fences. Under a pipe, `--json`, or `NO_COLOR` it stays raw.
 - Command visibility. The exact `bash` command and every tool call shows before it runs, with no truncation.
@@ -162,13 +164,13 @@ Each line is a JSON `AgentEvent`: `text`, `thinking`, `tool_start {id,name,input
 
 ## Configuration
 
-Config lives at `~/.cc/config.json`. `${VAR}` references interpolate from the environment. Sessions store at `~/.cc/sessions.db` in SQLite.
+Config lives at `~/.canarycode/config.json`. `${VAR}` references interpolate from the environment. Sessions store at `~/.canarycode/sessions.db` in SQLite.
 
 Model resolution order: `--model <id>`, then config `model`, then the first available model. `/model` lists and switches at runtime in the TUI.
 
 ### `/config` command
 
-In the TUI, `/config` inspects and edits `~/.cc/config.json` without leaving the session:
+In the TUI, `/config` inspects and edits `~/.canarycode/config.json` without leaving the session:
 
 ```text
 /config                         # show the effective config
@@ -218,7 +220,7 @@ The TUI defaults to ASCII-safe icons. If your terminal uses a Nerd Font, enable 
 
 ### Custom providers
 
-`cc` supports custom OpenAI-compatible and Anthropic-compatible gateways:
+`canarycode` supports custom OpenAI-compatible and Anthropic-compatible gateways:
 
 ```json
 {
@@ -243,16 +245,16 @@ The TUI defaults to ASCII-safe icons. If your terminal uses a Nerd Font, enable 
 
 ### CanaryLLM
 
-[CanaryLLM](https://canaryllm.canarycoders.es) ships baked in as the `canaryllm` provider and stays inert until you supply your key (every key starts with `clk…` — request one at [contact@canarycoders.es](mailto:contact@canarycoders.es)). Once the key is present, `cc` discovers the gateway's chat models from the unauthenticated `GET /api/public/models` and makes them selectable through `--model <id>` and `/model`.
+[CanaryLLM](https://canaryllm.canarycoders.es) ships baked in as the `canaryllm` provider and stays inert until you supply your key (every key starts with `clk…` — request one at [contact@canarycoders.es](mailto:contact@canarycoders.es)). Once the key is present, `canarycode` discovers the gateway's chat models from the unauthenticated `GET /api/public/models` and makes them selectable through `--model <id>` and `/model`.
 
 Supply the key by environment variable:
 
 ```bash
 export CANARYLLM_API_KEY=clk...
-cc --model <a-canary-model-id> -p "say hi"
+canarycode --model <a-canary-model-id> -p "say hi"
 ```
 
-…or set it manually on the baked-in provider with `/config set` (persists to `~/.cc/config.json` under `providers.canaryllm.apiKey`):
+…or set it manually on the baked-in provider with `/config set` (persists to `~/.canarycode/config.json` under `providers.canaryllm.apiKey`):
 
 ```
 /config set providers.canaryllm.apiKey clk...
@@ -276,19 +278,19 @@ Web search works with no API key. It defaults to a free DuckDuckGo backend that 
 
 ### OpenCode Zen
 
-[Zen](https://opencode.ai/docs/zen) is opencode's OpenAI-compatible model gateway (`https://opencode.ai/zen/v1`). cc ships a baked-in preset that stays inert until credentials appear; nothing is written to `config.json`:
+[Zen](https://opencode.ai/docs/zen) is opencode's OpenAI-compatible model gateway (`https://opencode.ai/zen/v1`). canarycode ships a baked-in preset that stays inert until credentials appear; nothing is written to `config.json`:
 
 1. Sign in once: `opencode auth login` → pick "opencode" (or set `OPENCODE_API_KEY` in your environment).
-2. `cc login-opencode` (or `/login-opencode` in the TUI) picks the key up from opencode's credential store (`~/.local/share/opencode/auth.json`) and lists the Zen catalog; switch with `/model <id>`.
+2. `canarycode login-opencode` (or `/login-opencode` in the TUI) picks the key up from opencode's credential store (`~/.local/share/opencode/auth.json`) and lists the Zen catalog; switch with `/model <id>`.
 
-The model list mirrors opencode's local models.dev cache (with a static fallback), so it tracks Zen's catalog without a network call. `logout-opencode` hides the models for the session; the credentials themselves belong to opencode (`opencode auth logout` removes them). Note: cc only reads Zen API keys from opencode's store — it never touches the Anthropic/OpenAI subscription OAuth tokens opencode may also hold, since refreshing those from a second client would invalidate opencode's own sign-in.
+The model list mirrors opencode's local models.dev cache (with a static fallback), so it tracks Zen's catalog without a network call. `logout-opencode` hides the models for the session; the credentials themselves belong to opencode (`opencode auth logout` removes them). Note: canarycode only reads Zen API keys from opencode's store — it never touches the Anthropic/OpenAI subscription OAuth tokens opencode may also hold, since refreshing those from a second client would invalidate opencode's own sign-in.
 
 ### Extension toggles
 
-Bare `/extensions` opens an interactive checkbox picker: ↑/↓ move, Space flips a checkbox, Enter applies every change at once (one session reassembly), Esc cancels. `/extensions enable|disable <name>` flips one directly. Either way a change persists as `extensions.<name>` in `~/.cc/config.json` and applies immediately.
+Bare `/extensions` opens an interactive checkbox picker: ↑/↓ move, Space flips a checkbox, Enter applies every change at once (one session reassembly), Esc cancels. `/extensions enable|disable <name>` flips one directly. Either way a change persists as `extensions.<name>` in `~/.canarycode/config.json` and applies immediately.
 
 A disabled extension contributes **nothing** — enforced by the registry kernel, not by the extension itself:
-- no commands (absent from `/help`, autocomplete, slash dispatch, and `cc <subcommand>`)
+- no commands (absent from `/help`, autocomplete, slash dispatch, and `canarycode <subcommand>`)
 - no startup work and no provider preset (provider presets are folded into config for enabled extensions only)
 - no session pieces (no tools, no system-prompt section, no tool hooks)
 
@@ -296,14 +298,14 @@ Core plumbing (the six core tools, `ask_user`, `update_tasks`, the permission en
 
 ### User extensions
 
-Drop `.ts` or `.js` modules into `~/.cc/extensions/` (user-global, implicitly trusted) or `./.cc/extensions/` (project-level). Project extensions require approval on first load: the TUI prompts before first paint, distinguishing a first-ever approval from a file that changed since the last one; headless skips unapproved files with a note. Approvals are tracked by content hash in `~/.cc/trusted-extensions.json`.
+Drop `.ts` or `.js` modules into `~/.canarycode/extensions/` (user-global, implicitly trusted) or `./.canarycode/extensions/` (project-level). Project extensions require approval on first load: the TUI prompts before first paint, distinguishing a first-ever approval from a file that changed since the last one; headless skips unapproved files with a note. Approvals are tracked by content hash in `~/.canarycode/trusted-extensions.json`.
 
-An extension's **name is its filename stem** — any `name` field inside the module is overridden. This means the `extensions.<name>: false` config toggle is decidable before the file is even imported; a disabled file is never executed, but an inert stub keeps it listed in `/extensions` so it can be re-enabled. Name collisions with built-ins or with a user-global file are skipped with a note. A broken or invalid module is always skipped with a note; a user extension can never crash `cc`. Changed files take effect on the next launch (Bun module cache).
+An extension's **name is its filename stem** — any `name` field inside the module is overridden. This means the `extensions.<name>: false` config toggle is decidable before the file is even imported; a disabled file is never executed, but an inert stub keeps it listed in `/extensions` so it can be re-enabled. Name collisions with built-ins or with a user-global file are skipped with a note. A broken or invalid module is always skipped with a note; a user extension can never crash `canarycode`. Changed files take effect on the next launch (Bun module cache).
 
 A minimal example:
 
 ```ts
-// ~/.cc/extensions/greet.ts
+// ~/.canarycode/extensions/greet.ts
 export default {
   description: "demo extension",
   commands: [
@@ -316,7 +318,7 @@ export default {
 };
 ```
 
-User extensions have the same capabilities as built-ins: provider presets, startup discovery, login-style commands (`cc <name>` and `/<name>`), and full session extensions (tools, system-prompt section, pre/post tool hooks) via `session()`.
+User extensions have the same capabilities as built-ins: provider presets, startup discovery, login-style commands (`canarycode <name>` and `/<name>`), and full session extensions (tools, system-prompt section, pre/post tool hooks) via `session()`.
 
 ### MCP servers
 
@@ -337,7 +339,7 @@ User extensions have the same capabilities as built-ins: provider presets, start
 
 ### Custom agents
 
-Drop a markdown file in `~/.cc/agents/<name>.md` for a global agent or `./.cc/agents/<name>.md` for a project agent. The project file overrides the global one. The frontmatter configures the agent. The body is the agent's system prompt:
+Drop a markdown file in `~/.canarycode/agents/<name>.md` for a global agent or `./.canarycode/agents/<name>.md` for a project agent. The project file overrides the global one. The frontmatter configures the agent. The body is the agent's system prompt:
 
 ```markdown
 ---
@@ -388,13 +390,13 @@ The checker runs one-shot and tool-free. It fails open by default, so a network 
 }
 ```
 
-Hooks follow Claude Code's matcher-group shape: event names map to arrays of groups, each group has an optional `matcher` and a `hooks` array of command hooks. `timeout` is seconds in this Claude-style shape. The older cc shorthand still works for compatibility (`{ "matcher": "bash", "command": "...", "timeout": 10000 }`, timeout in milliseconds).
+Hooks follow Claude Code's matcher-group shape: event names map to arrays of groups, each group has an optional `matcher` and a `hooks` array of command hooks. `timeout` is seconds in this Claude-style shape. The older canarycode shorthand still works for compatibility (`{ "matcher": "bash", "command": "...", "timeout": 10000 }`, timeout in milliseconds).
 
-Supported events are `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `SessionStart`, `Stop`, `SubagentStop`, and `SessionEnd`. `matcher` is a regex on the cc tool name for tool events; omitting it matches all tools. Commands run through `bash -c` and receive Claude-style JSON on stdin with fields such as `session_id`, `cwd`, `hook_event_name`, `tool_name`, `tool_input`, and `tool_response`; legacy aliases (`event`, `tool`, `input`, `result`, `isError`) are also included. `PreToolUse` can block with Claude-style JSON stdout (`permissionDecision: "deny"`) or by exiting non-zero; the reason is sent back to the model. Other events are observational. Hooks run in every mode, including auto, and `Stop`/`SessionEnd` also run on TUI quit so external state trackers can observe shutdown.
+Supported events are `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `SessionStart`, `Stop`, `SubagentStop`, and `SessionEnd`. `matcher` is a regex on the canarycode tool name for tool events; omitting it matches all tools. Commands run through `bash -c` and receive Claude-style JSON on stdin with fields such as `session_id`, `cwd`, `hook_event_name`, `tool_name`, `tool_input`, and `tool_response`; legacy aliases (`event`, `tool`, `input`, `result`, `isError`) are also included. `PreToolUse` can block with Claude-style JSON stdout (`permissionDecision: "deny"`) or by exiting non-zero; the reason is sent back to the model. Other events are observational. Hooks run in every mode, including auto, and `Stop`/`SessionEnd` also run on TUI quit so external state trackers can observe shutdown.
 
 ## Safety stance
 
-`cc` runs unsandboxed by design. By default there is no automatic gating. Tool calls run as you invoke them. `--auto` and `--yolo` skip any pausing and run to completion. Run it in a directory you trust. Prefer `--plan` or `--no-tools` for untrusted work, and review what auto mode does. `Esc` in the TUI and `Ctrl+C` in headless abort an in-flight run.
+`canarycode` runs unsandboxed by design. By default there is no automatic gating. Tool calls run as you invoke them. `--auto` and `--yolo` skip any pausing and run to completion. Run it in a directory you trust. Prefer `--plan` or `--no-tools` for untrusted work, and review what auto mode does. `Esc` in the TUI and `Ctrl+C` in headless abort an in-flight run.
 
 For tighter control, three opt-in gates compose in a single pre-tool pipeline: `PreToolUse` hooks, then the AI permission check, then the human confirm. Hooks give you deterministic policy. The AI permission engine gives you model-judged safety. The confirm gate below gives you a human checkpoint. Auto and `--yolo` bypass the AI and human gates, and hooks still run.
 
@@ -426,11 +428,11 @@ bun run check       # biome check ./src && tsc --noEmit
 bun test            # run the unit tests
 ```
 
-`cc` uses the Bun runtime and ESNext modules with no build step. `.ts` runs directly. The core targets under ~2000 LOC; keep new dependencies minimal and intentional.
+`canarycode` uses the Bun runtime and ESNext modules with no build step. `.ts` runs directly. The core targets under ~2000 LOC; keep new dependencies minimal and intentional.
 
 ## Architecture & extending
 
-`cc` follows a small-core design (inspired by [Pi](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/)): the core is the agent loop (`src/agent.ts`), the provider layer (`src/provider.ts`), the core tool set (`src/tools.ts`, frozen), and session storage. Everything else — web search, skills, sub-agents, MCP, hooks, the AI permission engine, the task list — is an `Extension` (`src/extension.ts`): a named bundle covering two lifecycles in one interface.
+`canarycode` follows a small-core design (inspired by [Pi](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/)): the core is the agent loop (`src/agent.ts`), the provider layer (`src/provider.ts`), the core tool set (`src/tools.ts`, frozen), and session storage. Everything else — web search, skills, sub-agents, MCP, hooks, the AI permission engine, the task list — is an `Extension` (`src/extension.ts`): a named bundle covering two lifecycles in one interface.
 
 **`Extension` interface** (`src/extension.ts`): `{ name, description, defaultEnabled?, providerPresets?(), startup?(config, "fast"|"live"), commands?, session?() }`. The outer lifecycle (`providerPresets`, `startup`, `commands`) runs once per process. The per-session lifecycle is produced by the `session()` factory, which returns a fresh `SessionExtension` for each agent assembly; this keeps session state (MCP connections, tool instances) from leaking across sessions.
 

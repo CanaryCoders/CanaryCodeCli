@@ -12,7 +12,7 @@ async function setup(): Promise<{
   projectDir: string;
   trustFile: string;
 }> {
-  const root = await mkdtemp(join(tmpdir(), "cc-loader-"));
+  const root = await mkdtemp(join(tmpdir(), "canarycode-loader-"));
   const userDir = join(root, "user");
   const projectDir = join(root, "project");
   await mkdir(userDir, { recursive: true });

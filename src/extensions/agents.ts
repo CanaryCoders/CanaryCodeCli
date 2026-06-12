@@ -10,7 +10,7 @@
 // -------------
 // A custom agent is a single markdown file with YAML frontmatter that names a
 // reusable persona for `spawn_agent` to dispatch to. Definitions live in
-// `~/.cc/agents/<name>.md` (global) and `./.cc/agents/<name>.md` (project, which
+// `~/.canarycode/agents/<name>.md` (global) and `./.canarycode/agents/<name>.md` (project, which
 // overrides a global of the same name) — mirroring the skills layout, but flat
 // files since an agent is just a prompt + a little config.
 //
@@ -67,13 +67,13 @@ export interface AgentDef {
   source: "global" | "project";
 }
 
-/** Default agent directories: global (`~/.cc/agents`) then project (`./.cc/agents`). */
+/** Default agent directories: global (`~/.canarycode/agents`) then project (`./.canarycode/agents`). */
 function agentDirs(
   cwd: string = process.cwd(),
 ): { dir: string; source: "global" | "project" }[] {
   return [
-    { dir: join(homedir(), ".cc", "agents"), source: "global" },
-    { dir: join(cwd, ".cc", "agents"), source: "project" },
+    { dir: join(homedir(), ".canarycode", "agents"), source: "global" },
+    { dir: join(cwd, ".canarycode", "agents"), source: "project" },
   ];
 }
 

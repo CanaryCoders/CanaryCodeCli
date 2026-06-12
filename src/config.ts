@@ -1,6 +1,6 @@
-// config.ts — load and merge ~/.cc/config.json with defaults + env interpolation.
+// config.ts — load and merge ~/.canarycode/config.json with defaults + env interpolation.
 //
-// Resolution: built-in defaults  <  ~/.cc/config.json  <  (CLI overrides applied by callers).
+// Resolution: built-in defaults  <  ~/.canarycode/config.json  <  (CLI overrides applied by callers).
 // Any string value of the form "${VAR}" is replaced with process.env.VAR (empty if unset).
 
 import { chmod, mkdir } from "node:fs/promises";
@@ -109,7 +109,7 @@ export interface HookMatcherConfig {
   hooks: HookCommandConfig[];
 }
 
-/** One configured hook entry: Claude Code matcher group or cc's old flat form. */
+/** One configured hook entry: Claude Code matcher group or canarycode's old flat form. */
 export type HookConfig = LegacyHookConfig | HookMatcherConfig;
 
 /**
@@ -176,9 +176,9 @@ export interface Config {
 }
 
 /**
- * Self-update settings. The background check and `cc update` / `/update` apply
+ * Self-update settings. The background check and `canarycode update` / `/update` apply
  * step are gated on this being enabled AND the running process being a compiled
- * release binary in a writable location. Nix installs set `CC_DISABLE_UPDATE=1`,
+ * release binary in a writable location. Nix installs set `CANARYCODE_DISABLE_UPDATE=1`,
  * which overrides this entirely.
  */
 export interface AutoUpdateConfig {
@@ -186,9 +186,9 @@ export interface AutoUpdateConfig {
   enabled: boolean;
 }
 
-/** Path to the config file (~/.cc/config.json). */
+/** Path to the config file (~/.canarycode/config.json). */
 function configPath(): string {
-  return join(homedir(), ".cc", "config.json");
+  return join(homedir(), ".canarycode", "config.json");
 }
 
 // Human-facing names for the built-in provider keys, so the model selector and
@@ -293,7 +293,7 @@ function mergeConfig(base: Config, user: Partial<Config>): Config {
 }
 
 /**
- * Load config: defaults merged with ~/.cc/config.json (if present), then env-interpolated.
+ * Load config: defaults merged with ~/.canarycode/config.json (if present), then env-interpolated.
  * A missing file is fine. A malformed file throws with a clear message.
  */
 export async function loadConfig(path: string = configPath()): Promise<Config> {
@@ -305,13 +305,15 @@ export async function loadConfig(path: string = configPath()): Promise<Config> {
       raw = await file.text();
     } catch (err) {
       throw new Error(
-        `cc: cannot read config at ${path}: ${(err as Error).message}`,
+        `canarycode: cannot read config at ${path}: ${(err as Error).message}`,
       );
     }
     try {
       user = JSON.parse(raw) as Partial<Config>;
     } catch (err) {
-      throw new Error(`cc: invalid JSON in ${path}: ${(err as Error).message}`);
+      throw new Error(
+        `canarycode: invalid JSON in ${path}: ${(err as Error).message}`,
+      );
     }
   }
   return interpolateEnv(mergeConfig(defaultConfig(), user));
@@ -332,7 +334,7 @@ export function replaceConfigInPlace(target: Config, next: Config): void {
 
 /**
  * The subset of config a user can change at runtime (via `/model`, `/think`'s
- * sibling settings, etc.) and that we persist back to `~/.cc/config.json` so it
+ * sibling settings, etc.) and that we persist back to `~/.canarycode/config.json` so it
  * becomes the default next launch.
  */
 export type PersistableSettings = Partial<
@@ -340,7 +342,7 @@ export type PersistableSettings = Partial<
 >;
 
 /**
- * Persist runtime preference changes back to `~/.cc/config.json`, merging onto
+ * Persist runtime preference changes back to `~/.canarycode/config.json`, merging onto
  * whatever the user already has on disk. Only the keys in `settings` are touched —
  * every other key (providers, secrets, MCP servers) is read back from the raw file
  * and written through verbatim, so we never serialize an env-interpolated secret
@@ -359,7 +361,7 @@ export async function saveConfig(
       raw = JSON.parse(await file.text()) as Record<string, unknown>;
     } catch (err) {
       throw new Error(
-        `cc: cannot update config at ${path}: invalid JSON (${(err as Error).message})`,
+        `canarycode: cannot update config at ${path}: invalid JSON (${(err as Error).message})`,
       );
     }
   }
@@ -430,9 +432,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function splitConfigPath(path: string): string[] {
   const parts = path.split(".").filter(Boolean);
-  if (parts.length === 0) throw new Error("cc: config path cannot be empty");
+  if (parts.length === 0)
+    throw new Error("canarycode: config path cannot be empty");
   if (!ROOT_CONFIG_KEYS.has(parts[0])) {
-    throw new Error(`cc: unknown config path '${path}'`);
+    throw new Error(`canarycode: unknown config path '${path}'`);
   }
   return parts;
 }
@@ -446,7 +449,7 @@ async function readRawConfig(path: string): Promise<Record<string, unknown>> {
     return parsed;
   } catch (err) {
     throw new Error(
-      `cc: cannot update config at ${path}: invalid JSON (${(err as Error).message})`,
+      `canarycode: cannot update config at ${path}: invalid JSON (${(err as Error).message})`,
     );
   }
 }
@@ -501,7 +504,7 @@ function unsetRawConfigValue(raw: Record<string, unknown>, path: string): void {
 export function validateConfigPathValue(path: string, value: unknown): void {
   const parts = splitConfigPath(path);
   const fail = (msg: string) => {
-    throw new Error(`cc: invalid value for ${path}: ${msg}`);
+    throw new Error(`canarycode: invalid value for ${path}: ${msg}`);
   };
   const stringPaths = new Set([
     "model",

@@ -6,7 +6,7 @@
 // the db, create a session, append turns as the agent loop produces them, fold in
 // usage as it streams. `--resume` (next task) reads sessions + turns back out.
 //
-// The db lives at ~/.cc/sessions.db. Content is stored as JSON text so the schema
+// The db lives at ~/.canarycode/sessions.db. Content is stored as JSON text so the schema
 // never has to know about provider block shapes.
 
 import { Database } from "bun:sqlite";
@@ -15,9 +15,9 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Message } from "./provider.ts";
 
-/** Path to the sessions database (~/.cc/sessions.db). */
+/** Path to the sessions database (~/.canarycode/sessions.db). */
 function dbPath(): string {
-  return join(homedir(), ".cc", "sessions.db");
+  return join(homedir(), ".canarycode", "sessions.db");
 }
 
 export interface SessionRow {
@@ -355,7 +355,7 @@ export class SessionStore {
     // stderr here is safe and makes silent data loss observable.
     if (skipped > 0) {
       process.stderr.write(
-        `cc: warning: skipped ${skipped} corrupt turn row(s) in session ${sessionId}\n`,
+        `canarycode: warning: skipped ${skipped} corrupt turn row(s) in session ${sessionId}\n`,
       );
     }
     return out;

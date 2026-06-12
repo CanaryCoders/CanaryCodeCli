@@ -2,7 +2,7 @@
 //
 // A skill is a folder containing a `SKILL.md` file with YAML frontmatter
 // (`name`, `description`) and a body of instructions/resources. Skills live in
-// `~/.cc/skills/<skill>/SKILL.md` (global) and `./.cc/skills/<skill>/SKILL.md`
+// `~/.canarycode/skills/<skill>/SKILL.md` (global) and `./.canarycode/skills/<skill>/SKILL.md`
 // (project). On startup we discover them and inject ONLY each skill's name and
 // description into the system prompt — cheap. The full body is loaded on demand
 // when the model decides a skill is relevant, via the read-only `read_skill`
@@ -32,13 +32,13 @@ export interface ParsedSkill {
   body: string;
 }
 
-/** Default skill directories: global (`~/.cc/skills`) then project (`./.cc/skills`). */
+/** Default skill directories: global (`~/.canarycode/skills`) then project (`./.canarycode/skills`). */
 function skillDirs(
   cwd: string = process.cwd(),
 ): { dir: string; source: "global" | "project" }[] {
   return [
-    { dir: join(homedir(), ".cc", "skills"), source: "global" },
-    { dir: join(cwd, ".cc", "skills"), source: "project" },
+    { dir: join(homedir(), ".canarycode", "skills"), source: "global" },
+    { dir: join(cwd, ".canarycode", "skills"), source: "project" },
   ];
 }
 

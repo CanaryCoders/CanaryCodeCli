@@ -1,5 +1,5 @@
 #!/bin/sh
-# install.sh — install the `cc` (CanaryCode) CLI from GitHub Releases.
+# install.sh — install the `canarycode` (CanaryCode) CLI from GitHub Releases.
 #
 #   curl -fsSL https://raw.githubusercontent.com/CanaryCoders/CanaryCodeCli/main/install.sh | sh
 #
@@ -7,13 +7,13 @@
 # release checksums, and installs it. No Bun or Node required.
 #
 # Environment:
-#   CC_VERSION       pin a release tag (e.g. v0.1.0). Defaults to the latest.
-#   CC_INSTALL_DIR   install directory. Defaults to ~/.local/bin.
+#   CANARYCODE_VERSION       pin a release tag (e.g. v0.1.0). Defaults to the latest.
+#   CANARYCODE_INSTALL_DIR   install directory. Defaults to ~/.local/bin.
 
 set -eu
 
 REPO="CanaryCoders/CanaryCodeCli"
-INSTALL_DIR="${CC_INSTALL_DIR:-$HOME/.local/bin}"
+INSTALL_DIR="${CANARYCODE_INSTALL_DIR:-$HOME/.local/bin}"
 
 err() {
 	echo "install: $1" >&2
@@ -35,7 +35,7 @@ case "$arch" in
 	*) err "unsupported architecture: $arch" ;;
 esac
 
-asset="cc-${os}-${arch}"
+asset="canarycode-${os}-${arch}"
 
 # --- pick a downloader -----------------------------------------------------
 if command -v curl >/dev/null 2>&1; then
@@ -49,15 +49,15 @@ else
 fi
 
 # --- resolve the release tag ----------------------------------------------
-tag="${CC_VERSION:-}"
+tag="${CANARYCODE_VERSION:-}"
 if [ -z "$tag" ]; then
 	tag=$(dl "https://api.github.com/repos/$REPO/releases/latest" |
 		grep '"tag_name"' | head -n1 | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')
 fi
-[ -n "$tag" ] || err "could not resolve the latest release tag (set CC_VERSION to pin one)"
+[ -n "$tag" ] || err "could not resolve the latest release tag (set CANARYCODE_VERSION to pin one)"
 
 base="https://github.com/$REPO/releases/download/$tag"
-echo "install: cc $tag ($asset)"
+echo "install: canarycode $tag ($asset)"
 
 # --- download binary + checksums ------------------------------------------
 tmp=$(mktemp -d)
@@ -83,9 +83,9 @@ fi
 # --- install ---------------------------------------------------------------
 mkdir -p "$INSTALL_DIR"
 chmod +x "$tmp/$asset"
-mv "$tmp/$asset" "$INSTALL_DIR/cc"
+mv "$tmp/$asset" "$INSTALL_DIR/canarycode"
 
-echo "install: installed cc to $INSTALL_DIR/cc"
+echo "install: installed canarycode to $INSTALL_DIR/canarycode"
 
 # --- PATH hint -------------------------------------------------------------
 case ":$PATH:" in
@@ -97,4 +97,4 @@ case ":$PATH:" in
 		;;
 esac
 
-echo "Run 'cc --help' to get started."
+echo "Run 'canarycode --help' to get started."

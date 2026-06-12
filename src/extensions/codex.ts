@@ -3,7 +3,7 @@
 //
 // Mirrors the canary.ts preset pattern. This provider carries no API key or
 // baseUrl: it authenticates with the ChatGPT-subscription OAuth tokens in
-// ~/.cc/auth.json (see auth.ts) and talks the Responses-API path
+// ~/.canarycode/auth.json (see auth.ts) and talks the Responses-API path
 // (chatgpt.com/backend-api/codex/responses) via the `openai-responses` provider
 // impl in provider.ts (which also owns the wire-level model-handle parsing,
 // `parseCodexModel`).
@@ -12,7 +12,7 @@
 // server-side and changes over time (e.g. gpt-5.2-codex was dropped, gpt-5.5
 // added). We fetch the catalog from the same endpoint the Codex CLI uses and
 // expose each visible model as a bare slug. The reasoning effort (low / medium /
-// high / xhigh) is driven by cc's thinking level — `/think` → the provider's
+// high / xhigh) is driven by canarycode's thinking level — `/think` → the provider's
 // effortForCodex — so it is NOT part of the model handle. A handle MAY still pin an
 // effort explicitly ("gpt-5.5 xhigh") to override the thinking level, which
 // `parseCodexModel` understands. Until the user signs in the preset is inert (empty
@@ -40,7 +40,7 @@ export const OPENAI_PROVIDER = "openai";
 const CODEX_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 function codexCachePath(): string {
-  return join(homedir(), ".cc", "codex-models.json");
+  return join(homedir(), ".canarycode", "codex-models.json");
 }
 
 interface CodexCache {
@@ -97,7 +97,7 @@ const CODEX_FALLBACK_MODELS: ModelConfig[] = [
   { id: "gpt-5.2" },
 ];
 
-/** The baked-in Codex provider preset (auth via ~/.cc/auth.json, not an apiKey). */
+/** The baked-in Codex provider preset (auth via ~/.canarycode/auth.json, not an apiKey). */
 export function openaiCodexProviderConfig(): ProviderConfig {
   // Models start empty: populated on startup once signed in (see populateCodexModels).
   return { api: "openai-responses", models: [] };
@@ -282,7 +282,9 @@ async function runLoginCodex(
 ): Promise<void> {
   const manual = args.includes("--manual");
   if (manual && !ctx.readLine) {
-    throw new Error("--manual sign-in needs a terminal (use `cc login-codex`)");
+    throw new Error(
+      "--manual sign-in needs a terminal (use `canarycode login-codex`)",
+    );
   }
   const { account_id } =
     manual && ctx.readLine
@@ -340,7 +342,7 @@ export const codexExtension: Extension = {
         await clearCredentials();
         gateCodexModels(ctx.config, false);
         ctx.note(
-          "signed out of ChatGPT (removed ~/.cc/auth.json) — Codex models hidden",
+          "signed out of ChatGPT (removed ~/.canarycode/auth.json) — Codex models hidden",
         );
       },
     },

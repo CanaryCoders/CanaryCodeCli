@@ -1,8 +1,8 @@
 # Changelog
 
-Release notes for `cc`. Each tagged release gets a `## <version>` section here;
+Release notes for `canarycode`. Each tagged release gets a `## <version>` section here;
 the release workflow publishes that section as the GitHub release notes, and
-the CLI shows it via `cc changelog` / `/changelog` and the post-update
+the CLI shows it via `canarycode changelog` / `/changelog` and the post-update
 what's-new banner.
 
 Format: [Keep a Changelog](https://keepachangelog.com) headings
@@ -18,7 +18,7 @@ First public release.
   mouse support, text selection, keyboard navigation mode, copy commands,
   themed cards, markdown rendering with syntax highlighting, and a help
   overlay.
-- **Headless print mode** (`cc -p "<prompt>"`) for scripting, with `--json`
+- **Headless print mode** (`canarycode -p "<prompt>"`) for scripting, with `--json`
   JSONL event streaming and stdin folded into the prompt as context.
 - **Providers**: Anthropic-compatible and OpenAI-compatible APIs, CanaryLLM,
   OpenAI Codex (ChatGPT subscription) login, and OpenCode Zen models.
@@ -26,12 +26,12 @@ First public release.
   levels (`/think off|think|think-hard|ultrathink`).
 - **Extensions**: web search, skills, custom agents and sub-agents, MCP
   servers, lifecycle hooks, a permission engine with an optional AI safety
-  checker, and user extensions loaded from `~/.cc/extensions/`.
+  checker, and user extensions loaded from `~/.canarycode/extensions/`.
 - **Sessions**: SQLite-backed persistence with `--resume`/`--continue`, an
   interactive session picker, and mid-turn input queueing.
-- **Project context**: `CC.md`/`AGENTS.md`/`CLAUDE.md` files are prepended to
+- **Project context**: `CANARYCODE.md`/`AGENTS.md`/`CLAUDE.md` files are prepended to
   the system prompt; `/init` generates a starter file.
-- **Self-update**: `cc update` / `/update` downloads, checksum-verifies, and
+- **Self-update**: `canarycode update` / `/update` downloads, checksum-verifies, and
   atomically swaps the release binary; a background check surfaces new
   versions at startup, and `/changelog` shows what changed.
 - **Install anywhere**: `install.sh` for prebuilt binaries, or Nix flake with

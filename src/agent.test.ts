@@ -54,7 +54,7 @@ async function drain(gen: AsyncGenerator<unknown>): Promise<void> {
 }
 
 describe("runAgent image tool results", () => {
-  const path = join(tmpdir(), "cc-agent-image.png");
+  const path = join(tmpdir(), "canarycode-agent-image.png");
   const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
   afterEach(async () => {
     await rm(path, { force: true });

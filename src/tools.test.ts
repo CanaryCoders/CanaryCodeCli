@@ -9,7 +9,7 @@ import { tools } from "./tools.ts";
 const readFile = tools.find((t) => t.name === "read_file")!;
 
 describe("read_file with images", () => {
-  const path = join(tmpdir(), "cc-tools-image.png");
+  const path = join(tmpdir(), "canarycode-tools-image.png");
   afterEach(async () => {
     await rm(path, { force: true });
   });
@@ -30,7 +30,7 @@ describe("read_file with images", () => {
   test("still reads text files as numbered text", async () => {
     const out = await readFile.run({ path: "package.json" });
     const content = typeof out === "string" ? out : out.content;
-    expect(content).toContain('"name": "cc"');
+    expect(content).toContain('"name": "canarycode"');
   });
 });
 

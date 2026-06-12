@@ -2,7 +2,7 @@
 //
 // Update paths:
 //   • Background notice. `cachedUpdateNotice()` does a synchronous read of the
-//     ~/.cc/update-check.json cache and returns a one-line banner string when a
+//     ~/.canarycode/update-check.json cache and returns a one-line banner string when a
 //     newer version was seen on a prior run. `refreshUpdateCache()` is the
 //     fire-and-forget network refresh (throttled to once/24h) that populates that
 //     cache for the next launch. Startup never blocks on the network.
@@ -11,7 +11,7 @@
 //     checksums, and atomically swaps it over the running executable.
 //
 // Everything is hard-gated by `updateDisabledReason()`: source runs, Nix installs
-// (CC_DISABLE_UPDATE=1 or a /nix/store path), non-writable install dirs, and
+// (CANARYCODE_DISABLE_UPDATE=1 or a /nix/store path), non-writable install dirs, and
 // `autoUpdate.enabled: false` all return a reason and short-circuit.
 //
 // Changelog: release notes live in CHANGELOG.md; the release workflow publishes
@@ -42,14 +42,14 @@ interface UpdateCache {
 }
 
 function cachePath(): string {
-  return join(homedir(), ".cc", "update-check.json");
+  return join(homedir(), ".canarycode", "update-check.json");
 }
 
-/** Asset name for the running platform, e.g. "cc-darwin-arm64". */
+/** Asset name for the running platform, e.g. "canarycode-darwin-arm64". */
 function assetName(): string {
   const os = process.platform === "darwin" ? "darwin" : "linux";
   const arch = process.arch === "arm64" ? "arm64" : "x64";
-  return `cc-${os}-${arch}`;
+  return `canarycode-${os}-${arch}`;
 }
 
 /** Strip a leading "v" and compare two semver-ish strings. >0 if a is newer. */
@@ -73,8 +73,8 @@ export function compareVersions(a: string, b: string): number {
  * network or filesystem mutation so the caller can show a precise message.
  */
 export function updateDisabledReason(config: Config): string | null {
-  if (process.env.CC_DISABLE_UPDATE === "1")
-    return "disabled via CC_DISABLE_UPDATE";
+  if (process.env.CANARYCODE_DISABLE_UPDATE === "1")
+    return "disabled via CANARYCODE_DISABLE_UPDATE";
   if (!IS_RELEASE_BUILD)
     return "not a release build (running from source — use git to update)";
   if (config.autoUpdate.enabled === false)
@@ -129,7 +129,7 @@ async function fetchRelease(path: string): Promise<GithubRelease | null> {
       {
         headers: {
           Accept: "application/vnd.github+json",
-          "User-Agent": "cc-cli",
+          "User-Agent": "canarycode-cli",
         },
         signal: ctrl.signal,
       },
@@ -174,7 +174,7 @@ export async function cachedUpdateNotice(
   const cache = await readCache();
   if (!cache?.latest) return null;
   if (compareVersions(cache.latest, VERSION) <= 0) return null;
-  return `↑ cc ${cache.latest} available (you have ${VERSION}) — run /update`;
+  return `↑ canarycode ${cache.latest} available (you have ${VERSION}) — run /update`;
 }
 
 /**
@@ -196,7 +196,7 @@ export async function refreshUpdateCache(config: Config): Promise<void> {
 
 /** Where the last-launched version is recorded (for the what's-new notice). */
 function lastVersionPath(): string {
-  return join(homedir(), ".cc", "last-version");
+  return join(homedir(), ".canarycode", "last-version");
 }
 
 /**
@@ -220,7 +220,7 @@ export async function whatsNewNotice(): Promise<string | null> {
     // Non-fatal: worst case the notice repeats next launch.
   }
   if (!previous || compareVersions(VERSION, previous) <= 0) return null;
-  return `✦ updated to cc ${VERSION} — /changelog for what's new`;
+  return `✦ updated to canarycode ${VERSION} — /changelog for what's new`;
 }
 
 /**
@@ -293,7 +293,7 @@ export async function applyUpdate(
     return { ok: false, message: "could not reach GitHub releases" };
   const latest = release.tag_name.replace(/^v/, "");
   if (compareVersions(latest, VERSION) <= 0)
-    return { ok: true, message: `already up to date (cc ${VERSION})` };
+    return { ok: true, message: `already up to date (canarycode ${VERSION})` };
 
   const name = assetName();
   const binAsset = release.assets.find((a) => a.name === name);
@@ -306,13 +306,13 @@ export async function applyUpdate(
   if (!sumAsset)
     return { ok: false, message: "release is missing checksums.txt" };
 
-  log(`downloading cc ${latest} (${name})…`);
+  log(`downloading canarycode ${latest} (${name})…`);
   const [binRes, sumRes] = await Promise.all([
     fetch(binAsset.browser_download_url, {
-      headers: { "User-Agent": "cc-cli" },
+      headers: { "User-Agent": "canarycode-cli" },
     }),
     fetch(sumAsset.browser_download_url, {
-      headers: { "User-Agent": "cc-cli" },
+      headers: { "User-Agent": "canarycode-cli" },
     }),
   ]);
   if (!binRes.ok || !sumRes.ok)
@@ -335,7 +335,10 @@ export async function applyUpdate(
     };
 
   const target = process.execPath;
-  const tmp = join(dirname(target), `.cc.update.${crypto.randomUUID()}`);
+  const tmp = join(
+    dirname(target),
+    `.canarycode.update.${crypto.randomUUID()}`,
+  );
   try {
     await writeFile(tmp, bytes);
     chmodSync(tmp, 0o755);
@@ -353,6 +356,6 @@ export async function applyUpdate(
   return {
     ok: true,
     version: latest,
-    message: `updated to cc ${latest} — restart cc to use it`,
+    message: `updated to canarycode ${latest} — restart canarycode to use it`,
   };
 }

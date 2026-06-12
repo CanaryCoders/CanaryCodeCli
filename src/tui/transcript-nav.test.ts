@@ -20,7 +20,7 @@ import {
 const banner: Item = {
   id: 1,
   kind: "banner",
-  appName: "cc",
+  appName: "canarycode",
   version: "0.0.1",
   cwd: "/tmp",
   model: "m",

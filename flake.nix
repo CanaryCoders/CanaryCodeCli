@@ -1,5 +1,5 @@
 {
-  description = "cc — a fast, minimal terminal coding agent (CanaryCode)";
+  description = "canarycode — a fast, minimal terminal coding agent (CanaryCode)";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -20,20 +20,20 @@
 
       # Map a Nix system to the matching release asset name.
       assetFor = {
-        "x86_64-linux" = "cc-linux-x64";
-        "aarch64-linux" = "cc-linux-arm64";
-        "x86_64-darwin" = "cc-darwin-x64";
-        "aarch64-darwin" = "cc-darwin-arm64";
+        "x86_64-linux" = "canarycode-linux-x64";
+        "aarch64-linux" = "canarycode-linux-arm64";
+        "x86_64-darwin" = "canarycode-darwin-x64";
+        "aarch64-darwin" = "canarycode-darwin-arm64";
       };
 
-      ccFor =
+      canarycodeFor =
         system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
           asset = assetFor.${system};
         in
         pkgs.stdenv.mkDerivation {
-          pname = "cc";
+          pname = "canarycode";
           version = release.version;
 
           src = pkgs.fetchurl {
@@ -52,40 +52,40 @@
 
           installPhase = ''
             runHook preInstall
-            install -Dm755 "$src" "$out/bin/cc"
+            install -Dm755 "$src" "$out/bin/canarycode"
             runHook postInstall
           '';
 
-          # Nix-managed installs are immutable — force self-update off so `cc`
+          # Nix-managed installs are immutable — force self-update off so `canarycode`
           # never tries to overwrite the read-only store binary.
           postFixup = ''
-            wrapProgram "$out/bin/cc" --set CC_DISABLE_UPDATE 1
+            wrapProgram "$out/bin/canarycode" --set CANARYCODE_DISABLE_UPDATE 1
           '';
 
           meta = with pkgs.lib; {
             description = "A fast, minimal terminal coding agent";
             homepage = "https://github.com/CanaryCoders/CanaryCodeCli";
-            mainProgram = "cc";
+            mainProgram = "canarycode";
             platforms = systems;
           };
         };
     in
     {
       packages = forAllSystems (system: {
-        default = ccFor system;
-        cc = ccFor system;
+        default = canarycodeFor system;
+        canarycode = canarycodeFor system;
       });
 
       apps = forAllSystems (system: {
         default = {
           type = "app";
-          program = "${ccFor system}/bin/cc";
+          program = "${canarycodeFor system}/bin/canarycode";
         };
       });
 
-      # Home Manager module: `programs.cc.enable = true;` (+ optional `settings`).
+      # Home Manager module: `programs.canarycode.enable = true;` (+ optional `settings`).
       homeManagerModules.default = import ./nix/hm-module.nix self;
-      homeManagerModules.cc = self.homeManagerModules.default;
+      homeManagerModules.canarycode = self.homeManagerModules.default;
 
       formatter = forAllSystems (
         system: nixpkgs.legacyPackages.${system}.nixfmt-rfc-style

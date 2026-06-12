@@ -1,14 +1,14 @@
 // loader.ts — discover and load user extensions from config directories.
 //
-// Two sources: ~/.cc/extensions/*.{ts,js} (the user put it there — implicitly
-// trusted) and ./.cc/extensions/*.{ts,js} (arrives with a repo — approved on
-// first load, tracked by content hash in ~/.cc/trusted-extensions.json, so a
+// Two sources: ~/.canarycode/extensions/*.{ts,js} (the user put it there — implicitly
+// trusted) and ./.canarycode/extensions/*.{ts,js} (arrives with a repo — approved on
+// first load, tracked by content hash in ~/.canarycode/trusted-extensions.json, so a
 // fresh clone never executes code silently). An extension's NAME is its
 // filename stem, which makes `extensions.<name>: false` decidable BEFORE
 // import — a disabled extension is never even imported; a stub keeps it
 // visible in /extensions so it can be re-enabled. Every failure (untrusted,
 // collision, bad shape, import error) skips that one file with a note; a user
-// extension can never crash cc. Bun's module cache means a CHANGED file is
+// extension can never crash canarycode. Bun's module cache means a CHANGED file is
 // re-trust-checked but not re-executed in-process — edits take effect on the
 // next launch.
 
@@ -51,7 +51,7 @@ async function readTrust(path: string): Promise<Record<string, string>> {
 }
 
 /** Persist the trust store. Returns false on failure so the caller can warn
- * (a silently unwritable ~/.cc means eternal unexplained re-prompting). */
+ * (a silently unwritable ~/.canarycode means eternal unexplained re-prompting). */
 async function writeTrust(
   path: string,
   store: Record<string, string>,
@@ -136,16 +136,16 @@ export async function loadUserExtensions(
 ): Promise<Extension[]> {
   const sources = [
     {
-      dir: opts.userDir ?? join(homedir(), ".cc", "extensions"),
+      dir: opts.userDir ?? join(homedir(), ".canarycode", "extensions"),
       trusted: true,
     },
     {
-      dir: opts.projectDir ?? join(process.cwd(), ".cc", "extensions"),
+      dir: opts.projectDir ?? join(process.cwd(), ".canarycode", "extensions"),
       trusted: false,
     },
   ];
   const trustFile =
-    opts.trustFile ?? join(homedir(), ".cc", "trusted-extensions.json");
+    opts.trustFile ?? join(homedir(), ".canarycode", "trusted-extensions.json");
 
   const out: Extension[] = [];
   // User dir loads first; on a name collision the user-global file wins.
@@ -188,7 +188,7 @@ export async function loadUserExtensions(
               opts.note(
                 opts.confirm
                   ? `note: project extension "${name}" not approved — skipped`
-                  : `note: project extension "${name}" (${path}) is not approved — restart cc to approve it`,
+                  : `note: project extension "${name}" (${path}) is not approved — restart canarycode to approve it`,
               );
               continue;
             }

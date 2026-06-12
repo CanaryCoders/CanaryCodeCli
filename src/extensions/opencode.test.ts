@@ -20,7 +20,7 @@ afterAll(async () => {
 });
 
 async function tempFile(name: string, content: unknown): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "cc-opencode-"));
+  const dir = await mkdtemp(join(tmpdir(), "canarycode-opencode-"));
   cleanups.push(dir);
   const path = join(dir, name);
   await Bun.write(path, JSON.stringify(content));
@@ -28,7 +28,7 @@ async function tempFile(name: string, content: unknown): Promise<string> {
 }
 
 /** A path that exists in no test environment. */
-const MISSING = "/nonexistent/cc-test/none.json";
+const MISSING = "/nonexistent/canarycode-test/none.json";
 
 describe("discoverZenKey", () => {
   test("OPENCODE_API_KEY wins over the auth store", async () => {

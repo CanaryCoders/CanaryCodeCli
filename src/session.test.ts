@@ -10,7 +10,7 @@ import { resolveSession, SessionStore } from "./session.ts";
 
 describe("SessionStore.loadMessages", () => {
   test("skips a corrupt turn row instead of throwing", () => {
-    const path = join(tmpdir(), `cc-test-${crypto.randomUUID()}.db`);
+    const path = join(tmpdir(), `canarycode-test-${crypto.randomUUID()}.db`);
     try {
       let store = SessionStore.open(path);
       // Transcripts may hold secrets — the store must keep the db owner-only.

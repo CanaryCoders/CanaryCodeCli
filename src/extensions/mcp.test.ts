@@ -153,13 +153,13 @@ describe("sseTransport endpoint origin check", () => {
 
 describe("childEnv", () => {
   test("inherits allowlisted vars but not arbitrary parent secrets", () => {
-    process.env.CC_TEST_SECRET = "supersecret";
+    process.env.CANARYCODE_TEST_SECRET = "supersecret";
     try {
       const env = childEnv();
-      expect("CC_TEST_SECRET" in env).toBe(false);
+      expect("CANARYCODE_TEST_SECRET" in env).toBe(false);
       expect(env.PATH).toBe(process.env.PATH!);
     } finally {
-      delete process.env.CC_TEST_SECRET;
+      delete process.env.CANARYCODE_TEST_SECRET;
     }
   });
 

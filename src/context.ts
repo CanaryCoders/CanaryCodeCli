@@ -2,7 +2,7 @@
 //
 // On startup we walk from the cwd up to the repo root looking for a project
 // context file and prepend its contents to the system prompt. Three filenames
-// are recognized, in priority order: CC.md > AGENTS.md > CLAUDE.md. The first
+// are recognized, in priority order: CANARYCODE.md > AGENTS.md > CLAUDE.md. The first
 // one found (nearest directory first, then filename priority within a directory)
 // wins; any other context files that exist are noted but not loaded. This keeps
 // project instructions out of config and lets a repo carry its own memory.
@@ -12,7 +12,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 /** Recognized context filenames, highest priority first. */
-const CONTEXT_FILENAMES = ["CC.md", "AGENTS.md", "CLAUDE.md"] as const;
+const CONTEXT_FILENAMES = ["CANARYCODE.md", "AGENTS.md", "CLAUDE.md"] as const;
 
 export interface ContextFile {
   /** Absolute path to the file. */
@@ -54,7 +54,7 @@ function dirChain(startDir: string): string[] {
 
 /**
  * Find every recognized context file at or above `startDir`, ordered by search
- * priority: nearest directory first, and within a directory CC.md > AGENTS.md >
+ * priority: nearest directory first, and within a directory CANARYCODE.md > AGENTS.md >
  * CLAUDE.md. The first element (if any) is the one that should be loaded.
  */
 async function findContextFiles(

@@ -24,7 +24,7 @@ const CANARY_MODELS_URL = `${CANARY_API_HOST}/api/public/models`;
 /**
  * The baked-in CanaryLLM provider preset (OpenAI-compatible). The API key reads
  * from `${CANARYLLM_API_KEY}`; models stay empty until discovered (or a user
- * sets them explicitly in `~/.cc/config.json`).
+ * sets them explicitly in `~/.canarycode/config.json`).
  */
 export function canaryProviderConfig(): ProviderConfig {
   return {

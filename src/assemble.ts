@@ -99,7 +99,7 @@ export async function initExtensions(
  * sections fold in around it during assembly.
  */
 export const SYSTEM_PROMPT = [
-  "You are cc, a concise terminal coding agent.",
+  "You are canarycode, a concise terminal coding agent.",
   "You operate in the user's current working directory and can read, search, and modify files and run shell commands via your tools.",
   "Be direct. Use tools to inspect the project before answering; prefer evidence over assumptions.",
   "",
@@ -177,7 +177,7 @@ export async function assembleSession(
 
   const composed = await composeExtensions(extensions, { ...opts, gate });
 
-  // Project memory (CC.md > AGENTS.md > CLAUDE.md, nearest dir first) is prepended
+  // Project memory (CANARYCODE.md > AGENTS.md > CLAUDE.md, nearest dir first) is prepended
   // to the base prompt; the feature sections fold in after. The per-mode rules are
   // appended per turn by `sessionForMode`, NOT here — `system` is the base prompt.
   const projectContext = await loadProjectContext();

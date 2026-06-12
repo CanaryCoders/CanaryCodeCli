@@ -1,13 +1,13 @@
 // mcp.ts — connect to MCP servers and merge their tools into the registry.
 //
 // MCP (Model Context Protocol) servers expose extra tools over JSON-RPC 2.0.
-// Two transports are supported, both declared in ~/.cc/config.json under
+// Two transports are supported, both declared in ~/.canarycode/config.json under
 // `mcpServers`:
 //   stdio:  { "name": { "command": "...", "args": [...], "env": {...} } }
 //   SSE:    { "name": { "url": "https://..." } }
 //
 // On startup we connect to each, run the MCP handshake, list its tools, and wrap
-// each one as a normal cc `Tool` namespaced `mcp__<server>__<tool>`. A tool's
+// each one as a normal canarycode `Tool` namespaced `mcp__<server>__<tool>`. A tool's
 // `readOnly` flag (the plan-mode gate) is inferred from its `readOnlyHint`
 // annotation, defaulting to false (mutating) when unknown. A server that fails to
 // connect is reported once and skipped — the agent runs without it.
@@ -94,7 +94,7 @@ class McpClient {
         this.request("initialize", {
           protocolVersion: PROTOCOL_VERSION,
           capabilities: {},
-          clientInfo: { name: "cc", version: "0.0.1" },
+          clientInfo: { name: "canarycode", version: "0.0.1" },
         }),
       )
       .then(() => this.notify("notifications/initialized"));
@@ -184,7 +184,7 @@ export interface McpToolResult {
 }
 
 /**
- * Render an MCP `tools/call` result into what cc passes back to the model. Text
+ * Render an MCP `tools/call` result into what canarycode passes back to the model. Text
  * content blocks are joined; the first image content block (`{ data, mimeType }`,
  * e.g. a puppeteer screenshot) is surfaced as base64 image data the agent loop
  * attaches for vision models. A result flagged `isError` is thrown so the agent
@@ -223,7 +223,7 @@ export function renderToolResult(res: unknown): McpToolResult {
 }
 
 /**
- * Wrap an MCP tool as a cc `Tool`. The name is namespaced `mcp__<server>__<tool>`
+ * Wrap an MCP tool as a canarycode `Tool`. The name is namespaced `mcp__<server>__<tool>`
  * so it can't collide with built-ins or other servers; `readOnly` is taken from
  * the `readOnlyHint` annotation (default false), which is what plan mode filters on.
  */

@@ -99,19 +99,19 @@ import type { PromptInput } from "./use-prompt-input.ts";
 import type { Transcript } from "./use-transcript.ts";
 
 // `/init` instruction: drives a real generation turn so the agent investigates
-// the repo and writes a genuine CC.md instead of a fill-in-the-blanks template.
-const INIT_PROMPT = `Create a CC.md file in the current directory — the project-context file cc reads on startup.
+// the repo and writes a genuine CANARYCODE.md instead of a fill-in-the-blanks template.
+const INIT_PROMPT = `Create a CANARYCODE.md file in the current directory — the project-context file canarycode reads on startup.
 
 First investigate the project: read package manifests (package.json, pyproject.toml, go.mod, Cargo.toml, etc.), config files, the README, and the directory layout to understand what this project is, its stack, and how to build/test/lint/run it.
 
-Then write CC.md with these sections, filled in from what you actually found (omit a section if it genuinely doesn't apply — do not leave placeholder comments):
+Then write CANARYCODE.md with these sections, filled in from what you actually found (omit a section if it genuinely doesn't apply — do not leave placeholder comments):
 - # <project name>
 - ## Overview — one or two sentences on what the project is and does.
 - ## Stack — languages, frameworks, runtimes, key libraries.
 - ## Commands — the real build/test/run/lint commands for this repo.
 - ## Conventions — code style, patterns, and rules to follow.
 
-Keep it short and high-signal. Use write_file to create ./CC.md.`;
+Keep it short and high-signal. Use write_file to create ./CANARYCODE.md.`;
 
 /** A prompt or prompt-command queued while the agent is busy. */
 export type QueuedItem = { display: string; text: string };
@@ -455,7 +455,7 @@ export function useAgentSession(deps: {
   // A turn rejecting *outside* runTurn's own try (e.g. while building tools) would
   // otherwise vanish as an unhandled rejection and leave `busy` stuck true.
   const reportTurnFailure = (err: unknown) => {
-    note(`cc: ${(err as Error).message}`, "error");
+    note(`canarycode: ${(err as Error).message}`, "error");
     controllerRef.current = null;
     setBusy(false);
     setLive([]);
@@ -688,7 +688,7 @@ export function useAgentSession(deps: {
       local.push({
         id: nextId(),
         kind: "note",
-        text: `cc: ${(err as Error).message}`,
+        text: `canarycode: ${(err as Error).message}`,
         tone: "error",
       });
     } finally {
@@ -811,7 +811,7 @@ export function useAgentSession(deps: {
       updateBanner({ model: label, provider: source });
     }
     // Persist: update the session row (so --resume restores this model) and write
-    // the preference to ~/.cc/config.json (so it's the default next launch).
+    // the preference to ~/.canarycode/config.json (so it's the default next launch).
     props.store.setModel(sessionIdRef.current, modelNameRef.current);
     void saveConfig({ model: label }).catch((err) =>
       note(
@@ -1134,15 +1134,15 @@ export function useAgentSession(deps: {
   }
 
   // Build the QueuedItem for a queueable action, or null to skip queueing.
-  // `init` runs its CC.md guard now (queue-time) and injects the full INIT_PROMPT.
+  // `init` runs its CANARYCODE.md guard now (queue-time) and injects the full INIT_PROMPT.
   function toQueuedItem(
     action: CommandAction,
     line: string,
   ): QueuedItem | null {
     if (action.kind === "init") {
-      if (existsSync(join(process.cwd(), "CC.md"))) {
+      if (existsSync(join(process.cwd(), "CANARYCODE.md"))) {
         note(
-          `CC.md already exists — left intact (${join(process.cwd(), "CC.md")})`,
+          `CANARYCODE.md already exists — left intact (${join(process.cwd(), "CANARYCODE.md")})`,
           "error",
         );
         return null;
@@ -1353,17 +1353,17 @@ export function useAgentSession(deps: {
   }
 
   // `/init` — drive a real agent turn that investigates the repo and writes a
-  // proper CC.md (not a placeholder template). Refuses to overwrite an existing
-  // CC.md so project memory is never clobbered.
+  // proper CANARYCODE.md (not a placeholder template). Refuses to overwrite an existing
+  // CANARYCODE.md so project memory is never clobbered.
   function doInit(): void {
-    if (existsSync(join(process.cwd(), "CC.md"))) {
+    if (existsSync(join(process.cwd(), "CANARYCODE.md"))) {
       note(
-        `CC.md already exists — left intact (${join(process.cwd(), "CC.md")})`,
+        `CANARYCODE.md already exists — left intact (${join(process.cwd(), "CANARYCODE.md")})`,
         "error",
       );
       return;
     }
-    note("investigating the project to write CC.md…");
+    note("investigating the project to write CANARYCODE.md…");
     submitPrompt("/init", INIT_PROMPT, "normal").catch(reportTurnFailure);
   }
 
@@ -1389,7 +1389,7 @@ export function useAgentSession(deps: {
 
   // `/extensions` — bare opens the interactive checkbox picker; an explicit
   // `enable|disable <name>` flips one directly. Either way a change persists to
-  // ~/.cc/config.json (`extensions.<name>`), re-runs the built-in startup
+  // ~/.canarycode/config.json (`extensions.<name>`), re-runs the built-in startup
   // gating, and reassembles the session so tool/prompt changes apply at once.
   async function handleExtensions(
     action: Extract<CommandAction, { kind: "extensions" }>,
@@ -1497,7 +1497,7 @@ export function useAgentSession(deps: {
       );
       return;
     }
-    note(`── cc ${result.version} ──\n${result.notes.trim()}`);
+    note(`── canarycode ${result.version} ──\n${result.notes.trim()}`);
   }
 
   // `/update` — download, verify, and swap in the latest release binary. Each

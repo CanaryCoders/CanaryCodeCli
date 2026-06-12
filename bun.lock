@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "cc",
+      "name": "canarycode",
       "dependencies": {
         "@opentui/core": "^0.4.1",
         "@opentui/react": "^0.4.1",

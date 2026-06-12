@@ -1,17 +1,15 @@
 {
-  "name": "cc",
+  "name": "canarycode",
   "version": "0.1.0",
   "description": "A fast, minimal terminal coding agent (Bun + OpenTUI)",
   "license": "PolyForm-Noncommercial-1.0.0",
   "type": "module",
   "bin": {
-    "cc": "./src/index.ts",
-    "ccode": "./src/index.ts"
+    "canarycode": "./src/index.ts"
   },
   "scripts": {
     "dev": "bun run src/index.ts",
-    "cc": "bun run src/index.ts",
-    "ccode": "bun run src/index.ts",
+    "canarycode": "bun run src/index.ts",
     "typecheck": "tsc --noEmit",
     "lint": "biome lint ./src",
     "format": "biome format --write ./src",

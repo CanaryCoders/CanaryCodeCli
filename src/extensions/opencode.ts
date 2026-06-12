@@ -1,5 +1,5 @@
 // opencode.ts — the "OpenCode Zen" built-in extension: use opencode's model
-// gateway (https://opencode.ai/docs/zen) inside cc, authenticated with the
+// gateway (https://opencode.ai/docs/zen) inside canarycode, authenticated with the
 // credentials opencode already holds.
 //
 // Zen is an OpenAI-compatible gateway at https://opencode.ai/zen/v1, so the

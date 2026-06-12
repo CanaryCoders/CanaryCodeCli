@@ -3,7 +3,7 @@
 // Reimplements the public Codex CLI OAuth 2.0 + PKCE flow so a user can drive the
 // agent with their ChatGPT Plus/Pro subscription instead of a pay-per-token API
 // key. The same public PKCE client id the Codex CLI and opencode use is reused;
-// there is no secret. Tokens land in ~/.cc/auth.json (chmod 600) — never in
+// there is no secret. Tokens land in ~/.canarycode/auth.json (chmod 600) — never in
 // config.json, which keeps `${VAR}` placeholders and must not hold expanded
 // secrets. The Codex provider (provider.ts) consumes a token getter from here.
 //
@@ -35,7 +35,7 @@ const REFRESH_SKEW_MS = 60_000;
 /** How long the local callback server waits for the browser redirect. */
 const CALLBACK_TIMEOUT_MS = 5 * 60_000;
 
-/** Persisted credential shape (~/.cc/auth.json). */
+/** Persisted credential shape (~/.canarycode/auth.json). */
 export interface AuthCredentials {
   access_token: string;
   refresh_token: string;
@@ -198,11 +198,11 @@ async function refreshTokens(prev: AuthCredentials): Promise<AuthCredentials> {
   return credentialsFrom(tok, prev);
 }
 
-// ── credential store (~/.cc/auth.json) ───────────────────────────────────────
+// ── credential store (~/.canarycode/auth.json) ───────────────────────────────────────
 
-/** Path to the credential file (~/.cc/auth.json). */
+/** Path to the credential file (~/.canarycode/auth.json). */
 function authPath(): string {
-  return join(homedir(), ".cc", "auth.json");
+  return join(homedir(), ".canarycode", "auth.json");
 }
 
 /** Load stored credentials, or undefined if not signed in / unreadable. */
@@ -217,7 +217,7 @@ export async function loadCredentials(
     // A corrupt file is not the same as "not signed in" — say so, but still
     // treat it as signed-out so a fresh login can overwrite it.
     console.error(
-      `cc: ${path} is corrupt — run \`cc login-codex\` to recreate it`,
+      `canarycode: ${path} is corrupt — run \`canarycode login-codex\` to recreate it`,
     );
     return undefined;
   }
@@ -249,7 +249,7 @@ export async function hasCredentials(
 
 // ── local callback server ─────────────────────────────────────────────────────
 
-const SUCCESS_HTML = `<!doctype html><html><head><meta charset="utf-8"><title>cc — signed in</title></head><body style="font-family:system-ui;text-align:center;padding-top:4rem"><h2>✓ Signed in to ChatGPT</h2><p>You can close this tab and return to your terminal.</p></body></html>`;
+const SUCCESS_HTML = `<!doctype html><html><head><meta charset="utf-8"><title>canarycode — signed in</title></head><body style="font-family:system-ui;text-align:center;padding-top:4rem"><h2>✓ Signed in to ChatGPT</h2><p>You can close this tab and return to your terminal.</p></body></html>`;
 
 interface CallbackResult {
   code: string;
@@ -422,7 +422,7 @@ export interface TokenGetter {
 }
 
 /**
- * A lazy token source the provider holds. Loads ~/.cc/auth.json on first use,
+ * A lazy token source the provider holds. Loads ~/.canarycode/auth.json on first use,
  * refreshes (and re-persists) when expired or when forced, and dedupes concurrent
  * refreshes behind a single in-flight promise so parallel sub-agent requests don't
  * each trigger one. Throws a clear "not signed in" error when no credentials exist.
@@ -438,7 +438,9 @@ export function makeTokenGetter(path: string = authPath()): TokenGetter {
       loaded = true;
     }
     if (!creds) {
-      throw new Error("cc: not signed in — run `cc login-codex`");
+      throw new Error(
+        "canarycode: not signed in — run `canarycode login-codex`",
+      );
     }
     return creds;
   }

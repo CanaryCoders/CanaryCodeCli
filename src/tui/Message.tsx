@@ -50,7 +50,7 @@ export type Item =
   | {
       id: number;
       kind: "banner";
-      /** App name (e.g. "cc"). */
+      /** App name (e.g. "canarycode"). */
       appName: string;
       /** Version string (e.g. "0.0.1"). */
       version: string;

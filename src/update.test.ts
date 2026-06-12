@@ -29,10 +29,10 @@ describe("parseChecksums", () => {
   test("maps filename to hash, ignoring junk lines and the optional binary star", () => {
     const hash = "a".repeat(64);
     const other = "b".repeat(64);
-    const text = `${hash}  cc-darwin-arm64\n${other} *cc-linux-x64\n\n# comment\n`;
+    const text = `${hash}  canarycode-darwin-arm64\n${other} *canarycode-linux-x64\n\n# comment\n`;
     const map = parseChecksums(text);
-    expect(map.get("cc-darwin-arm64")).toBe(hash);
-    expect(map.get("cc-linux-x64")).toBe(other);
+    expect(map.get("canarycode-darwin-arm64")).toBe(hash);
+    expect(map.get("canarycode-linux-x64")).toBe(other);
     expect(map.size).toBe(2);
   });
 });
@@ -85,7 +85,7 @@ describe("updateDisabledReason", () => {
   test("refuses to self-update from a source/dev run", async () => {
     // The test runner is `bun`, not a compiled release binary, so there is no
     // injected BUILD_VERSION and updates must be disabled.
-    const config = await loadConfig("/nonexistent/cc-config.json");
+    const config = await loadConfig("/nonexistent/canarycode-config.json");
     expect(updateDisabledReason(config)).toBe(
       "not a release build (running from source — use git to update)",
     );

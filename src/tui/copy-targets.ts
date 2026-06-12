@@ -214,7 +214,7 @@ export async function writeTextToClipboard(
   } catch {
     // Fall through to temp-file fallback.
   }
-  const dir = await mkdtemp(join(tmpdir(), "cc-copy-"));
+  const dir = await mkdtemp(join(tmpdir(), "canarycode-copy-"));
   const path = join(dir, "copied.txt");
   await writeFile(path, text, "utf8");
   return { ok: false, path };

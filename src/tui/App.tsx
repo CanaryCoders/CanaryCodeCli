@@ -106,7 +106,7 @@ function App(props: AppProps): React.ReactNode {
   const transcript = useTranscript({
     banner: {
       kind: "banner",
-      appName: "cc",
+      appName: "canarycode",
       version: props.version,
       cwd: process.cwd(),
       model: props.modelLabel,

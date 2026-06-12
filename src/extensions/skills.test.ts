@@ -20,7 +20,7 @@ async function makeTmpSkillDir(
   root: string;
   dir: { dir: string; source: "global" | "project" };
 }> {
-  const root = await mkdtemp(join(tmpdir(), "cc-skills-test-"));
+  const root = await mkdtemp(join(tmpdir(), "canarycode-skills-test-"));
   const skillDir = join(root, name);
   await mkdir(skillDir, { recursive: true });
   await writeFile(
@@ -35,7 +35,7 @@ async function makeTmpSkillDir(
 // ---------------------------------------------------------------------------
 
 test("discoverSkills returns empty array for empty temp dir", async () => {
-  const root = await mkdtemp(join(tmpdir(), "cc-skills-empty-"));
+  const root = await mkdtemp(join(tmpdir(), "canarycode-skills-empty-"));
   try {
     const skills = await discoverSkills([{ dir: root, source: "project" }]);
     expect(skills).toEqual([]);

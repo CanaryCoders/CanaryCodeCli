@@ -55,7 +55,10 @@ describe("accountIdFromIdToken", () => {
 
 describe("loadCredentials", () => {
   test("a corrupt auth.json resolves undefined and warns instead of throwing", async () => {
-    const tmpPath = join(tmpdir(), `cc-auth-corrupt-${Date.now()}.json`);
+    const tmpPath = join(
+      tmpdir(),
+      `canarycode-auth-corrupt-${Date.now()}.json`,
+    );
     await Bun.write(tmpPath, "{broken");
     const errSpy = spyOn(console, "error").mockImplementation(() => {});
     try {

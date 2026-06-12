@@ -85,7 +85,7 @@ describe("modelForRole", () => {
   });
 
   test("loadConfig merges a user models map", async () => {
-    const path = join(tmpdir(), `cc-config-test-${process.pid}.json`);
+    const path = join(tmpdir(), `canarycode-config-test-${process.pid}.json`);
     await Bun.write(path, JSON.stringify({ models: { coding: "sonnet" } }));
     const loaded = await loadConfig(path);
     expect(loaded.models?.coding).toBe("sonnet");
@@ -94,7 +94,10 @@ describe("modelForRole", () => {
   });
 
   test("loadConfig merges ui settings", async () => {
-    const path = join(tmpdir(), `cc-config-ui-test-${process.pid}.json`);
+    const path = join(
+      tmpdir(),
+      `canarycode-config-ui-test-${process.pid}.json`,
+    );
     await Bun.write(path, JSON.stringify({ ui: { nerdFont: true } }));
     const loaded = await loadConfig(path);
     expect(loaded.ui.nerdFont).toBe(true);
@@ -117,7 +120,7 @@ describe("replaceConfigInPlace", () => {
 
 describe("raw config path helpers", () => {
   test("set/get/unset preserve unrelated keys and env placeholders", async () => {
-    const path = join(tmpdir(), `cc-config-raw-${process.pid}.json`);
+    const path = join(tmpdir(), `canarycode-config-raw-${process.pid}.json`);
     await Bun.write(
       path,
       JSON.stringify({
@@ -146,8 +149,8 @@ describe("raw config path helpers", () => {
   test("set creates parent directories and accepts custom provider/mcp/hook objects", async () => {
     const path = join(
       tmpdir(),
-      `cc-config-dir-${process.pid}`,
-      ".cc",
+      `canarycode-config-dir-${process.pid}`,
+      ".canarycode",
       "config.json",
     );
     await setRawConfigPath(

@@ -1,4 +1,4 @@
-// session-picker.test.ts — the pure helpers behind the `cc --resume` picker.
+// session-picker.test.ts — the pure helpers behind the `canarycode --resume` picker.
 
 import { describe, expect, test } from "bun:test";
 import type { SessionRow } from "./session.ts";
