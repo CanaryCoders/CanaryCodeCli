@@ -42,7 +42,9 @@ describe("parseMarkdownWithFlags", () => {
   });
 
   test("parses fenced code blocks without rendering fence delimiters", () => {
-    const blocks = parseMarkdownBlocks("before\n```ts\nconst x = 1;\n```\nafter");
+    const blocks = parseMarkdownBlocks(
+      "before\n```ts\nconst x = 1;\n```\nafter",
+    );
     expect(blocks).toEqual([
       { kind: "lines", lines: [{ spans: [{ text: "before" }] }] },
       {

@@ -289,7 +289,10 @@ function splitTableRow(raw: string): string[] | null {
   return cells.length > 1 ? cells : null;
 }
 
-function parseTableSeparator(raw: string, columns: number): TableAlign[] | null {
+function parseTableSeparator(
+  raw: string,
+  columns: number,
+): TableAlign[] | null {
   const cells = splitTableRow(raw);
   if (!cells || cells.length !== columns) return null;
   const align = cells.map((cell) => {
@@ -302,9 +305,7 @@ function parseTableSeparator(raw: string, columns: number): TableAlign[] | null 
     if (left) return "left" as const;
     return null;
   });
-  return align.some((a) => a === undefined)
-    ? null
-    : (align as TableAlign[]);
+  return align.some((a) => a === undefined) ? null : (align as TableAlign[]);
 }
 
 function lineText(line: MdLine): string {
@@ -394,7 +395,9 @@ export function parseMarkdownBlocks(src: string): MdBlock[] {
       blocks.push({
         kind: "table",
         headers: headers.map((cell, col) => ({
-          spans: [{ text: padCell(lineText(cell), widths[col]!, separator[col]) }],
+          spans: [
+            { text: padCell(lineText(cell), widths[col]!, separator[col]) },
+          ],
         })),
         rows: rows.map((row) =>
           row.map((cell, col) => ({

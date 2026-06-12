@@ -11,15 +11,8 @@
 // tool's output. Errors always show their first line even when collapsed.
 
 import { type Diff, type DiffLine, diffStat } from "../diff.ts";
-import {
-  type MdLine,
-  parseMarkdownBlocks,
-  parseMarkdownWithFlags,
-  type Span,
-} from "../markdown.ts";
+import { type MdLine, parseMarkdownBlocks, type Span } from "../markdown.ts";
 import { Card } from "./Card.tsx";
-import { useTuiRuntime } from "./runtime.tsx";
-import { getHighlightedCode } from "./syntax-highlight.ts";
 import { useIcon } from "./Icon.tsx";
 import {
   displayToolName,
@@ -32,6 +25,8 @@ import {
   truncateWidth,
 } from "./message-helpers.ts";
 import { Box, Text } from "./primitives.tsx";
+import { useTuiRuntime } from "./runtime.tsx";
+import { getHighlightedCode } from "./syntax-highlight.ts";
 import {
   CARD,
   DIFF,
@@ -185,7 +180,9 @@ function CodeBlock({
   return (
     <Box flexDirection="column" marginTop={1} marginBottom={1}>
       <RuleRow>
-        <Text color={tint(DIFF.gutter)} dimColor>{title}</Text>
+        <Text color={tint(DIFF.gutter)} dimColor>
+          {title}
+        </Text>
       </RuleRow>
       {highlighted.map((spans, li) => (
         <RuleRow key={rowKey(li, spans.map((span) => span.text).join(""))}>
@@ -206,7 +203,10 @@ function TableBlock({
   headers,
   rows,
   widths,
-}: Extract<ReturnType<typeof parseMarkdownBlocks>[number], { kind: "table" }>): React.ReactElement {
+}: Extract<
+  ReturnType<typeof parseMarkdownBlocks>[number],
+  { kind: "table" }
+>): React.ReactElement {
   const separator = widths.map((width) => "─".repeat(width)).join("─┼─");
   const renderCells = (
     cells: MdLine[],
@@ -233,7 +233,9 @@ function TableBlock({
     <Box flexDirection="column" marginTop={1} marginBottom={1}>
       {renderCells(headers, "table:header", true)}
       <RuleRow>
-        <Text color={tint(DIFF.gutter)} dimColor>{separator}</Text>
+        <Text color={tint(DIFF.gutter)} dimColor>
+          {separator}
+        </Text>
       </RuleRow>
       {rows.map((row, i) => renderCells(row, `table:row:${i}`))}
     </Box>
