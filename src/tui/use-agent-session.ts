@@ -55,6 +55,10 @@ import {
   runStopHooks,
   runUserPromptSubmitHooks,
 } from "../extensions/hooks.ts";
+import {
+  appendMentionedFilesToPrompt,
+  readMentionedFiles,
+} from "../file-mentions.ts";
 import { iconFor } from "../icons.ts";
 import { extractImagePaths, type ImageData, readImageFile } from "../image.ts";
 import type { ContentBlock, Message } from "../provider.ts";
@@ -866,7 +870,14 @@ export function useAgentSession(deps: {
       );
     }
     push({ kind: "user", text: displayText });
-    const content: ContentBlock[] = [{ type: "text", text: messageText }];
+    const mentioned = await readMentionedFiles(messageText);
+    for (const err of mentioned.errors)
+      note(`couldn't read @mentioned file ${err}`, "error");
+    const modelText = appendMentionedFilesToPrompt(
+      messageText,
+      mentioned.files,
+    );
+    const content: ContentBlock[] = [{ type: "text", text: modelText }];
     // Collect images for this prompt: clipboard pastes (Ctrl+V) queued in the ref,
     // plus any image files referenced in the prompt text (bare or @-mentioned).
     const clipboardImages = pendingImagesRef.current;

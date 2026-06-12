@@ -6,7 +6,7 @@
 // clears `dismissed` and resets the selection to the top). The popover stays live
 // while the agent is busy so a command can be composed/queued mid-turn.
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { availableCommands, listExtensions } from "../assemble.ts";
 import {
   type Completion,
@@ -15,6 +15,10 @@ import {
 } from "../commands.ts";
 import type { Config } from "../config.ts";
 import type { SessionStore } from "../session.ts";
+import {
+  fileMentionCompletions,
+  listMentionableFiles,
+} from "./file-complete.ts";
 
 /** Gather the data the `/` autocomplete draws parameter values from. */
 function buildCompletionContext(
@@ -73,12 +77,32 @@ export function useAutocomplete(opts: {
 
   const [selected, setSelected] = useState(0);
   const [completeDismissed, setCompleteDismissed] = useState(false);
+  const [files, setFiles] = useState<string[]>([]);
   const completeOpenRef = useRef(false);
   const completionsRef = useRef<Completion[]>([]);
   const selRef = useRef(0);
   const completeDismissedRef = useRef(false);
 
+  function refreshMentionableFiles(): void {
+    listMentionableFiles()
+      .then((next) => setFiles(next))
+      .catch(() => {});
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    listMentionableFiles()
+      .then((next) => {
+        if (!cancelled) setFiles(next);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   function handleInputChange(value: string): void {
+    refreshMentionableFiles();
     setInput(value);
     setSelected(0);
     // Typing leaves history browsing — the next Up re-stashes this edited draft.
@@ -111,15 +135,16 @@ export function useAutocomplete(opts: {
   }
 
   // ── recompute suggestions each render from the input ──
-  // Only while the prompt is an in-progress slash command and the popover isn't
-  // dismissed/blocked by a plan. The refs are mirrored for the key handler.
-  const completeActive =
-    !planActive && input.startsWith("/") && !completeDismissed;
+  // Slash commands complete at the start of the prompt; @file mentions complete
+  // inline for the active whitespace-delimited mention token.
+  const completeActive = !planActive && !completeDismissed;
   const suggestions = completeActive
-    ? makeCommandSet(availableCommands(config)).completions(
-        input,
-        buildCompletionContext(config, store),
-      )
+    ? input.startsWith("/")
+      ? makeCommandSet(availableCommands(config)).completions(
+          input,
+          buildCompletionContext(config, store),
+        )
+      : fileMentionCompletions(input, files)
     : [];
   const completeOpen = suggestions.length > 0;
   const sel = completeOpen

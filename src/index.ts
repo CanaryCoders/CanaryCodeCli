@@ -37,6 +37,10 @@ import {
   runUserPromptSubmitHooks,
 } from "./extensions/hooks.ts";
 import { statusMark } from "./extensions/tasks.ts";
+import {
+  appendMentionedFilesToPrompt,
+  readMentionedFiles,
+} from "./file-mentions.ts";
 import { extractImagePaths, readImageFile } from "./image.ts";
 import { renderAnsi } from "./markdown.ts";
 import type { ContentBlock, Message, Provider } from "./provider.ts";
@@ -443,9 +447,13 @@ async function runHeadless(args: Args): Promise<number> {
   // Everything already in `messages` is persisted; new entries (the prompt plus
   // each assistant/tool turn the loop appends) get written after the run.
   const persistedCount = messages.length;
+  const mentioned = await readMentionedFiles(prompt);
+  for (const err of mentioned.errors)
+    process.stderr.write(`note: couldn't read @mentioned file ${err}\n`);
+  const modelPrompt = appendMentionedFilesToPrompt(prompt, mentioned.files);
   // Attach any image files referenced in the prompt, for vision-capable models.
   const supportsVision = modelSupportsVision(resolved.model);
-  const promptContent: ContentBlock[] = [{ type: "text", text: prompt }];
+  const promptContent: ContentBlock[] = [{ type: "text", text: modelPrompt }];
   const promptImagePaths = extractImagePaths(prompt);
   if (promptImagePaths.length) {
     if (!supportsVision) {
