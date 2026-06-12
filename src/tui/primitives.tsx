@@ -1,19 +1,69 @@
-// tui/primitives.tsx — tiny renderer-staging layer for display-only components.
+// tui/primitives.tsx — the renderer primitive layer over OpenTUI.
 //
-// The production App is still Ink during the OpenTUI migration, so the default
-// Box/Text exports intentionally render Ink components. Leaf components can move
-// off direct Ink imports now, while OpenTUI-ready twins are available for the
-// future root switch without changing their public props again.
+// `Box`/`Text` are the only layout/text primitives the rest of the TUI imports.
+// They accept a small, Ink-flavoured prop surface (flex layout, margins/padding,
+// border + text styling) and forward it onto OpenTUI's native `box`/`text`
+// elements via the `OpenTuiBox`/`OpenTuiText` adapters below. Keeping the public
+// props here means leaf components never touch OpenTUI element names directly.
 
 import { createTextAttributes } from "@opentui/core";
 import { useTerminalDimensions } from "@opentui/react";
-import type { Box as InkBox, Text as InkText } from "ink";
 import type { ReactElement, ReactNode } from "react";
 import { createElement } from "react";
 import { tint } from "./theme.ts";
 
-export type BoxProps = React.ComponentProps<typeof InkBox>;
-export type TextProps = React.ComponentProps<typeof InkText>;
+export interface BoxProps {
+  children?: ReactNode;
+  key?: React.Key;
+  // Border
+  borderStyle?: "single" | "double" | "round" | "bold" | "classic";
+  borderColor?: string;
+  borderDimColor?: boolean;
+  // Flexbox layout
+  flexDirection?: "row" | "column" | "row-reverse" | "column-reverse";
+  flexGrow?: number;
+  flexShrink?: number;
+  justifyContent?:
+    | "flex-start"
+    | "flex-end"
+    | "center"
+    | "space-between"
+    | "space-around";
+  alignItems?: "flex-start" | "flex-end" | "center" | "stretch";
+  alignSelf?: "flex-start" | "flex-end" | "center" | "auto";
+  // Sizing
+  width?: number | string;
+  height?: number | string;
+  minWidth?: number;
+  minHeight?: number;
+  // Spacing
+  margin?: number;
+  marginTop?: number;
+  marginBottom?: number;
+  marginLeft?: number;
+  marginRight?: number;
+  padding?: number;
+  paddingX?: number;
+  paddingY?: number;
+  paddingTop?: number;
+  paddingBottom?: number;
+  paddingLeft?: number;
+  paddingRight?: number;
+}
+
+export interface TextProps {
+  children?: ReactNode;
+  key?: React.Key;
+  color?: string;
+  backgroundColor?: string;
+  dimColor?: boolean;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  strikethrough?: boolean;
+  inverse?: boolean;
+  wrap?: "wrap" | "truncate" | "end";
+}
 
 export function Box(props: BoxProps): ReactElement {
   return <OpenTuiBox {...props} />;

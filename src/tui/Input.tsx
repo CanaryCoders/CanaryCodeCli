@@ -1,7 +1,7 @@
 // tui/Input.tsx — a tiny multi-line text input for the TUI prompt box.
 //
-// `ink-text-input` is single-line and submits on every Enter, so it can't hold a
-// multi-line message. This is a focused, dependency-free replacement: plain
+// Off-the-shelf single-line text inputs submit on every Enter, so they can't hold
+// a multi-line message. This is a focused, dependency-free replacement: plain
 // **Enter** submits, **Shift+Enter** (or a literal linefeed — what some terminals
 // send for Shift+Enter, and what pasted text carries) inserts a newline instead.
 // Left/Right/Up/Down move the cursor (Up/Down across lines), Backspace/Delete

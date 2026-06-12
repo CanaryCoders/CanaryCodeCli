@@ -1,7 +1,7 @@
 {
   "name": "cc",
   "version": "0.0.1",
-  "description": "A fast, minimal terminal coding agent (Bun + Ink)",
+  "description": "A fast, minimal terminal coding agent (Bun + OpenTUI)",
   "license": "PolyForm-Noncommercial-1.0.0",
   "type": "module",
   "bin": {
@@ -20,9 +20,6 @@
   "dependencies": {
     "@opentui/core": "^0.4.1",
     "@opentui/react": "^0.4.1",
-    "ink": "^5",
-    "ink-spinner": "^5",
-    "ink-text-input": "^6",
     "react": "^19.2.0"
   },
   "devDependencies": {

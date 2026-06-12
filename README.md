@@ -1,6 +1,6 @@
 # cc
 
-A fast, minimal terminal coding agent. It runs on the Bun runtime with an [Ink](https://github.com/vadimdemedes/ink) TUI and flexible model support. The core stays small. You get the quality-of-life features that matter: plan mode, auto mode, thinking modes, web search, sub-agents, custom agents, MCP, skills, hooks, an AI permission engine, and project-context files.
+A fast, minimal terminal coding agent. It runs on the Bun runtime with an [OpenTUI](https://github.com/sst/opentui) TUI and flexible model support. The core stays small. You get the quality-of-life features that matter: plan mode, auto mode, thinking modes, web search, sub-agents, custom agents, MCP, skills, hooks, an AI permission engine, and project-context files.
 
 One engine drives two front-ends. A headless `-p` print mode handles scripting. An interactive TUI handles live work. Both run the same agent loop.
 
