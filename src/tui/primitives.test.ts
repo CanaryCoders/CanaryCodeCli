@@ -66,3 +66,19 @@ test("Box honours an explicit flexDirection", () => {
       .flexDirection,
   ).toBe("column");
 });
+
+// OpenTUI draws `title` into the border run, so a bordered Box reads as a titled
+// card. The primitive must forward the title props onto the host <box>.
+test("Box forwards title props to the host box element", () => {
+  const p = props(
+    OpenTuiBox({
+      children: null,
+      title: " you ",
+      titleColor: "cyan",
+      titleAlignment: "left",
+    }),
+  );
+  expect(p.title).toBe(" you ");
+  expect(p.titleColor).toBe("cyan");
+  expect(p.titleAlignment).toBe("left");
+});

@@ -277,14 +277,15 @@ function App(props: AppProps): React.ReactNode {
   // a little more tail, which is harmless.
   const rows = runtime.rows();
   const columns = runtime.columns();
-  const liveCap = Math.max(3, rows - 10);
-  // Reserve for the *deepest* nested gutter a live line can sit behind: the 3-cell
-  // speaker gutter, plus the 2-cell `│ ` markdown rule that code-fence/indented
-  // lines get nested inside it. Clamping too wide makes code soft-wrap mid-word in
-  // the live region — and a wrapped live line occupies a terminal row `tailLines`
-  // never budgeted, overflowing the dynamic region and desyncing Ink into a flood
-  // of blank/duplicate lines.
-  const liveContentWidth = Math.max(1, columns - 5);
+  // Reserve rows for the input frame, footer, gaps, the trim marker, AND the
+  // streaming assistant card's top + bottom border (2 rows). Over-reserving only
+  // trims a little more tail, which is harmless.
+  const liveCap = Math.max(3, rows - 12);
+  // Clamp each live line so it never soft-wraps (a wrapped live line occupies a
+  // terminal row `tailLines` never budgeted). Reserve for the *deepest* place a
+  // live line can sit: inside the assistant card (2 border + 2 padding cells),
+  // plus the 2-cell `│ ` markdown rule that code-fence/indented lines nest in.
+  const liveContentWidth = Math.max(1, columns - 6);
 
   return (
     <TuiRuntimeContext.Provider value={runtime}>

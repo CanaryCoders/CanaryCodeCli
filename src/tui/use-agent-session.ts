@@ -74,7 +74,6 @@ import type { AppProps } from "./app-types.ts";
 import type { ExtensionToggle } from "./Extensions.tsx";
 import { drainInputQuiet, expandPastes } from "./input-helpers.ts";
 import type { Item } from "./Message.tsx";
-import { stablePrefixLen } from "./message-helpers.ts";
 import type { TuiRuntime } from "./runtime.tsx";
 import type { Approvals } from "./use-approvals.ts";
 import type { PasteChips } from "./use-paste-chips.ts";
@@ -411,30 +410,14 @@ export function useAgentSession(deps: {
     // of `local` have already been handed to `<Static>`.
     const local: Item[] = [];
     let committed = 0;
-    // Ghost-free streaming: a growing assistant/thinking block is the one item that
-    // can outgrow the viewport. Before each commit, peel its *stable* prefix (whole
-    // lines, never inside an open code fence) into its own finalised chunk inserted
-    // just before it — the existing "commit all but last" pass then moves the chunk
-    // into `<Static>` permanently, leaving only the unstable tail in the live region.
-    // The tail is ≤ one logical line (plus any open fence), so it can't overflow.
-    const splitStableText = () => {
-      const last = local[local.length - 1];
-      if (!last || (last.kind !== "assistant" && last.kind !== "thinking"))
-        return;
-      const cut = stablePrefixLen(last.text, last.kind);
-      if (cut <= 0) return;
-      const chunk: Item = {
-        id: nextId(),
-        kind: last.kind,
-        text: last.text.slice(0, cut),
-        continuation: last.continuation,
-      };
-      last.text = last.text.slice(cut);
-      last.continuation = true; // its head was already committed above
-      local.splice(local.length - 1, 0, chunk); // insert the chunk before the tail
-    };
+    // A growing assistant/thinking block stays a single `local` item until the next
+    // item (a tool call, a note, the turn end) makes it non-last and `sync` commits
+    // it whole. We deliberately do NOT peel its stable prefix into separate chunks:
+    // OpenTUI is a retained-mode renderer, so the live region holding a growing box
+    // is safe, and `LiveRegion` already height-caps the displayed block via
+    // `tailLines`. Keeping one item per contiguous block is what lets the transcript
+    // render each answer as a single titled card instead of a stack of boxes.
     const sync = () => {
-      splitStableText();
       const finalCount = local.length - 1; // all but the still-mutating last item
       if (finalCount > committed) {
         const newlyFinal = local.slice(committed, finalCount);

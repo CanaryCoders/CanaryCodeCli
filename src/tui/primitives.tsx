@@ -28,6 +28,17 @@ export interface BoxProps {
   borderStyle?: "single" | "double" | "round";
   borderColor?: string;
   borderDimColor?: boolean;
+  // Title embedded in the top (or bottom) border — OpenTUI renders these into
+  // the border run itself, so a bordered Box reads as a titled card.
+  title?: string;
+  titleColor?: string;
+  titleAlignment?: "left" | "center" | "right";
+  bottomTitle?: string;
+  bottomTitleAlignment?: "left" | "center" | "right";
+  // Optional fill painted behind the box. Left undefined the box is transparent
+  // (the terminal background shows through). Never set on the root layout — only
+  // on small framed elements where a subtle fill is wanted.
+  backgroundColor?: string;
   // Flexbox layout
   flexDirection?: "row" | "column" | "row-reverse" | "column-reverse";
   flexGrow?: number;

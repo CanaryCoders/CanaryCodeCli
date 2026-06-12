@@ -12,6 +12,7 @@
 
 import { type Diff, type DiffLine, diffStat } from "../diff.ts";
 import { parseMarkdownWithFlags, type Span } from "../markdown.ts";
+import { Card } from "./Card.tsx";
 import { useIcon } from "./Icon.tsx";
 import {
   displayToolName,
@@ -22,10 +23,10 @@ import {
   summarizeToolInput,
   truncate,
   truncateWidth,
-  wrapWords,
 } from "./message-helpers.ts";
 import { Box, Text } from "./primitives.tsx";
 import {
+  CARD,
   DIFF,
   GUTTER_RULE_ICON,
   ROLE,
@@ -173,10 +174,12 @@ export function Markdown({
         const lineText = line.spans.map((s) => s.text).join("");
         return code[li] ? (
           <RuleRow key={rowKey(li, lineText)}>
-            <Text>{spans}</Text>
+            <Text wrap="wrap">{spans}</Text>
           </RuleRow>
         ) : (
-          <Text key={rowKey(li, lineText)}>{spans}</Text>
+          <Text key={rowKey(li, lineText)} wrap="wrap">
+            {spans}
+          </Text>
         );
       })}
     </Box>
@@ -276,39 +279,26 @@ function Gutter({
   );
 }
 
-// ── User line ──────────────────────────────────────────────────────────────────
+// ── User card ────────────────────────────────────────────────────────────────────
 //
-// A user line renders as a full-width highlight band (Claude-Code style): every
-// visual row — gutter cells included — is padded out to the content width, so the
-// role's background paints the whole line rather than just the glyphs of the text
-// (which is all Ink's `backgroundColor` covers). That requires owning the wrap:
-// rows are word-wrapped here at the known width instead of left to Ink, whose
-// wrapped output can't be padded per-row.
+// The user's message is the start of a turn, rendered as a cyan titled card so it
+// stands clearly apart from the assistant's answer and the tool calls. Each input
+// line is its own wrapping row inside the card; the box owns the width, so long
+// lines wrap to the card's content edge rather than the terminal's.
 
-function UserView({
-  text,
-  columns,
-}: {
-  text: string;
-  columns: number;
-}): React.ReactElement {
-  const s = ROLE.user;
-  const icon = useIcon(s.icon);
-  const bg = tint(s.bg);
-  // Same geometry as Gutter: 3 cells of glyph + spacing prefix every row.
-  const width = Math.max(1, columns - 3);
-  const rows = text.split("\n").flatMap((line) => wrapWords(line, width));
+function UserView({ text }: { text: string }): React.ReactElement {
   return (
-    <Box flexDirection="column" marginTop={SPACING.turnGap}>
-      {rows.map((row, i) => (
-        <Text key={rowKey(i, row)} backgroundColor={bg}>
-          <Text color={tint(s.color)} bold={s.bold}>
-            {i === 0 ? padRow(icon, 3) : "   "}
-          </Text>
-          {padRow(row, width)}
+    <Card
+      color={CARD.user.color}
+      title={CARD.user.title}
+      marginTop={SPACING.turnGap}
+    >
+      {text.split("\n").map((line, i) => (
+        <Text key={rowKey(i, line)} wrap="wrap">
+          {line}
         </Text>
       ))}
-    </Box>
+    </Card>
   );
 }
 
@@ -376,22 +366,20 @@ export function ItemView({
     case "banner":
       return <BannerView {...item} />;
     case "user":
-      // A user line starts a new turn → one blank line above it. It carries a
-      // full-width highlight band so it's instantly distinguishable from tool
-      // calls and AI output (Claude-Code style).
-      return <UserView text={item.text} columns={columns} />;
+      // A user message starts a new turn → one blank line above its cyan card.
+      return <UserView text={item.text} />;
     case "assistant":
-      // A `⏺` dot + blank line marks the start of each distinct AI answer; a
-      // continuation chunk of the same streamed message stays glued (no gap, no
-      // repeated dot).
+      // The model's answer is a green titled card. Each contiguous answer is a
+      // single transcript item (the engine no longer peels it into chunks), so it
+      // renders as one card rather than a stack of boxes.
       return (
-        <Gutter
-          speaker="assistant"
-          glyphless={item.continuation}
+        <Card
+          color={CARD.assistant.color}
+          title={CARD.assistant.title}
           marginTop={topGap(item, prevKind)}
         >
           <Markdown text={item.text} />
-        </Gutter>
+        </Card>
       );
     case "thinking":
       return (
@@ -403,41 +391,45 @@ export function ItemView({
           <Markdown text={item.text} dim />
         </Gutter>
       );
-    case "tool": {
-      const statusColor =
-        TOOL_STATUS[toolStatus(item.pending, item.isError)].color;
+    case "tool":
+      // Every tool call is its own titled card (its own colour), so the actions a
+      // turn took read as a distinct stack under the answer that triggered them.
       return (
-        <Gutter
-          speaker="tool"
-          colorOverride={statusColor}
+        <ToolView
+          item={item}
+          expanded={expanded}
+          showHint={showExpandHint}
+          compact={compact}
+          width={width}
+          columns={columns}
           marginTop={topGap(item, prevKind)}
-        >
-          <ToolView
-            item={item}
-            expanded={expanded}
-            showHint={showExpandHint}
-            compact={compact}
-            width={width}
-            columns={columns}
-          />
-        </Gutter>
+        />
       );
-    }
     case "note": {
       // While live (compact), truncate to one row so the note can't wrap and
-      // desync the redrawn region; the full note lands in `<Static>` on finalise.
+      // desync the redrawn region; the full note lands in scrollback on finalise.
       const text = compact && width ? truncate(item.text, width) : item.text;
-      const speaker = item.tone === "error" ? "error" : "note";
-      const carriesIcon = item.tone !== "error" && NOTE_TEXT_ICON_RE.test(text);
+      const marginTop =
+        prevKind === "note" ? SPACING.groupGap : SPACING.blockGap;
+      // Error notes get a red card for emphasis; ordinary info notes stay flat and
+      // dim behind their gutter glyph so routine context doesn't add box clutter.
+      if (item.tone === "error") {
+        return (
+          <Card
+            color={CARD.error.color}
+            title={CARD.error.title}
+            marginTop={marginTop}
+          >
+            <Text color={tint("red")} wrap="wrap">
+              {text}
+            </Text>
+          </Card>
+        );
+      }
+      const carriesIcon = NOTE_TEXT_ICON_RE.test(text);
       return (
-        <Gutter
-          speaker={speaker}
-          glyphless={carriesIcon}
-          marginTop={prevKind === "note" ? SPACING.groupGap : SPACING.blockGap}
-        >
-          <Text color={tint(item.tone === "error" ? "red" : "gray")}>
-            {text}
-          </Text>
+        <Gutter speaker="note" glyphless={carriesIcon} marginTop={marginTop}>
+          <Text color={tint("gray")}>{text}</Text>
         </Gutter>
       );
     }
@@ -451,81 +443,76 @@ function ToolView({
   compact = false,
   width,
   columns = 80,
+  marginTop = 0,
 }: {
   item: Extract<Item, { kind: "tool" }>;
   expanded: boolean;
   /** Show the one-time `ctrl+r to expand` affordance hint (collapsed only). */
   showHint?: boolean;
-  /** Live rendering: bound to a single headline row (no full bash command, no
-   * body, no diff) so the redrawn dynamic region can't overflow and desync Ink.
-   * The full version renders once the item lands in `<Static>`. */
+  /** Live rendering: bound to a single headline row (no card, no body, no diff) so
+   * the redrawn live region can't overflow. The full card renders once the item
+   * lands in the scrollback. */
   compact?: boolean;
   /** Live content width — the compact headline is truncated to it (mark included)
    * so the whole row fits the terminal and never wraps. */
   width?: number;
-  /** Terminal width — the diff preview pads its +/− bands to it. */
+  /** Terminal width — the card title and diff preview are sized against it. */
   columns?: number;
+  /** Blank rows above the card (group spacing from the caller). */
+  marginTop?: number;
 }): React.ReactElement {
   const status = toolStatus(item.pending, item.isError);
+  const glyph = useIcon(ROLE.tool.icon);
   const mark = useIcon(TOOL_STATUS[status].icon);
-  const color = TOOL_STATUS[status].color;
+  const statusColor = TOOL_STATUS[status].color;
   const summary = summarizeToolInput(item.name, item.input);
   const name = displayToolName(item.name);
-  // `bash` shows the FULL command, wrapped, never truncated — "what shell command
-  // ran" is the thing the user most wants to verify. Every other tool keeps the
-  // 72-char one-line summary. Ink `<Text>` wraps by default, so leaving bash's
-  // command un-truncated lets it flow onto the next line instead of `…`-eliding.
-  // EXCEPT while the call is *live* (compact): a long, wrapping headline in the
-  // redrawn dynamic region overflows it and smears into duplicate lines, so we
-  // truncate to one row there — the full command appears once it's in `<Static>`.
+  // The card border/title is blue for an ordinary call and red for an error, so a
+  // failed tool jumps out while still reading as a tool (distinct from user/cyan
+  // and assistant/green). The status mark (…/✓/✗) carries pending-vs-ok.
+  const cardColor = item.isError ? CARD.error.color : CARD.tool.color;
+
+  // `bash` shows the FULL command; every other tool keeps the short summary. Both
+  // are truncated for the title so it always fits on the border run.
   const shown = summary
-    ? item.name === "bash" && !compact
-      ? summary
+    ? item.name === "bash"
+      ? truncate(summary, Math.max(8, columns - 16))
       : truncate(summary, 72)
     : "";
-  const headline = shown ? `${name}: ${shown}` : name;
+  const headline = shown ? `${glyph} ${name} · ${shown}` : `${glyph} ${name}`;
 
-  // Live (compact): render exactly one row — the headline plus its status mark,
-  // truncated to the live content width (the 72-char summary cap above ignores the
-  // `name: ` prefix, the mark, and the terminal width, so on a normal-width
-  // terminal the row still wraps without this final clamp). A wrapped live row is
-  // what Ink mis-erases into the stray single-character fragments; the full, rich
-  // tool view (command, body, diff, hint) renders once the item lands in `<Static>`.
+  // Live (compact): one flat coloured row (glyph + headline + mark), truncated to
+  // the live content width so it never wraps. The full card renders on finalise.
   if (compact) {
     const line = `${headline} ${mark}`;
     return (
       <Box flexDirection="column">
-        <Text color={tint(color)}>{width ? truncate(line, width) : line}</Text>
+        <Text color={tint(statusColor)}>
+          {width ? truncate(line, width) : line}
+        </Text>
       </Box>
     );
   }
 
-  // Errors always reveal their first line; expansion reveals input + output head.
-  // Suppressed while live (compact) — the body lands in `<Static>` on finalise.
-  const showBody =
-    !compact && !item.pending && item.result && (expanded || item.isError);
-  const body = showBody ? head(item.result!, expanded ? 20 : 1) : null;
+  // Title carries the headline + status mark, truncated to the card's inner width
+  // (terminal minus the 2 border + 2 padding cells, with a little slack).
+  const title = truncate(`${headline} ${mark}`, Math.max(8, columns - 6));
+
+  // Show a 1–2 line preview of the tool's output by default, expanding to a deeper
+  // head when verbose. Errors render their lines in red; success previews are dim.
+  const body =
+    !item.pending && item.result ? head(item.result, expanded ? 20 : 2) : null;
 
   // write_file/edit_file carry a diff: always preview it (collapsed = first hunk).
-  // Held back while live (compact) so a tall diff can't overflow the live region.
   const showDiff =
-    !compact &&
-    !item.pending &&
-    !item.isError &&
-    item.diff &&
-    item.diff.hunks.length > 0;
+    !item.pending && !item.isError && item.diff && item.diff.hunks.length > 0;
 
   return (
-    <Box flexDirection="column">
-      <Text color={tint(color)}>
-        {headline}
-        <Text dimColor>{` ${mark}`}</Text>
-        {showHint && !expanded ? (
-          <Text dimColor>{"  (ctrl+r to expand)"}</Text>
-        ) : null}
-      </Text>
+    <Card color={cardColor} title={title} marginTop={marginTop}>
       {expanded && summary ? (
-        <Text dimColor>{`  ${truncate(fmtInput(item.input), 200)}`}</Text>
+        <Text dimColor wrap="truncate">
+          {truncate(fmtInput(item.input), 200)}
+        </Text>
       ) : null}
       {body
         ? body.lines.map((line, i) => (
@@ -533,23 +520,27 @@ function ToolView({
               key={rowKey(i, line)}
               color={tint(item.isError ? "red" : undefined)}
               dimColor={!item.isError}
+              wrap="truncate"
             >
-              {`  ${line}`}
+              {line}
             </Text>
           ))
         : null}
       {body && body.more > 0 ? (
-        <Text dimColor>{`  …(+${body.more} more lines)`}</Text>
+        <Text dimColor>{`…(+${body.more} more lines)`}</Text>
       ) : null}
       {showDiff ? (
-        // Rows after the 3-cell speaker gutter + 2-cell rule.
+        // Inside the card: terminal minus 2 border + 2 padding + the 2-cell rule.
         <DiffView
           diff={item.diff!}
           expanded={expanded}
-          width={Math.max(1, columns - 5)}
+          width={Math.max(1, columns - 6)}
         />
       ) : null}
-    </Box>
+      {showHint && !expanded ? (
+        <Text dimColor>{"(ctrl+r to expand)"}</Text>
+      ) : null}
+    </Card>
   );
 }
 

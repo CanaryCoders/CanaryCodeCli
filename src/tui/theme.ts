@@ -52,6 +52,31 @@ export const ROLE: Record<Role, RoleStyle> = {
   error: { icon: "error", color: "red" },
 };
 
+// ── Cards (boxed transcript units) ──────────────────────────────────────────────
+// Each conversational unit — the user's message, the assistant's answer, every
+// tool call — renders as a slim titled box so the eye reads the transcript as a
+// stack of distinct units. Colours are ANSI names so the terminal's *active
+// theme* (Catppuccin on Ghostty, Solarized, …) maps them; the border + embedded
+// title carry the distinction while the box itself stays transparent, so a
+// transparent terminal background shows straight through. Each speaker type gets
+// its own colour for instant separation (user/assistant/tool requested distinct).
+
+export type CardKind = "user" | "assistant" | "tool" | "error";
+
+export interface CardStyle {
+  /** Border + title colour (ANSI name → remapped by the terminal theme). */
+  color: string;
+  /** Title rendered into the top border. */
+  title: string;
+}
+
+export const CARD: Record<CardKind, CardStyle> = {
+  user: { color: "cyan", title: "you" },
+  assistant: { color: "green", title: "assistant" },
+  tool: { color: "blue", title: "tool" },
+  error: { color: "red", title: "error" },
+};
+
 // ── Modes (border + accent colour) ─────────────────────────────────────────────
 // The active mode tints the input frame border, the plan box, and the footer pill.
 
