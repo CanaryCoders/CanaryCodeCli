@@ -132,6 +132,9 @@ export interface AgentOptions {
   compactAtTokens?: number;
   /** When compacting, how many recent messages to keep verbatim. Default 6. */
   keepRecentMessages?: number;
+  /** Optional provider/model override used only for context compaction. */
+  compactProvider?: Provider;
+  compactModel?: string;
   /** Abort in-flight work. Checked at each turn boundary and during streaming. */
   signal?: AbortSignal;
   /**
@@ -188,6 +191,8 @@ export interface AgentOptions {
     model: string;
     supportsVision: boolean;
     thinkingBudget: number | undefined;
+    compactProvider?: Provider;
+    compactModel?: string;
   };
 }
 
@@ -309,8 +314,8 @@ export async function* runAgent(
       if (beforeTokens > compactAtTokens) {
         try {
           const result = await compactConversation({
-            provider,
-            model,
+            provider: cfg?.compactProvider ?? opts.compactProvider ?? provider,
+            model: cfg?.compactModel ?? opts.compactModel ?? model,
             messages,
             keepRecent,
             signal,
@@ -711,7 +716,7 @@ function pickCut(messages: Message[], keepRecent: number): number {
   return cut;
 }
 
-interface CompactOptions {
+export interface CompactOptions {
   provider: Provider;
   model: string;
   messages: Message[];
@@ -724,7 +729,7 @@ interface CompactOptions {
  * synthetic user message. Returns the number of messages that were summarized
  * away (0 if compaction was skipped or produced no summary). Exported for testing.
  */
-async function compactConversation(
+export async function compactConversation(
   opts: CompactOptions,
 ): Promise<{ summarized: number }> {
   const { provider, model, messages, keepRecent, signal } = opts;

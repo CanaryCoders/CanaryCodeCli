@@ -1,12 +1,12 @@
 // session-picker.test.ts — the pure helpers behind the `cc --resume` picker.
 
 import { describe, expect, test } from "bun:test";
+import type { SessionRow } from "./session.ts";
 import {
   formatAge,
   pickerActionForInput,
   renderPickerLines,
 } from "./session-picker.ts";
-import type { SessionRow } from "./session.ts";
 
 describe("pickerActionForInput", () => {
   test("maps arrows, vi keys, enter, and cancel keys", () => {

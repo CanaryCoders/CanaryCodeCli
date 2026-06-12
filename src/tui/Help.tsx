@@ -51,6 +51,7 @@ export const HELP_ROWS: readonly HelpRow[] = [
     mouse: "hover card → [copy]",
   },
   { action: "Copy last answer", keyboard: "/copy-last", mouse: "—" },
+  { action: "Compact context", keyboard: "/compact", mouse: "—" },
   { action: "Select text", keyboard: "—", mouse: "drag-select (auto-copies)" },
   {
     action: "Paste preview",

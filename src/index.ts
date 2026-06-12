@@ -43,7 +43,6 @@ import {
 } from "./file-mentions.ts";
 import { extractImagePaths, readImageFile } from "./image.ts";
 import { renderAnsi } from "./markdown.ts";
-import { pickSession } from "./session-picker.ts";
 import type { ContentBlock, Message, Provider } from "./provider.ts";
 import { createProvider } from "./provider.ts";
 import {
@@ -52,6 +51,7 @@ import {
   type SessionRow,
   SessionStore,
 } from "./session.ts";
+import { pickSession } from "./session-picker.ts";
 import {
   describeLevel,
   parseLevel,
@@ -398,6 +398,13 @@ async function runHeadless(args: Args): Promise<number> {
     },
   });
   const { tools, system, gate } = sessionForMode(session, mode);
+  const compactResolved = resolveModel(config, modelForRole(config, "compact"));
+  const compactProvider = compactResolved
+    ? createProvider(compactResolved.providerConfig)
+    : provider;
+  const compactModel = compactResolved
+    ? (compactResolved.model.name ?? compactResolved.model.id)
+    : modelName;
   if (mode === "plan") process.stderr.write("≡ plan mode (read-only)\n");
   if (mode === "auto")
     process.stderr.write(`◉ auto mode (autonomous · max ${turnCap} turns)\n`);
@@ -509,6 +516,8 @@ async function runHeadless(args: Args): Promise<number> {
       maxTurns: turnCap,
       thinkingBudget,
       compactAtTokens: config.compactAtTokens,
+      compactProvider,
+      compactModel,
       signal: controller.signal,
       gate,
       preToolUse: session.preToolUse,
@@ -1001,8 +1010,7 @@ async function main(): Promise<void> {
   // `cc --resume [id]` with no prompt reopens the session in the TUI instead.
   if (
     args.prompt !== undefined ||
-    ((args.resume !== undefined || args.continueLatest) &&
-      !process.stdin.isTTY)
+    ((args.resume !== undefined || args.continueLatest) && !process.stdin.isTTY)
   ) {
     process.exit(await runHeadless(args));
   }

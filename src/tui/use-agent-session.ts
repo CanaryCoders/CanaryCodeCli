@@ -13,7 +13,12 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { useRef, useState } from "react";
-import { type AgentMode, roleForMode, runAgent } from "../agent.ts";
+import {
+  type AgentMode,
+  compactConversation,
+  roleForMode,
+  runAgent,
+} from "../agent.ts";
 import {
   type AssembledSession,
   assembleSession,
@@ -343,6 +348,25 @@ export function useAgentSession(deps: {
     }
   }
 
+  function modelForRoleId(roleId?: string): {
+    provider: Provider;
+    model: string;
+    supportsVision: boolean;
+  } | null {
+    if (!roleId) return null;
+    const resolved = resolveModel(props.config, roleId);
+    if (!resolved) return null;
+    try {
+      return {
+        provider: createProvider(resolved.providerConfig),
+        model: resolved.model.name ?? resolved.model.id,
+        supportsVision: modelSupportsVision(resolved.model),
+      };
+    } catch {
+      return null;
+    }
+  }
+
   // Resolve the provider + concrete model for a run, by the mode's role. Falls back
   // to the base refs (set at launch / by /model) when the role is unset or unresolvable.
   function modelForTurn(runMode: AgentMode): {
@@ -350,21 +374,10 @@ export function useAgentSession(deps: {
     model: string;
     supportsVision: boolean;
   } {
-    const id = props.config.models?.[roleForMode(runMode)];
-    if (id) {
-      const resolved = resolveModel(props.config, id);
-      if (resolved) {
-        try {
-          return {
-            provider: createProvider(resolved.providerConfig),
-            model: resolved.model.name ?? resolved.model.id,
-            supportsVision: modelSupportsVision(resolved.model),
-          };
-        } catch {
-          // fall through to base refs
-        }
-      }
-    }
+    const roleModel = modelForRoleId(
+      props.config.models?.[roleForMode(runMode)],
+    );
+    if (roleModel) return roleModel;
     // Base-ref fallback has no ModelConfig in hand; assume vision-capable (the
     // built-in models all are) — a text-only model is opted out via config.
     const base = resolveModel(props.config);
@@ -386,6 +399,52 @@ export function useAgentSession(deps: {
       }
     }
     persistedRef.current = msgs.length;
+  }
+
+  function compactModelForSession(): { provider: Provider; model: string } {
+    const configured = modelForRoleId(props.config.models?.compact);
+    return configured
+      ? { provider: configured.provider, model: configured.model }
+      : { provider: providerRef.current, model: modelNameRef.current };
+  }
+
+  async function compactNow(): Promise<void> {
+    if (messagesRef.current.length === 0) {
+      note("nothing to compact yet");
+      return;
+    }
+    setBusy(true);
+    const controller = new AbortController();
+    controllerRef.current = controller;
+    try {
+      note("compacting context…");
+      const compact = compactModelForSession();
+      const result = await compactConversation({
+        provider: compact.provider,
+        model: compact.model,
+        messages: messagesRef.current,
+        keepRecent: 6,
+        signal: controller.signal,
+      });
+      if (result.summarized === 0) {
+        note("nothing compacted — not enough history yet");
+        return;
+      }
+      flush(true);
+      setHistory(
+        itemsFromMessages(messagesRef.current).map(
+          (it) => ({ ...it, id: nextId() }) as Item,
+        ),
+      );
+      setLive([]);
+      queueMicrotask(() => runtime.clear());
+      note(`⌘ compacted context: ${result.summarized} msgs`);
+    } catch (err) {
+      note(`compact failed: ${(err as Error).message}`, "error");
+    } finally {
+      controllerRef.current = null;
+      setBusy(false);
+    }
   }
 
   // A turn rejecting *outside* runTurn's own try (e.g. while building tools) would
@@ -435,7 +494,10 @@ export function useAgentSession(deps: {
     const preToolUse = assembled?.preToolUse;
     const postToolUse = assembled?.postToolUse;
 
-    const budget = supportsThinking(turnProvider.id) ? budgetFor(thinking) : 0;
+    const budget = supportsThinking(turnProvider.id)
+      ? budgetFor(thinkingRef.current)
+      : 0;
+    const compactRunModel = compactModelForSession();
     // Auto mode runs unattended → a hard cap (no human to ask). Normal/plan run
     // unbounded with a periodic "keep going?" checkpoint instead of a turn limit.
     const interactive = runMode !== "auto";
@@ -489,6 +551,7 @@ export function useAgentSession(deps: {
     // for the turn (`runMode`); a /mode change applies to the next turn. (spec §4)
     const refreshTurnConfig = () => {
       const m = modelForTurn(runMode);
+      const compact = modelForRoleId(props.config.models?.compact);
       const budget = supportsThinking(m.provider.id)
         ? budgetFor(thinkingRef.current)
         : 0;
@@ -497,6 +560,8 @@ export function useAgentSession(deps: {
         model: m.model,
         supportsVision: m.supportsVision,
         thinkingBudget: budget,
+        compactProvider: compact?.provider,
+        compactModel: compact?.model,
       };
     };
 
@@ -514,6 +579,8 @@ export function useAgentSession(deps: {
         onCheckpoint: interactive ? approvals.requestCheckpoint : undefined,
         thinkingBudget: budget,
         compactAtTokens: props.config.compactAtTokens,
+        compactProvider: compactRunModel.provider,
+        compactModel: compactRunModel.model,
         signal: controller.signal,
         gate,
         preToolUse,
@@ -1126,6 +1193,9 @@ export function useAgentSession(deps: {
       case "cost":
       case "help":
         applyLiveAction(action);
+        break;
+      case "compact":
+        void compactNow();
         break;
       case "clear": {
         messagesRef.current = [];

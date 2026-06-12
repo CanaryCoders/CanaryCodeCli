@@ -58,12 +58,16 @@ describe("modelForRole", () => {
     const c = baseConfig();
     expect(modelForRole(c, "reasoning")).toBe("opus");
     expect(modelForRole(c, "coding")).toBe("opus");
+    expect(modelForRole(c, "compact")).toBe("opus");
   });
 
   test("explicit role overrides win", () => {
-    const c = baseConfig({ models: { reasoning: "opus", coding: "sonnet" } });
+    const c = baseConfig({
+      models: { reasoning: "opus", coding: "sonnet", compact: "haiku" },
+    });
     expect(modelForRole(c, "reasoning")).toBe("opus");
     expect(modelForRole(c, "coding")).toBe("sonnet");
+    expect(modelForRole(c, "compact")).toBe("haiku");
   });
 
   test("permission falls back to legacy permission.model then haiku", () => {

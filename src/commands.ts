@@ -35,6 +35,7 @@ export type CommandAction =
   | { kind: "set-model"; model: string }
   | { kind: "list-models" }
   | { kind: "clear" }
+  | { kind: "compact" }
   | { kind: "resume"; id?: string }
   | { kind: "cost" }
   | { kind: "copy-last" }
@@ -79,6 +80,7 @@ export function classifyBusyAction(
     case "init":
       return "queue";
     case "clear":
+    case "compact":
     case "resume":
     case "copy-open":
     case "extension-command":
@@ -119,6 +121,7 @@ const BASE_COMMANDS: CommandSpec[] = [
   { name: "auto", description: "switch to autonomous auto mode" },
   { name: "normal", description: "return to normal mode" },
   { name: "clear", description: "clear the conversation and start fresh" },
+  { name: "compact", description: "summarize older context now" },
   {
     name: "resume",
     usage: "[id]",
@@ -505,6 +508,8 @@ export function makeCommandSet(
         return { kind: "set-mode", mode: "normal" };
       case "clear":
         return { kind: "clear" };
+      case "compact":
+        return { kind: "compact" };
       case "resume":
         return parsed.arg
           ? { kind: "resume", id: parsed.arg }

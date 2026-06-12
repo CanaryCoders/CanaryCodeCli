@@ -412,6 +412,54 @@ describe("runAgent refreshTurnConfig", () => {
   });
 });
 
+describe("runAgent compaction", () => {
+  test("uses the dedicated compact provider/model when configured", async () => {
+    let compactModel = "";
+    const compactProvider: Provider = {
+      id: "compact",
+      async *stream(req): AsyncIterable<StreamEvent> {
+        compactModel = req.model;
+        yield { type: "text_delta", text: "summary" };
+        yield { type: "done", stopReason: "stop" };
+      },
+    };
+    const mainProvider: Provider = {
+      id: "main",
+      async *stream(): AsyncIterable<StreamEvent> {
+        yield { type: "done", stopReason: "stop" };
+      },
+    };
+    const messages: Message[] = [
+      { role: "user", content: [{ type: "text", text: "one" }] },
+      { role: "assistant", content: [{ type: "text", text: "two" }] },
+      { role: "user", content: [{ type: "text", text: "three" }] },
+      { role: "assistant", content: [{ type: "text", text: "four" }] },
+    ];
+
+    const events: AgentEvent[] = [];
+    for await (const ev of runAgent({
+      provider: mainProvider,
+      model: "main-model",
+      system: "x".repeat(100),
+      messages,
+      tools: [],
+      compactAtTokens: 1,
+      keepRecentMessages: 1,
+      compactProvider,
+      compactModel: "compact-model",
+    })) {
+      events.push(ev);
+    }
+
+    expect(compactModel).toBe("compact-model");
+    expect(events.some((ev) => ev.type === "compaction")).toBe(true);
+    expect(messages[0]?.content[0]).toMatchObject({
+      type: "text",
+      text: expect.stringContaining("summary"),
+    });
+  });
+});
+
 describe("runAgent abort during streaming", () => {
   test("an aborted fetch rejection surfaces as a clean aborted done event", async () => {
     const controller = new AbortController();

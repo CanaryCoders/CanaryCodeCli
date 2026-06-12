@@ -44,7 +44,12 @@ export interface ProviderConfig {
 }
 
 /** A model "role" — a slot in the optional `models` map that overrides the base model. */
-export type ModelRole = "reasoning" | "coding" | "subagent" | "permission";
+export type ModelRole =
+  | "reasoning"
+  | "coding"
+  | "subagent"
+  | "permission"
+  | "compact";
 
 export interface WebSearchConfig {
   /**
@@ -373,6 +378,7 @@ export const CONFIG_PATHS = [
   "models.coding",
   "models.subagent",
   "models.permission",
+  "models.compact",
   "providers.<name>",
   "providers.<name>.api",
   "providers.<name>.apiKey",
@@ -660,10 +666,10 @@ export function resolveModel(
 }
 
 /**
- * Resolve a role to a model id. `reasoning` and `coding` fall back to the base
- * `model`. `permission` falls back to the legacy `permission.model`, then to a
- * cheap default ("haiku"), since the checker runs on every gated call. The
- * `subagent` role is intentionally resolved by subagents.ts directly (its
+ * Resolve a role to a model id. `reasoning`, `coding`, and `compact` fall back
+ * to the base `model`. `permission` falls back to the legacy `permission.model`,
+ * then to a cheap default ("haiku"), since the checker runs on every gated call.
+ * The `subagent` role is intentionally resolved by subagents.ts directly (its
  * fallback is the parent's model, not the base model), so it is not handled here.
  */
 export function modelForRole(config: Config, role: ModelRole): string {
