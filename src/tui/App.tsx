@@ -39,6 +39,7 @@ import type { AppProps } from "./app-types.ts";
 import { confirmChoiceForKey } from "./confirm-helpers.ts";
 import {
   copyTargetToClipboard,
+  groupCopyText,
   resolveItemCopyTarget,
   writeTextToClipboard,
 } from "./copy-targets.ts";
@@ -55,6 +56,12 @@ import { type TuiRuntime, TuiRuntimeContext } from "./runtime.tsx";
 import { Tasks } from "./Tasks.tsx";
 import { modeColor as themeModeColor } from "./theme.ts";
 import { isItemExpanded, toggleToolExpanded } from "./tool-expansion.ts";
+import {
+  firstFocusId,
+  focusGroup,
+  lastFocusId,
+  moveFocus,
+} from "./transcript-nav.ts";
 import { useAgentSession } from "./use-agent-session.ts";
 import { useApprovals } from "./use-approvals.ts";
 import { useAutocomplete } from "./use-autocomplete.ts";
@@ -102,6 +109,11 @@ function App(props: AppProps): React.ReactNode {
 
   // The prompt buffer + its cursor nonce (bumped on out-of-band sets).
   const promptInput = usePromptInput();
+
+  // Keyboard transcript nav mode: null = insert mode (prompt active); a non-null id
+  // is the focused scrollback item (nav mode). Entry is Ctrl+Up / Ctrl+K / `/copy`;
+  // j/k/g/G walk it, Enter expands a tool, y/Y/c/o yank, i/Esc returns to the prompt.
+  const [focusedId, setFocusedId] = useState<number | null>(null);
 
   // Transcript scroll-follow: tracks whether the scrollbox is pinned to the
   // newest content (drives the "jump to latest" banner) and exposes the jump
@@ -153,6 +165,13 @@ function App(props: AppProps): React.ReactNode {
     [dimensions.width, dimensions.height],
   );
 
+  // `/copy` enters nav mode (focus the newest block). Nav state lives here in the
+  // shell; the session calls this through a ref so it always reaches the freshest
+  // transcript. No-op when there's nothing focusable.
+  const enterNavMode = useCallback(() => {
+    setFocusedId((id) => lastFocusId(transcript.history) ?? id);
+  }, [transcript.history]);
+
   // The agent-session controller: run state + every turn-driving action.
   const session = useAgentSession({
     props,
@@ -163,6 +182,7 @@ function App(props: AppProps): React.ReactNode {
     pasteMap,
     controllerRef,
     runtime,
+    enterNavMode,
   });
 
   // Assemble the session once the UI has painted — runTui defers it here (rather
@@ -196,6 +216,60 @@ function App(props: AppProps): React.ReactNode {
       session.handleCancel("Ctrl+C");
       return;
     }
+    // Keyboard nav mode owns the keyboard while a scrollback item is focused: j/k
+    // (or ↑/↓) walk it, g/G jump to top/bottom, Enter/Space toggle a focused tool,
+    // y/Y/c/o yank, i/Esc return to the prompt. Handled BEFORE the Esc escalation so
+    // Esc here only exits nav (never aborts/quits). Any other key is swallowed so a
+    // stray letter can't leak into the (inert) prompt. This whole block is skipped
+    // when not in nav mode, so every binding below stays intact.
+    if (focusedId !== null) {
+      const history = transcript.history;
+      const focused = history.find((i) => i.id === focusedId);
+      if (key.escape || isRawEscapeInput(_input) || _input === "i") {
+        setFocusedId(null);
+        return;
+      }
+      if (_input === "j" || key.downArrow) {
+        setFocusedId((id) => moveFocus(history, id, 1));
+        return;
+      }
+      if (_input === "k" || key.upArrow) {
+        setFocusedId((id) => moveFocus(history, id, -1));
+        return;
+      }
+      if (_input === "g") {
+        setFocusedId(firstFocusId(history));
+        return;
+      }
+      if (_input === "G") {
+        setFocusedId(lastFocusId(history));
+        return;
+      }
+      if ((key.return && !key.shift && !key.meta) || _input === " ") {
+        // Enter/Space expands or collapses a focused tool card; a no-op otherwise.
+        if (focused?.kind === "tool") toggleTool(focused.id);
+        return;
+      }
+      if (_input === "y") {
+        if (focused) void copyItem(focused, "default");
+        return;
+      }
+      if (_input === "Y") {
+        // Yank the whole answer group the focused item belongs to.
+        if (focused) yankGroup(focusGroup(history, focused.id));
+        return;
+      }
+      if (_input === "c") {
+        if (focused?.kind === "tool") void copyItem(focused, "command");
+        return;
+      }
+      if (_input === "o") {
+        if (focused?.kind === "tool") void copyItem(focused, "output");
+        return;
+      }
+      // Swallow every other key so it can't leak into the inert prompt.
+      return;
+    }
     if (key.escape || isRawEscapeInput(_input)) {
       // Esc dismisses the autocomplete popover first, then an open extensions
       // picker; otherwise it escalates the same way as Ctrl+C: cancel queued
@@ -225,6 +299,20 @@ function App(props: AppProps): React.ReactNode {
       const k = _input.toLowerCase();
       if (k === "y") approvals.resolveCheckpoint(true);
       else if (k === "n") approvals.resolveCheckpoint(false);
+      return;
+    }
+    // Enter nav mode (focus the newest block) with Ctrl+Up or Ctrl+K — only when
+    // idle and nothing else owns the keyboard (gates handled above, autocomplete
+    // closed). A no-op when there's nothing focusable. `/copy` is the discoverable
+    // equivalent. Placed after the gate early returns so it can't steal their keys.
+    if (
+      key.ctrl &&
+      (key.upArrow || _input === "k") &&
+      !autocomplete.completeOpenRef.current &&
+      !approvals.pendingPlanRef.current
+    ) {
+      const last = lastFocusId(transcript.history);
+      if (last !== null) setFocusedId(last);
       return;
     }
     // End/Home scroll the transcript when nothing else owns those keys: the
@@ -306,11 +394,34 @@ function App(props: AppProps): React.ReactNode {
         return;
       }
       // Success and the temp-file fallback are both informative outcomes, so
-      // both land as info notes — copyTargetToClipboard frames the wording.
-      noteRef.current(await copyTargetToClipboard(target), "info");
+      // both land as info notes — copyTargetToClipboard frames the wording. A
+      // rejection is guarded so it can't become an unhandled rejection,
+      // mirroring yankGroup's .catch path.
+      try {
+        noteRef.current(await copyTargetToClipboard(target), "info");
+      } catch (err) {
+        noteRef.current(`copy failed: ${(err as Error).message}`, "error");
+      }
     },
     [],
   );
+
+  // Yank a whole answer group (nav `Y`): concatenate the members' source text and
+  // copy it as one "group" target, surfacing the outcome as a note — mirroring
+  // copyItem's note path. A rejection is guarded so it can't become an unhandled
+  // rejection. note() reads through a ref so this stays stable across renders.
+  const yankGroup = useCallback((items: Item[]): void => {
+    const text = groupCopyText(items);
+    if (!text) {
+      noteRef.current("nothing to copy", "info");
+      return;
+    }
+    copyTargetToClipboard({ kind: "message", label: "group", text })
+      .then((msg) => noteRef.current(msg, "info"))
+      .catch((err) =>
+        noteRef.current(`copy failed: ${(err as Error).message}`, "error"),
+      );
+  }, []);
 
   // Short status verb shown beside the busy spinner ("thinking…", "running
   // bash…", "searching…"), derived from the live transcript's most recent item.
@@ -333,6 +444,10 @@ function App(props: AppProps): React.ReactNode {
       expanded={isItemExpanded(item, session.verbose, expandedToolIds)}
       showExpandHint={item.id === firstToolId}
       columns={columns}
+      // Nav focus: tools highlight via `focusedToolId`; box-less items via
+      // `itemFocused`. Both resolve from the same focused id (null in insert mode).
+      focusedToolId={focusedId}
+      itemFocused={item.id === focusedId}
       onToggleTool={toggleTool}
       onCopyItem={copyItem}
     />
@@ -429,6 +544,7 @@ function App(props: AppProps): React.ReactNode {
               modeColor={modeColor}
               verb={verb}
               columns={columns}
+              navMode={focusedId !== null}
             />
 
             <Footer

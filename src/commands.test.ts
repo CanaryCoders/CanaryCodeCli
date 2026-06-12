@@ -42,6 +42,7 @@ test("classifyBusyAction routes commands typed while busy", () => {
   expect(classifyBusyAction({ kind: "message", text: "hi" })).toBe("queue");
   expect(classifyBusyAction({ kind: "init" })).toBe("queue");
   // defer: not safe mid-turn — show a note, run nothing
+  expect(classifyBusyAction({ kind: "copy-open" })).toBe("defer");
   expect(classifyBusyAction({ kind: "clear" })).toBe("defer");
   expect(classifyBusyAction({ kind: "exit" })).toBe("defer");
   expect(classifyBusyAction({ kind: "update" })).toBe("defer");
@@ -120,6 +121,13 @@ describe("dispatchCommand /config", () => {
     const action = dispatchCommand("/help");
     expect(action.kind).toBe("help");
     if (action.kind === "help") expect(action.text).toContain("/config");
+  });
+
+  test("/copy enters nav mode and shows in /help and autocomplete", () => {
+    expect(dispatchCommand("/copy")).toEqual({ kind: "copy-open" });
+    const help = dispatchCommand("/help");
+    if (help.kind === "help") expect(help.text).toContain("/copy");
+    expect(completions("/copy", ctx).map((c) => c.label)).toContain("/copy");
   });
 });
 

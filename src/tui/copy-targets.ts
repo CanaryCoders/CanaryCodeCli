@@ -167,6 +167,18 @@ export async function copyTargetToClipboard(
     : `clipboard unavailable — wrote ${target.label} to ${result.path}`;
 }
 
+/**
+ * Concatenated source text of a focus group (for the `Y` whole-group yank): each
+ * member's primary copy target text, joined by a blank line. Members with no
+ * copyable text (e.g. an empty note) are skipped, so the result has no stray gaps.
+ */
+export function groupCopyText(items: Item[]): string {
+  return items
+    .map((item) => copyTargetForItem(item)?.text ?? "")
+    .filter((text) => text.length > 0)
+    .join("\n\n");
+}
+
 export function lastAssistantCopyTarget(items: Item[]): CopyTarget | null {
   for (let i = items.length - 1; i >= 0; i--) {
     const item = items[i]!;

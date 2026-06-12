@@ -149,6 +149,9 @@ export function useAgentSession(deps: {
   /** Shared abort controller (also read by the approval gate's safety check). */
   controllerRef: React.MutableRefObject<AbortController | null>;
   runtime: TuiRuntime;
+  /** Enter keyboard transcript nav mode — nav state lives in App, so `/copy`
+   * routes here. Read through a ref so the latest App closure is always called. */
+  enterNavMode: () => void;
 }): AgentSession {
   const {
     props,
@@ -167,6 +170,10 @@ export function useAgentSession(deps: {
   historyRef.current = transcript.history;
   const { setInput, inputRef, bumpCursor } = promptInput;
   const controllerRef = deps.controllerRef;
+  // `/copy` enters nav mode (state lives in App). Mirror App's callback in a ref so
+  // onSubmit's latest-committed closure always reaches the freshest version.
+  const enterNavModeRef = useRef(deps.enterNavMode);
+  enterNavModeRef.current = deps.enterNavMode;
   const nerdFont = props.config.ui.nerdFont === true;
 
   // Mutable engine state lives in refs (read inside async loops); React state
@@ -1112,6 +1119,11 @@ export function useAgentSession(deps: {
         break;
       case "copy-last":
         copyLast();
+        break;
+      case "copy-open":
+        // Enter keyboard nav mode over the committed scrollback (focus the last
+        // block). Nav state lives in App; this routes through the ref it sets.
+        enterNavModeRef.current();
         break;
       case "init":
         doInit();

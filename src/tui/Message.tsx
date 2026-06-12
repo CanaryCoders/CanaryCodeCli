@@ -414,6 +414,39 @@ function CopyActions({
   );
 }
 
+// ── Keyboard focus indicator ─────────────────────────────────────────────────────
+//
+// In nav mode the keyboard-focused block gets a left accent gutter bar (`▎`) so the
+// eye lands on it without a mouse. Tool cards swap their own background instead (see
+// ToolView); this is for the box-less user/assistant/thinking/note blocks. When the
+// item isn't focused the bar is a transparent two-cell spacer so the content never
+// shifts horizontally as focus moves. The accent passes through `tint` for NO_COLOR.
+
+function FocusBar({
+  focused,
+  children,
+}: {
+  focused: boolean;
+  children: React.ReactNode;
+}): React.ReactElement {
+  return (
+    <Box flexDirection="row">
+      {/* flexShrink=0: a shrinkable fixed cell makes the layout fractional and the
+          wrapped content spill past the terminal edge (see RuleRow). */}
+      <Box width={2} flexShrink={0}>
+        {focused ? (
+          <Text color={tint(CARD.user.color)} bold>
+            {"▎"}
+          </Text>
+        ) : null}
+      </Box>
+      <Box flexDirection="column" flexGrow={1}>
+        {children}
+      </Box>
+    </Box>
+  );
+}
+
 // ── User card ────────────────────────────────────────────────────────────────────
 //
 // The user's message is the start of a turn, rendered as a cyan titled card so it
@@ -501,6 +534,7 @@ export function ItemView({
   width,
   columns = 80,
   focusedToolId,
+  itemFocused = false,
   onFocusTool,
   onToggleTool,
   onCopyItem,
@@ -523,6 +557,10 @@ export function ItemView({
    * lines, diff +/− lines) wrap and pad themselves to it. */
   columns?: number;
   focusedToolId?: number | null;
+  /** Keyboard nav focus for a NON-tool item (tools use `focusedToolId`). When
+   * true, the user/assistant/thinking/note block shows a left accent gutter bar so
+   * the keyboard-focused block is visibly distinguished. */
+  itemFocused?: boolean;
   onFocusTool?: (id: number) => void;
   onToggleTool?: (id: number) => void;
   onCopyItem?: (item: Item, kind?: "default" | "command" | "output") => void;
@@ -532,33 +570,41 @@ export function ItemView({
       return <BannerView {...item} />;
     case "user":
       // A user message starts a new turn → one blank line above its cyan card.
-      return <UserView text={item.text} onCopy={() => onCopyItem?.(item)} />;
+      return (
+        <FocusBar focused={itemFocused}>
+          <UserView text={item.text} onCopy={() => onCopyItem?.(item)} />
+        </FocusBar>
+      );
     case "assistant":
       // The model's answer is plain prose — no box, so no copy chip: it isn't a
       // card like the user/tool blocks. Copying an LLM answer is selection-based
       // (drag-select → auto-copies on release). Inset by one column so it lines up
       // with the boxed content around it.
       return (
-        <Box
-          flexDirection="column"
-          paddingX={SPACING.boxPadX}
-          marginTop={Math.max(1, topGap(item, prevKind))}
-        >
-          <Markdown text={item.text} />
-        </Box>
+        <FocusBar focused={itemFocused}>
+          <Box
+            flexDirection="column"
+            paddingX={SPACING.boxPadX}
+            marginTop={Math.max(1, topGap(item, prevKind))}
+          >
+            <Markdown text={item.text} />
+          </Box>
+        </FocusBar>
       );
     case "thinking":
       // Thinking is plain dim+italic prose, same layout as the assistant answer so
       // it reads as a quieter part of the same thread rather than a separate block.
       // Like the assistant answer, it's selection-copied, not chip-copied.
       return (
-        <Box
-          flexDirection="column"
-          paddingX={SPACING.boxPadX}
-          marginTop={Math.max(1, topGap(item, prevKind))}
-        >
-          <Markdown text={item.text} dim />
-        </Box>
+        <FocusBar focused={itemFocused}>
+          <Box
+            flexDirection="column"
+            paddingX={SPACING.boxPadX}
+            marginTop={Math.max(1, topGap(item, prevKind))}
+          >
+            <Markdown text={item.text} dim />
+          </Box>
+        </FocusBar>
       );
     case "tool":
       // Every tool call is its own titled card (its own colour), so the actions a
@@ -590,23 +636,27 @@ export function ItemView({
       // dim behind their gutter glyph so routine context doesn't add box clutter.
       if (item.tone === "error") {
         return (
-          <Card
-            color={CARD.error.color}
-            bg={CARD.error.bg}
-            title={CARD.error.title}
-            marginTop={cardMarginTop}
-          >
-            <Text color={tint(CARD.error.color)} wrap="wrap">
-              {text}
-            </Text>
-          </Card>
+          <FocusBar focused={itemFocused}>
+            <Card
+              color={CARD.error.color}
+              bg={CARD.error.bg}
+              title={CARD.error.title}
+              marginTop={cardMarginTop}
+            >
+              <Text color={tint(CARD.error.color)} wrap="wrap">
+                {text}
+              </Text>
+            </Card>
+          </FocusBar>
         );
       }
       const carriesIcon = NOTE_TEXT_ICON_RE.test(text);
       return (
-        <Gutter speaker="note" glyphless={carriesIcon} marginTop={marginTop}>
-          <Text color={tint("gray")}>{text}</Text>
-        </Gutter>
+        <FocusBar focused={itemFocused}>
+          <Gutter speaker="note" glyphless={carriesIcon} marginTop={marginTop}>
+            <Text color={tint("gray")}>{text}</Text>
+          </Gutter>
+        </FocusBar>
       );
     }
   }

@@ -43,6 +43,9 @@ interface MultilineInputProps {
   onSubmit: (value: string) => void;
   placeholder?: string;
   isActive?: boolean;
+  /** When false, the prompt is inert — keystrokes/pastes don't edit the buffer.
+   * Set while the App is in keyboard nav mode (keys drive the transcript instead). */
+  inputActive?: boolean;
   /** When true, the autocomplete popover owns Enter/Up/Down (see reduceInput). */
   capture?: boolean;
   /** A counter the host bumps when it sets `value` externally (e.g. accepting a
@@ -69,6 +72,7 @@ export function MultilineInput({
   onSubmit,
   placeholder = "",
   isActive = true,
+  inputActive = true,
   capture = false,
   cursorNonce = 0,
   onHistoryPrev,
@@ -143,7 +147,9 @@ export function MultilineInput({
         ),
       );
     },
-    { isActive },
+    // Inert in nav mode (`inputActive` false): keystrokes drive the transcript,
+    // not the prompt buffer.
+    { isActive: isActive && inputActive },
   );
 
   // A terminal paste arrives as a single bracketed-paste event, so it goes
@@ -161,7 +167,7 @@ export function MultilineInput({
         ),
       );
     },
-    { isActive },
+    { isActive: isActive && inputActive },
   );
 
   if (value.length === 0) {

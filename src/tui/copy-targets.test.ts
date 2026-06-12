@@ -9,6 +9,7 @@ import {
   copyTargetForItem,
   extractCodeBlocks,
   extractMarkdownTables,
+  groupCopyText,
   resolveItemCopyTarget,
 } from "./copy-targets.ts";
 import type { Item } from "./Message.tsx";
@@ -70,6 +71,22 @@ describe("extractMarkdownTables", () => {
     // The TSV target is tab-joined with no visual column padding.
     expect(tsv?.text).toBe("a\tbb\n1\t2");
     expect(tsv?.text).not.toContain("  ");
+  });
+});
+
+describe("groupCopyText", () => {
+  test("joins each member's source text with a blank line", () => {
+    const thinking: Item = { id: 20, kind: "thinking", text: "let me think" };
+    expect(groupCopyText([assistant, thinking, tool])).toBe(
+      "hello world\n\nlet me think\n\nfile-a\nfile-b",
+    );
+  });
+
+  test("skips members with no copyable text and leaves no stray gaps", () => {
+    const empty: Item = { id: 21, kind: "note", text: "" };
+    expect(groupCopyText([assistant, empty, tool])).toBe(
+      "hello world\n\nfile-a\nfile-b",
+    );
   });
 });
 

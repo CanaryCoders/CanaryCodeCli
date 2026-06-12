@@ -38,6 +38,8 @@ export type CommandAction =
   | { kind: "resume"; id?: string }
   | { kind: "cost" }
   | { kind: "copy-last" }
+  /** Enter keyboard transcript copy/navigation mode (nav mode). */
+  | { kind: "copy-open" }
   | { kind: "init" }
   /** A command contributed by an extension (built-in or user-loaded). */
   | { kind: "extension-command"; name: string; args: string[] }
@@ -78,6 +80,7 @@ export function classifyBusyAction(
       return "queue";
     case "clear":
     case "resume":
+    case "copy-open":
     case "extension-command":
     case "extensions":
     case "update":
@@ -125,6 +128,10 @@ const BASE_COMMANDS: CommandSpec[] = [
   {
     name: "copy-last",
     description: "copy the last assistant message to the clipboard",
+  },
+  {
+    name: "copy",
+    description: "enter transcript copy/navigation mode",
   },
   {
     name: "config",
@@ -490,6 +497,8 @@ export function makeCommandSet(
         return { kind: "cost" };
       case "copy-last":
         return { kind: "copy-last" };
+      case "copy":
+        return { kind: "copy-open" };
       case "config":
         return parseConfigAction(parsed.arg);
       case "init":

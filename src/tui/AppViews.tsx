@@ -125,6 +125,7 @@ export function PromptArea({
   modeColor,
   verb,
   columns,
+  navMode,
 }: {
   approvals: Approvals;
   session: AgentSession;
@@ -136,6 +137,9 @@ export function PromptArea({
   modeColor: string;
   verb: string;
   columns: number;
+  /** True while the App is in keyboard transcript nav mode — the prompt goes inert
+   * and a one-line vim-key hint shows in its place. */
+  navMode: boolean;
 }): React.ReactElement {
   const checkpointIcon = useIcon("checkpoint");
   const promptIcon = useIcon("prompt");
@@ -250,8 +254,21 @@ export function PromptArea({
           <Text dimColor>{` ${verb}`}</Text>
         </Text>
       ) : null}
+      {/* Nav mode: a one-line dim hint of the vim keys, shown just above the (inert)
+          input frame so the user knows what the keyboard now drives. */}
+      {navMode ? (
+        <Box paddingLeft={SPACING.boxPadX}>
+          <Text dimColor>
+            {
+              "nav: j/k move · g/G top/bottom · enter expand · y yank · c/o cmd/out · i/esc exit"
+            }
+          </Text>
+        </Box>
+      ) : null}
       {/* Input bar: a soft filled block in the same family as the cards (no
-          border), with the prompt glyph tinted by the active mode. */}
+          border), with the prompt glyph tinted by the active mode. While in nav
+          mode the prompt glyph dims and the input is inert (keys drive the
+          transcript), so the bar visibly steps back. */}
       <Box
         backgroundColor={tint(SURFACE.input)}
         paddingX={SPACING.boxPadX}
@@ -259,13 +276,19 @@ export function PromptArea({
         flexDirection="row"
       >
         <Box width={1} marginRight={1}>
-          <Text color={tint(modeColor)}>{promptIcon}</Text>
+          <Text
+            color={navMode ? undefined : tint(modeColor)}
+            dimColor={navMode}
+          >
+            {promptIcon}
+          </Text>
         </Box>
         <Box flexGrow={1} flexShrink={1} minWidth={0}>
           <MultilineInput
             value={promptInput.input}
             onChange={autocomplete.handleInputChange}
             onSubmit={session.onSubmit}
+            inputActive={!navMode}
             capture={autocomplete.completeOpen}
             cursorNonce={promptInput.cursorNonce}
             onHistoryPrev={promptHistory.historyPrev}
@@ -276,9 +299,11 @@ export function PromptArea({
             // 1 spare so the EOL cursor block never pushes a row past the edge.
             width={Math.max(1, columns - 2 * SPACING.boxPadX - 2 - 1)}
             placeholder={
-              session.busy
-                ? "Enter to queue · Esc to cancel"
-                : "message, or /help · Shift+Enter for newline"
+              navMode
+                ? "nav mode — i or esc to return to the prompt"
+                : session.busy
+                  ? "Enter to queue · Esc to cancel"
+                  : "message, or /help · Shift+Enter for newline"
             }
           />
         </Box>
