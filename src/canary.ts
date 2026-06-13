@@ -1,25 +1,16 @@
 // canary.ts — CanaryLLM first-class provider preset + model discovery.
 //
-// CanaryLLM (https://canaryllm.canarycoders.es) is a multi-provider gateway that
-// exposes drop-in OpenAI-compatible (`/v1/chat/completions`) and
-// Anthropic-compatible (`/v1/messages`) endpoints. We integrate against the
-// OpenAI-compatible path via our `openai-compat` provider.
-//
-// CanaryLLM's public OpenAPI description has a few constraints we account for:
-//   • the documented `servers` value may point at localhost, so baseUrl is fixed;
-//   • examples may be absent, so the model parser is written defensively;
-//   • model ids come from the unauthenticated `GET /api/public/models` endpoint.
+// CanaryLLM (https://canaryllm.canarycoders.es) is a multi-provider gateway. We
+// lean on the official SDK for model discovery, while reusing canarycode's
+// existing OpenAI-compatible streaming provider for the actual chat loop.
+
+import type { ModelInfo } from "@canarycoders/canaryllm";
 
 import type { Config, ModelConfig, ProviderConfig } from "./config.ts";
 
 /** The provider key used for the baked-in CanaryLLM preset. */
 export const CANARY_PROVIDER = "canaryllm";
-/** API host (the spec's `servers` URL is wrong — localhost only — so we set it). */
 const CANARY_API_HOST = "https://canaryllm.canarycoders.es";
-/** OpenAI-compatible base (the provider appends `/chat/completions`). */
-const CANARY_BASE_URL = `${CANARY_API_HOST}/v1`;
-/** Unauthenticated model-discovery endpoint. */
-const CANARY_MODELS_URL = `${CANARY_API_HOST}/api/public/models`;
 
 /**
  * The baked-in CanaryLLM provider preset (OpenAI-compatible). The API key reads
@@ -29,7 +20,7 @@ const CANARY_MODELS_URL = `${CANARY_API_HOST}/api/public/models`;
 export function canaryProviderConfig(): ProviderConfig {
   return {
     api: "openai-compat",
-    baseUrl: CANARY_BASE_URL,
+    baseUrl: `${CANARY_API_HOST}/v1`,
     apiKey: "${CANARYLLM_API_KEY}",
     models: [],
   };
@@ -43,22 +34,6 @@ function isCanaryProvider(pc: ProviderConfig): boolean {
 }
 
 /**
- * Extract chat-usable models from a `GET /api/public/models` payload.
- *
- * Shape (defensively parsed): `{ success, data: { <provider>: { models: [{ id,
- * name, capabilities: [...] }] } } }`. We keep only models whose capabilities
- * include `chat` or `reasoning` (skipping image/video/audio/tts/realtime).
- *
- * The gateway's chat-completions endpoint requires a `provider/model` model
- * string (it 400s on a bare `gemini-3.5-flash`), but each entry's `id` is the
- * BARE model name — the provider segment is the *group key* the model is listed
- * under (`gemini`, `vertex`, `openai`, …). So we set `ModelConfig.id` to
- * `${group}/${id}`: that is both the user-facing handle (shown in `/model`) and,
- * with `name` left unset, the wire model string. Prefixing also disambiguates
- * the same bare id appearing under multiple providers (e.g. `gemini-2.5-flash`
- * is listed under both `gemini` and `vertex`), which a bare-id dedup would drop.
- */
-/**
  * Whether a model's capability list marks it as chat-usable (`chat` or
  * `reasoning`). A single pass over the tiny capabilities array — cheaper than
  * allocating a Set per model, and keeps the membership test out of the parse
@@ -71,51 +46,77 @@ function isChatCapable(caps: readonly unknown[]): boolean {
   return false;
 }
 
-function parseCanaryModels(payload: unknown): ModelConfig[] {
+/**
+ * Turn one SDK `ModelInfo` (listed under the `provider` group key) into a chat
+ * `ModelConfig`, or null if it isn't chat-usable. `capabilities` is parsed
+ * defensively: the catalogue omits it on some entries, so a missing/non-array
+ * value is treated as "no declared capabilities" (→ skipped) rather than thrown.
+ *
+ * The gateway's chat-completions endpoint requires a `provider/model` string, so
+ * the id is namespaced with the group key (the model's own `provider` field if
+ * present). The slash guard leaves an already-namespaced id untouched.
+ */
+function toCanaryModel(provider: string, model: ModelInfo): ModelConfig | null {
+  const caps = Array.isArray(model.capabilities) ? model.capabilities : [];
+  if (!isChatCapable(caps)) return null;
+  const id = /\//.test(model.id)
+    ? model.id
+    : `${model.provider || provider}/${model.id}`;
+  return { id };
+}
+
+/**
+ * Parse the SDK's `public.models()` catalogue — shape
+ * `{ <provider>: { models: [{ id, capabilities, ... }] } }` (the transport has
+ * already unwrapped the `{ success, data }` envelope) — into deduped chat models.
+ */
+function parseCanaryModels(
+  catalogue: Record<string, { models?: readonly ModelInfo[] }>,
+): ModelConfig[] {
   const out: ModelConfig[] = [];
   const seen = new Set<string>();
-  const data = (payload as { data?: unknown })?.data;
-  if (!data || typeof data !== "object") return out;
-  for (const [provider, group] of Object.entries(
-    data as Record<string, unknown>,
-  )) {
-    const models = (group as { models?: unknown })?.models;
+  for (const [provider, group] of Object.entries(catalogue ?? {})) {
+    const models = group?.models;
     if (!Array.isArray(models)) continue;
-    for (const m of models as Array<Record<string, unknown>>) {
-      const rawId = typeof m?.id === "string" ? m.id : undefined;
-      if (!rawId) continue;
-      const caps = Array.isArray(m?.capabilities)
-        ? (m.capabilities as unknown[])
-        : [];
-      if (!isChatCapable(caps)) continue;
-      // The model is already `provider/model` only if the gateway ever changes
-      // its shape; otherwise prefix the group key it was listed under. (A regex
-      // test for the separator, not a membership scan — `rawId` is a string.)
-      const alreadyNamespaced = /\//.test(rawId);
-      const id = alreadyNamespaced ? rawId : `${provider}/${rawId}`;
-      if (seen.has(id)) continue;
-      seen.add(id);
-      out.push({ id });
+    for (const model of models) {
+      const item = toCanaryModel(provider, model);
+      if (!item || seen.has(item.id)) continue;
+      seen.add(item.id);
+      out.push(item);
     }
   }
   return out;
 }
 
-/** Fetch + parse the discoverable CanaryLLM chat models. Throws on HTTP/parse error. */
+function sdkBaseURL(baseUrl: string | undefined): string | undefined {
+  return baseUrl?.replace(/\/v1\/?$/, "");
+}
+
+/**
+ * Discover CanaryLLM chat models through the official SDK.
+ *
+ * Uses the unauthenticated `public.models()` catalogue, not `discovery.models()`:
+ * the public endpoint returns full `capabilities` for every model, whereas the
+ * per-provider discovery endpoint omits them on many chat models (which would
+ * silently drop e.g. `gemini-2.5-flash`, `gpt-4.1`, all of perplexity/lmstudio).
+ */
 async function fetchCanaryModels(
-  opts: { url?: string; fetchImpl?: typeof fetch; timeoutMs?: number } = {},
+  opts: {
+    apiKey?: string;
+    baseURL?: string;
+    fetchImpl?: typeof fetch;
+    timeoutMs?: number;
+  } = {},
 ): Promise<ModelConfig[]> {
-  const url = opts.url ?? CANARY_MODELS_URL;
-  const f = opts.fetchImpl ?? fetch;
-  const res = await f(url, {
-    signal: AbortSignal.timeout(opts.timeoutMs ?? 8000),
+  const { default: CanaryLLM } = await import("@canarycoders/canaryllm");
+  const client = new CanaryLLM({
+    apiKey: opts.apiKey,
+    baseURL: sdkBaseURL(opts.baseURL),
+    fetch: opts.fetchImpl,
+    timeoutMs: opts.timeoutMs ?? 8000,
   });
-  if (!res.ok) {
-    throw new Error(
-      `canaryllm: ${res.status} ${res.statusText} fetching ${url}`,
-    );
-  }
-  return parseCanaryModels(await res.json());
+  const signal = AbortSignal.timeout(opts.timeoutMs ?? 8000);
+  return parseCanaryModels(await client.public.models(signal));
 }
 
 /** Outcome of a model-discovery attempt, for the startup note. */
@@ -148,7 +149,12 @@ export async function populateCanaryModels(
 
   const [name, pc] = target;
   try {
-    pc.models = await fetchCanaryModels(opts);
+    pc.models = await fetchCanaryModels({
+      apiKey: pc.apiKey,
+      baseURL: pc.baseUrl,
+      fetchImpl: opts.fetchImpl,
+      timeoutMs: opts.timeoutMs,
+    });
     return { provider: name, count: pc.models.length };
   } catch (err) {
     return { provider: name, error: (err as Error).message };
