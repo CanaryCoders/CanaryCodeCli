@@ -8,6 +8,18 @@ what's-new banner.
 Format: [Keep a Changelog](https://keepachangelog.com) headings
 (`## <version> - <date>`), newest first.
 
+## 0.1.1 - 2026-06-23
+
+### Fixed
+
+- **Prebuilt binaries now actually run.** The v0.1.0 release assets were built
+  with Bun 1.3.14, whose `bun build --compile` regressed: the standalone
+  executable ignored its embedded entrypoint and behaved as if `BUN_BE_BUN=1`,
+  so running `canarycode` just launched the Bun CLI. The release workflow now
+  pins Bun to 1.3.13 (last version verified to compile a working binary), and
+  the published binaries and the Nix flake (`nix run`, the Home Manager module)
+  install a real `canarycode` again. No source changes — reinstall to upgrade.
+
 ## 0.1.0 - 2026-06-12
 
 First public release.
