@@ -32,13 +32,16 @@ jobs:
       - name: Install Bun
         uses: oven-sh/setup-bun@v2
         with:
-          # Pinned — do NOT use `latest`. Bun 1.3.14 regressed `bun build
-          # --compile`: the standalone executable ignores its embedded
-          # entrypoint and behaves as if BUN_BE_BUN=1 (it just runs the Bun
-          # CLI). That shipped broken v0.1.0 binaries. 1.3.13 is the last
-          # version verified to compile a working canarycode. Bump only after
-          # confirming a newer Bun produces a binary whose `--version` prints
-          # `canarycode <ver>`, not the Bun version.
+          # Pinned for reproducible release builds — don't let CI silently track
+          # whatever a new Bun does to `bun build --compile`. 1.3.13 is
+          # known-good; bump deliberately after testing the resulting binary.
+          #
+          # NB: the compiled output is a Bun single-file executable — the app
+          # code is an appended payload Bun finds via a baked-in byte offset.
+          # Anything that rewrites the binary (strip, patchelf) shifts that
+          # payload and the binary degrades to the bare Bun CLI (it just prints
+          # the Bun version). Keep release assets, and any repackaging (see
+          # nix/flake.nix), byte-for-byte unmodified.
           bun-version: 1.3.13
 
       - name: Install dependencies

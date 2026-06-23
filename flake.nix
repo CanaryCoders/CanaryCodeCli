@@ -30,45 +30,80 @@
         system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
+          inherit (pkgs) lib stdenv;
           asset = assetFor.${system};
-        in
-        pkgs.stdenv.mkDerivation {
-          pname = "canarycode";
-          version = release.version;
 
           src = pkgs.fetchurl {
             url = "https://github.com/CanaryCoders/CanaryCodeCli/releases/download/v${release.version}/${asset}";
             sha256 = release.hashes.${system};
           };
 
-          dontUnpack = true;
-
-          nativeBuildInputs =
-            [ pkgs.makeWrapper ]
-            ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.autoPatchelfHook ];
-          # The Bun-compiled binary links libc/libstdc++ on Linux; autoPatchelfHook
-          # rewrites its interpreter and rpath. macOS binaries need no patching.
-          buildInputs = pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.stdenv.cc.cc.lib ];
-
-          installPhase = ''
-            runHook preInstall
-            install -Dm755 "$src" "$out/bin/canarycode"
-            runHook postInstall
-          '';
-
-          # Nix-managed installs are immutable — force self-update off so `canarycode`
-          # never tries to overwrite the read-only store binary.
-          postFixup = ''
-            wrapProgram "$out/bin/canarycode" --set CANARYCODE_DISABLE_UPDATE 1
-          '';
-
-          meta = with pkgs.lib; {
+          meta = {
             description = "A fast, minimal terminal coding agent";
             homepage = "https://github.com/CanaryCoders/CanaryCodeCli";
             mainProgram = "canarycode";
             platforms = systems;
           };
-        };
+
+          # The released binary is a Bun single-file executable: the compiled JS
+          # and its module graph are appended to the Bun runtime as a trailing
+          # payload that Bun locates via a byte offset baked into the file. ANY
+          # tool that rewrites the binary shifts that payload, after which Bun can
+          # no longer find it and the executable silently degrades to the bare Bun
+          # CLI (the same behaviour as BUN_BE_BUN=1). That includes patchelf /
+          # autoPatchelfHook AND the default `strip` in stdenv's fixupPhase — so
+          # the binary MUST be installed and run byte-for-byte unmodified.
+          # `dontFixup` disables strip/patchelf/RPATH-shrink wholesale.
+          raw = stdenv.mkDerivation {
+            pname = "canarycode-unwrapped";
+            version = release.version;
+            inherit src meta;
+            dontUnpack = true;
+            dontFixup = true;
+            installPhase = ''
+              runHook preInstall
+              install -Dm755 "$src" "$out/bin/canarycode"
+              runHook postInstall
+            '';
+          };
+        in
+        if stdenv.isDarwin then
+          # macOS: the Mach-O binary runs natively, no relinking needed. Just
+          # disable self-update so it never tries to overwrite the store binary.
+          # `dontStrip` is REQUIRED for the same reason as the Linux `raw` above:
+          # stripping shifts/removes the appended Bun payload and the binary
+          # degrades to the bare Bun CLI. wrapProgram only renames + wraps (it
+          # does not rewrite the binary), so it is safe.
+          stdenv.mkDerivation {
+            pname = "canarycode";
+            version = release.version;
+            inherit src meta;
+            dontUnpack = true;
+            dontStrip = true;
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+            installPhase = ''
+              runHook preInstall
+              install -Dm755 "$src" "$out/bin/canarycode"
+              runHook postInstall
+            '';
+            postFixup = ''
+              wrapProgram "$out/bin/canarycode" --set CANARYCODE_DISABLE_UPDATE 1
+            '';
+          }
+        else
+          # Linux: the binary dynamically links glibc/libstdc++ against the FHS
+          # loader path (/lib64/ld-linux-…), which NixOS lacks. Rather than
+          # patchelf the interpreter in (which would corrupt the Bun payload —
+          # see `raw` above), run the unmodified binary inside a minimal FHS env
+          # that supplies the loader and C++ runtime. CANARYCODE_DISABLE_UPDATE
+          # keeps it from self-updating over the read-only store binary.
+          pkgs.buildFHSEnv {
+            name = "canarycode";
+            runScript = "${raw}/bin/canarycode";
+            targetPkgs = p: [ p.stdenv.cc.cc.lib ];
+            profile = "export CANARYCODE_DISABLE_UPDATE=1";
+            inherit meta;
+          };
     in
     {
       packages = forAllSystems (system: {

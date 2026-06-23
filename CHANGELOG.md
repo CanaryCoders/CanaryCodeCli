@@ -12,13 +12,16 @@ Format: [Keep a Changelog](https://keepachangelog.com) headings
 
 ### Fixed
 
-- **Prebuilt binaries now actually run.** The v0.1.0 release assets were built
-  with Bun 1.3.14, whose `bun build --compile` regressed: the standalone
-  executable ignored its embedded entrypoint and behaved as if `BUN_BE_BUN=1`,
-  so running `canarycode` just launched the Bun CLI. The release workflow now
-  pins Bun to 1.3.13 (last version verified to compile a working binary), and
-  the published binaries and the Nix flake (`nix run`, the Home Manager module)
-  install a real `canarycode` again. No source changes — reinstall to upgrade.
+- **Nix flake installed a corrupted binary.** The flake's package (used by
+  `nix run` and the Home Manager module) ran the prebuilt release binary through
+  `autoPatchelfHook` and stdenv's default `strip`. The release binary is a Bun
+  single-file executable — the app is an appended payload Bun locates via a
+  baked-in byte offset — so rewriting it shifted that payload and the binary
+  degraded to the bare Bun CLI (`canarycode` just printed the Bun version). The
+  flake now installs the binary byte-for-byte unmodified and runs it inside an
+  FHS env on Linux. The `install.sh` and GitHub-release binaries were **never**
+  affected — only the Nix install path was. The release workflow also now pins
+  Bun for reproducible builds. No source changes.
 
 ## 0.1.0 - 2026-06-12
 
