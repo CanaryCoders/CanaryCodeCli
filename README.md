@@ -71,6 +71,22 @@ bun run src/index.ts -p "say hi"
 bun run dev
 ```
 
+### First run
+
+`canarycode` needs an API key before it can talk to a model. Pick one:
+
+```bash
+# Recommended — CanaryLLM (see #canaryllm above)
+export CANARYLLM_API_KEY=clk...
+canarycode --model <a-canary-model-id>
+
+# Alternative — raw Anthropic
+export ANTHROPIC_API_KEY=sk-ant-...
+canarycode
+```
+
+Either can also be set persistently in `~/.canarycode/config.json` — by hand, or with `/config set providers.<name>.apiKey ...` inside the TUI — and `${VAR}`-style values there interpolate from the environment at load time. See [CanaryLLM](#canaryllm) and [Configuration](#configuration) for details.
+
 ## Updating
 
 Binary installs (via `install.sh`) self-update. On startup `canarycode` checks GitHub Releases at most once a day in the background; when a newer version is available the TUI banner shows a notice. Apply it with:

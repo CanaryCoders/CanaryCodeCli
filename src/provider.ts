@@ -898,7 +898,13 @@ export function createProvider(
     case "anthropic":
       if (!cfg.apiKey) {
         throw new Error(
-          "canarycode: anthropic provider requires an apiKey (set ANTHROPIC_API_KEY)",
+          [
+            "canarycode: no API key found for the default Anthropic provider.",
+            "Set one of these, then re-run:",
+            "  - CanaryLLM (recommended): export CANARYLLM_API_KEY=clk... and select a CanaryLLM model (request a key at contact@canarycoders.es)",
+            "  - Anthropic: export ANTHROPIC_API_KEY=sk-ant-...",
+            "Or edit ~/.canarycode/config.json (providers.<name>.apiKey). See: https://github.com/CanaryCoders/CanaryCodeCli#configuration",
+          ].join("\n"),
         );
       }
       return anthropicProvider({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl });
