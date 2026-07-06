@@ -49,12 +49,29 @@ else
 fi
 
 # --- resolve the release tag ----------------------------------------------
+# The GitHub REST API (api.github.com) is rate-limited to 60 req/hour per IP
+# and returns 403 once exhausted. The releases/latest redirect on github.com
+# is not subject to that limit, so resolve the tag from the redirect target.
+resolve_latest_tag() {
+	if command -v curl >/dev/null 2>&1; then
+		curl -fsSLI -o /dev/null -w '%{url_effective}\n' "https://github.com/$REPO/releases/latest" 2>/dev/null |
+			sed -n 's#.*/releases/tag/##p' | tail -n1 | tr -d '\r'
+	elif command -v wget >/dev/null 2>&1; then
+		wget -S --spider "https://github.com/$REPO/releases/latest" 2>&1 |
+			sed -n 's#.*/releases/tag/##p' | tail -n1 | tr -d '\r'
+	fi
+}
+
 tag="${CANARYCODE_VERSION:-}"
 if [ -z "$tag" ]; then
-	tag=$(dl "https://api.github.com/repos/$REPO/releases/latest" |
+	tag=$(resolve_latest_tag)
+fi
+if [ -z "$tag" ]; then
+	# fall back to the rate-limited REST API in case the redirect approach fails
+	tag=$(dl "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null |
 		grep '"tag_name"' | head -n1 | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')
 fi
-[ -n "$tag" ] || err "could not resolve the latest release tag (set CANARYCODE_VERSION to pin one)"
+[ -n "$tag" ] || err "could not resolve the latest release tag (set CANARYCODE_VERSION to pin one, e.g. CANARYCODE_VERSION=v0.1.1)"
 
 base="https://github.com/$REPO/releases/download/$tag"
 echo "install: canarycode $tag ($asset)"
