@@ -8,6 +8,23 @@ what's-new banner.
 Format: [Keep a Changelog](https://keepachangelog.com) headings
 (`## <version> - <date>`), newest first.
 
+## 0.1.2 - 2026-07-06
+
+### Fixed
+
+- **`install.sh` aborted with a 403 when resolving the latest release.** The
+  installer looked up the newest tag through the `api.github.com` REST endpoint,
+  which is rate-limited to 60 requests/hour per IP and returns HTTP 403 once
+  exhausted — leaving a fresh `curl … | sh` to fail with "could not resolve the
+  latest release tag". It now resolves the tag from the un-rate-limited
+  `github.com/…/releases/latest` redirect, with the REST API kept as a fallback.
+- **Fresh-install "no API key" error now says where to put the key.** Running
+  `canarycode` with no key configured printed a bare "anthropic provider requires
+  an apiKey" with no next step. The message now spells out both options — the
+  recommended CanaryLLM path (`CANARYLLM_API_KEY=clk…`) and raw Anthropic
+  (`ANTHROPIC_API_KEY`) — and points at `~/.canarycode/config.json`. The README
+  gains a matching "First run" section.
+
 ## 0.1.1 - 2026-06-23
 
 ### Fixed
