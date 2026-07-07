@@ -37,6 +37,8 @@ export interface FooterProps {
   onToggleVerbose?: () => void;
   /** Click the `?` chip → open the keyboard/mouse help overlay. */
   onOpenHelp?: () => void;
+  /** Click the `ctrl+g edit` chip → open the prompt in $EDITOR (same as Ctrl+G). */
+  onOpenExternalEditor?: () => void;
 }
 
 /** Compact a token count: 1234 → "1.2k", 980 → "980". */
@@ -225,6 +227,15 @@ export function Footer(props: FooterProps): React.ReactElement {
   const kept = fitSegments(segs, cols);
   const rule = "─".repeat(Math.max(0, cols));
 
+  // Right-aligned `ctrl+g edit` hint, on the opposite side from the segments. It
+  // only shows when there's comfortable room left over on the row (so it never
+  // crowds the segments on a narrow terminal).
+  const editLabel = "ctrl+g edit";
+  const onOpenExternalEditor = props.onOpenExternalEditor;
+  const showEdit =
+    onOpenExternalEditor !== undefined &&
+    cols - rowWidth(kept) - SEP.length >= editLabel.length;
+
   return (
     <Box flexDirection="column">
       <Text dimColor>{rule}</Text>
@@ -235,6 +246,16 @@ export function Footer(props: FooterProps): React.ReactElement {
             {s.node}
           </Box>
         ))}
+        {showEdit ? (
+          <>
+            <Box flexGrow={1} />
+            <ActionChip
+              label={editLabel}
+              color="cyan"
+              onAction={onOpenExternalEditor}
+            />
+          </>
+        ) : null}
       </Box>
     </Box>
   );

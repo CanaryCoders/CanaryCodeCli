@@ -653,6 +653,7 @@ function App(props: AppProps): React.ReactNode {
               onCycleMode={session.cycleMode}
               onToggleVerbose={() => session.setVerbose((v) => !v)}
               onOpenHelp={help.openHelp}
+              onOpenExternalEditor={openExternalEditor}
             />
           </Box>
         </Box>

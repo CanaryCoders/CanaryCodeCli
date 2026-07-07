@@ -67,6 +67,11 @@ export const HELP_ROWS: readonly HelpRow[] = [
   { action: "Confirm", keyboard: "y / n / a", mouse: "click chips" },
   { action: "Plan review", keyboard: "a / e / r", mouse: "click chips" },
   { action: "Toggle verbose", keyboard: "Ctrl+R", mouse: "click verbose chip" },
+  {
+    action: "Edit in $EDITOR",
+    keyboard: "Ctrl+G",
+    mouse: "click ctrl+g edit",
+  },
 ] as const;
 
 // Match the prompt frame's left inset (border + boxPadX) so the overlay lines up
