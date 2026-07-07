@@ -743,6 +743,17 @@ async function* runClaudeSession(
     mcpServers = { canarycode: built.server };
   }
 
+  // Redirect the SDK's built-in AskUserQuestion onto canarycode's forwarded
+  // `ask_user`. The claude_code preset ships its own AskUserQuestion (identical
+  // schema), but its interactive prompt has no handler in this embedded loop, so a
+  // call resolves with no answer — the box "flashes and disappears" and the model
+  // is told nothing was picked. Aliasing routes the model's AskUserQuestion tool_use
+  // to `mcp__canarycode__ask_user`, whose `run` blocks on the TUI's AskUserView and
+  // returns the real choice. Only wired when ask_user is actually forwarded.
+  const askUserAlias = forwardedByName.has("ask_user")
+    ? { AskUserQuestion: `${MCP_PREFIX}ask_user` }
+    : undefined;
+
   // Mid-turn queued input (opts.drainInput) is intentionally NOT injected into
   // the SDK's streaming input here: the SDK pulls prompt messages only at turn
   // boundaries, so timing is unreliable. The front-end instead re-runs anything
@@ -774,6 +785,7 @@ async function* runClaudeSession(
       // WebFetch/WebSearch). canarycode's skills/MCP ride in via mcpServers.
       tools: { type: "preset", preset: "claude_code" },
       ...(mcpServers ? { mcpServers } : {}),
+      ...(askUserAlias ? { toolAliases: askUserAlias } : {}),
       permissionMode: "default",
       persistSession: false,
       ...(agentOpts.maxTurns ? { maxTurns: agentOpts.maxTurns } : {}),

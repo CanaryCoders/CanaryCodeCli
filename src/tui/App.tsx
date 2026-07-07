@@ -148,6 +148,16 @@ function App(props: AppProps): React.ReactNode {
   const [externalEditorOpen, setExternalEditorOpen] = useState(false);
   const externalEditorOpenRef = useRef(false);
 
+  // Dismissing a pending ask_user question takes a deliberate SECOND Esc. A single
+  // Esc — a mis-tap, or a focus/paste/response byte some terminals emit that the key
+  // parser surfaces as an escape — must NOT silently drop the question and feed the
+  // model a false "dismissed"; that was the box "flashing away" with no keypress.
+  // The first Esc only arms a hint (auto-disarmed after a moment, or by any other
+  // key); the second confirms. A dismiss resolves the ask as unanswered but does
+  // NOT abort the turn — Ctrl+C stays the hard "cancel everything" escape hatch.
+  const askDismissArmedRef = useRef(false);
+  const askDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Pause-and-ask interactions (confirm / checkpoint / ask_user / plan review) and
   // the composed approval gate — each suspends the agent loop on a promise until
   // the user answers.
@@ -271,6 +281,35 @@ function App(props: AppProps): React.ReactNode {
       session.handleCancel("Ctrl+C");
       return;
     }
+    // A pending ask_user question owns the keyboard: AskUserView's own useInput
+    // drives the wizard (↑/↓/space/enter). App intercepts ONLY Esc here — BEFORE the
+    // Esc-cancel branch below — so an ask can never escalate to a turn abort, and a
+    // lone stray/mis-parsed escape can't drop the question. Dismissing is a
+    // deliberate two-step and resolves the ask as unanswered WITHOUT aborting; every
+    // other key is left to AskUserView (we bow out so mode-cycle/verbose don't fire).
+    if (approvals.pendingAskRef.current) {
+      if (key.escape || isRawEscapeInput(_input)) {
+        if (askDismissTimerRef.current) clearTimeout(askDismissTimerRef.current);
+        if (askDismissArmedRef.current) {
+          askDismissArmedRef.current = false;
+          approvals.resolveAsk(null);
+          return;
+        }
+        askDismissArmedRef.current = true;
+        noteRef.current("press Esc again to dismiss the question", "info");
+        askDismissTimerRef.current = setTimeout(() => {
+          askDismissArmedRef.current = false;
+        }, 1500);
+        return;
+      }
+      // Any other key means the user is engaging with the wizard — disarm a
+      // half-pressed dismiss so a stray Esc can't linger and combine with a later one.
+      if (askDismissArmedRef.current) {
+        askDismissArmedRef.current = false;
+        if (askDismissTimerRef.current) clearTimeout(askDismissTimerRef.current);
+      }
+      return;
+    }
     // Keyboard nav mode owns the keyboard while a scrollback item is focused: j/k
     // (or ↑/↓) walk it, g/G jump to top/bottom, Enter/Space toggle a focused tool,
     // y/Y/c/o yank, i/Esc return to the prompt. Handled BEFORE the Esc escalation so
@@ -352,9 +391,6 @@ function App(props: AppProps): React.ReactNode {
       openExternalEditor();
       return;
     }
-    // A pending ask owns the keyboard — AskUserView's own useInput drives the
-    // wizard (↑/↓/space/enter); bow out so mode-cycle/verbose don't also fire.
-    if (approvals.pendingAskRef.current) return;
     // Same for the `/extensions` picker — ExtensionsView owns ↑/↓/space/enter.
     if (session.extensionsOpenRef.current) return;
     // The paste-preview popover owns its keys (`y` copy; Esc handled above) — bow

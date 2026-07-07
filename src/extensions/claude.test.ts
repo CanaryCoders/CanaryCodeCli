@@ -520,6 +520,54 @@ describe("tool forwarding", () => {
     expect(decisions.ro).toBe("allow"); // read-only bypasses the gate
     expect(decisions.rw).toBe("deny"); // mutating is gated → denied
   });
+
+  test("aliases the SDK's built-in AskUserQuestion onto forwarded ask_user", async () => {
+    let sentOptions: Record<string, unknown> = {};
+    const query: ClaudeCodeOptions["query"] = async function* ({ options }) {
+      sentOptions = options ?? {};
+      yield { type: "result", subtype: "success" };
+    };
+    const provider = claudeCodeProvider({
+      query,
+      tool: (n, _d, _s, h) => ({ n, h }),
+      createSdkMcpServer: () => ({}),
+    });
+    await collectAgent(
+      provider.runSession!(
+        agentOpts({
+          messages: [{ role: "user", content: [{ type: "text", text: "x" }] }],
+          tools: [mkTool("ask_user", { readOnly: true })],
+        }),
+      ),
+    );
+    // The built-in AskUserQuestion has no interactive handler in this embedded
+    // loop; routing it to canarycode's forwarded ask_user makes it block on the TUI.
+    expect(sentOptions.toolAliases).toEqual({
+      AskUserQuestion: "mcp__canarycode__ask_user",
+    });
+  });
+
+  test("omits the AskUserQuestion alias when ask_user is not forwarded", async () => {
+    let sentOptions: Record<string, unknown> = {};
+    const query: ClaudeCodeOptions["query"] = async function* ({ options }) {
+      sentOptions = options ?? {};
+      yield { type: "result", subtype: "success" };
+    };
+    const provider = claudeCodeProvider({
+      query,
+      tool: (n, _d, _s, h) => ({ n, h }),
+      createSdkMcpServer: () => ({}),
+    });
+    await collectAgent(
+      provider.runSession!(
+        agentOpts({
+          messages: [{ role: "user", content: [{ type: "text", text: "x" }] }],
+          tools: [mkTool("read_skill", { readOnly: true })],
+        }),
+      ),
+    );
+    expect(sentOptions.toolAliases).toBeUndefined();
+  });
 });
 
 describe("provider-factory seam", () => {
