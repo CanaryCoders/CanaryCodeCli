@@ -261,6 +261,30 @@ export interface DisplayRow {
   end: number;
 }
 
+/** Convert a visible-column click within a wrapped display row to a logical
+ * cursor column (character offset in that logical line). Snaps to the nearest
+ * character boundary and treats paste chips / wide codepoints as atomic spans. */
+export function displayColToLineCol(
+  row: DisplayRow,
+  displayCol: number,
+  pastes: Map<number, string>,
+): number {
+  if (displayCol <= 0) return row.start;
+  let visible = 0;
+  let logical = row.start;
+  for (const ch of row.text) {
+    const id = pasteId(ch);
+    const w =
+      id >= 0 ? pasteChipLabel(id, pastes.get(id) ?? "").length : charWidth(ch);
+    if (displayCol < visible + w) {
+      return displayCol - visible < w / 2 ? logical : logical + 1;
+    }
+    visible += w;
+    logical++;
+  }
+  return row.end;
+}
+
 /** Display width of one codepoint: 2 for East Asian Wide/Fullwidth and emoji,
  *  else 1. A pragmatic wcwidth subset — covers what users actually type (CJK,
  *  Hangul, Kana, fullwidth forms, emoji); obscure zero-width cases fall back

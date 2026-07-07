@@ -9,7 +9,11 @@ import { dirname, join } from "node:path";
 
 import type { ThinkingLevel } from "./thinking.ts";
 
-export type ProviderApi = "anthropic" | "openai-compat" | "openai-responses";
+export type ProviderApi =
+  | "anthropic"
+  | "claude-code"
+  | "openai-compat"
+  | "openai-responses";
 
 /**
  * Confirm-before-running gate (a TUI-only concern). "off" runs every tool;
@@ -196,6 +200,7 @@ function configPath(): string {
 // the raw config key. Unknown (user-defined) provider keys show verbatim.
 const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   anthropic: "Anthropic",
+  claude: "Claude Code",
   canaryllm: "CanaryLLM",
   openai: "Codex",
   opencode: "OpenCode",
@@ -552,11 +557,16 @@ export function validateConfigPathValue(path: string, value: unknown): void {
         validateConfigPathValue(`${path}.api`, providerValue.api);
     } else if (parts[2] === "api") {
       if (
-        !["anthropic", "openai-compat", "openai-responses"].includes(
-          value as string,
-        )
+        ![
+          "anthropic",
+          "claude-code",
+          "openai-compat",
+          "openai-responses",
+        ].includes(value as string)
       ) {
-        fail("expected anthropic, openai-compat, or openai-responses");
+        fail(
+          "expected anthropic, claude-code, openai-compat, or openai-responses",
+        );
       }
     }
     return;

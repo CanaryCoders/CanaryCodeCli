@@ -22,6 +22,7 @@ import type {
 } from "../extension.ts";
 import { errorMessage, extensionEnabled } from "../extension.ts";
 import { agentsExtension } from "./agents.ts";
+import { claudeCodeExtension } from "./claude.ts";
 import { codexExtension } from "./codex.ts";
 import { hooksExtension } from "./hooks.ts";
 import { mcpExtension } from "./mcp.ts";
@@ -41,6 +42,7 @@ const canaryExtension: Extension = {
 
 export const BUILTIN_EXTENSIONS: Extension[] = [
   canaryExtension,
+  claudeCodeExtension,
   codexExtension,
   opencodeExtension,
   {

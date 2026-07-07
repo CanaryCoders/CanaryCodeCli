@@ -5,6 +5,7 @@ import { EventEmitter } from "node:events";
 import {
   charWidth,
   chipIdBeforeCursor,
+  displayColToLineCol,
   drainInputQuiet,
   EMPTY_PASTES,
   isRawEscapeInput,
@@ -76,6 +77,24 @@ describe("display width", () => {
     expect(rows.map((r) => r.text)).toEqual(["漢字", "漢字"]);
     expect(rows[0]).toMatchObject({ start: 0, end: 2 });
     expect(rows[1]).toMatchObject({ start: 2, end: 4 });
+  });
+
+  test("displayColToLineCol snaps clicks across wide characters", () => {
+    const row = wrapDisplayLine("a漢b", 10, EMPTY_PASTES)[0]!;
+    expect(displayColToLineCol(row, 0, EMPTY_PASTES)).toBe(0);
+    expect(displayColToLineCol(row, 1, EMPTY_PASTES)).toBe(1);
+    expect(displayColToLineCol(row, 2, EMPTY_PASTES)).toBe(2);
+    expect(displayColToLineCol(row, 4, EMPTY_PASTES)).toBe(3);
+  });
+
+  test("displayColToLineCol treats paste chips as one atomic cursor step", () => {
+    const pastes = new Map([[0, "a\nb\nc\nd"]]);
+    const row = wrapDisplayLine(`x${pasteSentinel(0)}y`, 80, pastes)[0]!;
+    const chipStart = 1;
+    const chipEnd = chipStart + pasteChipLabel(0, pastes.get(0)!).length;
+    expect(displayColToLineCol(row, chipStart, pastes)).toBe(1);
+    expect(displayColToLineCol(row, chipEnd - 1, pastes)).toBe(2);
+    expect(displayColToLineCol(row, chipEnd, pastes)).toBe(2);
   });
 });
 

@@ -43,6 +43,7 @@ import {
   resolveItemCopyTarget,
   writeTextToClipboard,
 } from "./copy-targets.ts";
+import { editPromptInEditor } from "./external-editor.ts";
 import { Footer } from "./Footer.tsx";
 import { IconProvider } from "./Icon.tsx";
 import { ActionChip } from "./Interactive.tsx";
@@ -144,6 +145,8 @@ function App(props: AppProps): React.ReactNode {
   // editor pauses; `help.openRef` lets the global key handler tell it is open and
   // close it on Esc without escalating the cancel chain (and swallow stray keys).
   const help = useHelp();
+  const [externalEditorOpen, setExternalEditorOpen] = useState(false);
+  const externalEditorOpenRef = useRef(false);
 
   // Pause-and-ask interactions (confirm / checkpoint / ask_user / plan review) and
   // the composed approval gate — each suspends the agent loop on a promise until
@@ -169,6 +172,33 @@ function App(props: AppProps): React.ReactNode {
     config: props.config,
     store: props.store,
   });
+
+  const openExternalEditor = useCallback(() => {
+    if (externalEditorOpenRef.current) return;
+    externalEditorOpenRef.current = true;
+    setExternalEditorOpen(true);
+    editPromptInEditor({
+      initialText: promptInput.inputRef.current,
+      renderer: openTuiRenderer,
+    })
+      .then((next) => {
+        if (next === null) return;
+        autocomplete.handleInputChange(next);
+        promptInput.bumpCursor();
+      })
+      .catch((err: unknown) => {
+        noteRef.current(`editor failed: ${(err as Error).message}`, "error");
+      })
+      .finally(() => {
+        externalEditorOpenRef.current = false;
+        setExternalEditorOpen(false);
+        openTuiRenderer?.requestRender();
+      });
+  }, [
+    autocomplete.handleInputChange,
+    promptInput.bumpCursor,
+    promptInput.inputRef,
+  ]);
 
   const runtime = useMemo<TuiRuntime>(
     () => ({
@@ -236,6 +266,7 @@ function App(props: AppProps): React.ReactNode {
   // live state via refs (Ink rebinds it each render, but the async loop mutates
   // state between renders).
   useTuiInput((_input, key) => {
+    if (externalEditorOpenRef.current) return;
     if (key.ctrl && _input === "c") {
       session.handleCancel("Ctrl+C");
       return;
@@ -312,6 +343,15 @@ function App(props: AppProps): React.ReactNode {
     // Esc also handled above) — bow out for every other key so nothing leaks to
     // nav/mode-cycle/the prompt while it's open. Mirrors the paste-preview gate.
     if (help.openRef.current) return;
+    if (
+      key.ctrl &&
+      _input === "g" &&
+      !autocomplete.completeOpenRef.current &&
+      !approvals.pendingPlanRef.current
+    ) {
+      openExternalEditor();
+      return;
+    }
     // A pending ask owns the keyboard — AskUserView's own useInput drives the
     // wizard (↑/↓/space/enter); bow out so mode-cycle/verbose don't also fire.
     if (approvals.pendingAskRef.current) return;
@@ -597,7 +637,8 @@ function App(props: AppProps): React.ReactNode {
               modeColor={modeColor}
               verb={verb}
               columns={columns}
-              navMode={focusedId !== null}
+              navMode={focusedId !== null || externalEditorOpen}
+              onOpenExternalEditor={openExternalEditor}
             />
 
             <Footer

@@ -160,8 +160,9 @@ Each line is a JSON `AgentEvent`: `text`, `thinking`, `tool_start {id,name,input
 - Thinking modes. They map to Anthropic extended-thinking budgets: `off`, `think` at 4k, `think-hard` at 10k, `ultrathink` at 32k. Non-Anthropic providers degrade gracefully. Setting a level with `/think` writes it to `~/.canarycode/config.json` under the `thinking` key, so it becomes the default on the next launch. `--think` overrides it for one run without changing the saved default.
 - Web search. A read-only `web_search` tool works with no key by default through a free DuckDuckGo backend. You can configure Brave or Tavily backends under `webSearch`.
 - Sub-agents. A `spawn_agent` tool delegates focused work to a child agent with its own fresh context, bounded by `maxConcurrent` and `maxDepth`.
+- Claude Code subscription models. Use Anthropic models through the official Claude Code Agent SDK and your existing Claude Code login; run `claude login`, then pick the baked-in `opus`, `sonnet`, or `haiku` models.
 - OpenCode Zen. Use [opencode](https://opencode.ai)'s model gateway inside canarycode: sign in once with `opencode auth login` (or set `OPENCODE_API_KEY`) and `/login-opencode` makes the whole Zen catalog (Claude, GPT, Qwen, Kimi, GLM, the free stealth models, …) available to `/model`.
-- Extension toggles. `/extensions` lists every toggleable feature — `canaryllm`, `codex`, `opencode`, `websearch`, `skills`, `agents`, `mcp`, `hooks` — and `/extensions enable|disable <name>` flips one, persisted to `~/.canarycode/config.json` under `extensions.<name>`. A disabled extension contributes nothing: no tools, no prompt text, no startup work.
+- Extension toggles. `/extensions` lists every toggleable feature — `canaryllm`, `claude-code`, `codex`, `opencode`, `websearch`, `skills`, `agents`, `mcp`, `hooks` — and `/extensions enable|disable <name>` flips one, persisted to `~/.canarycode/config.json` under `extensions.<name>`. A disabled extension contributes nothing: no tools, no prompt text, no startup work.
 - Custom agents. You define personas as files in `~/.canarycode/agents/` and `./.canarycode/agents/`. Frontmatter sets `name`, `description`, an optional `model`, and an optional `tools` allowlist. The body is the system prompt. Each name and description loads into the prompt. `spawn_agent` dispatches to one by `agent` name and applies its persona, model, and tool restrictions.
 - AI permission engine. Opt in with `permission.mode: "ai"`. A separate cheap model classifies each gated mutating tool call as safe or unsafe before it runs. Safe calls run silently. Unsafe calls escalate to the human y/n/a box in the TUI with the reason, or block the call when headless. Auto and `--yolo` skip it.
 - Hooks. Shell commands fire on lifecycle events: `PreToolUse`, `PostToolUse`, and `Stop`. A regex on the tool name matches them. A non-zero `PreToolUse` exit blocks the call and its output becomes the reason the model sees. The rest observe only. Hooks run in every mode.
@@ -279,6 +280,17 @@ canarycode --model <a-canary-model-id> -p "say hi"
 Display output redacts the key, and a literal `${CANARYLLM_API_KEY}` reference is preserved in the file rather than written as an interpolated secret.
 
 The preset is an `openai-compat` provider pinned to `https://canaryllm.canarycoders.es/v1`. The spec's `servers` list is localhost-only, so the base URL is hard-set. To use the Anthropic-compatible path instead, declare your own provider against `/v1/messages` with `"api": "anthropic"`.
+
+### Claude Code
+
+`canarycode` ships a baked-in `claude` provider backed by the official `@anthropic-ai/claude-agent-sdk`, so Claude Code Pro/Max or org users can reuse their Claude Code subscription path without an Anthropic API key:
+
+```bash
+claude login
+canarycode --model sonnet -p "say hi"
+```
+
+The preset exposes `opus`, `sonnet`, and `haiku` and reads authentication from Claude Code itself. The SDK is used only as a streaming model transport for now: CanaryCode does not expose its local tools to Claude Code's nested agent loop yet, so this path is best for chat, review, and other text/image turns. Use a direct Anthropic API provider when you need full CanaryCode tool execution until a permission-preserving SDK tool bridge lands.
 
 ### Web search
 

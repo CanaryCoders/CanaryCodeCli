@@ -6,6 +6,7 @@
 // API, `openai-compat` talks to the OpenAI Chat Completions API — the latter is
 // what custom company gateways (incl. CanaryLLM) speak.
 
+import { randomUUID } from "node:crypto";
 import { makeTokenGetter, type TokenGetter } from "./auth.ts";
 import type { ProviderConfig } from "./config.ts";
 
@@ -205,6 +206,233 @@ function effortForBudget(budget: number): "low" | "medium" | "high" {
   if (budget <= 4_000) return "low";
   if (budget <= 10_000) return "medium";
   return "high";
+}
+
+type ClaudeCodeStreamEvent = {
+  type?: string;
+  index?: number;
+  content_block?: { type?: string; id?: string; name?: string };
+  delta?: {
+    type?: string;
+    text?: string;
+    thinking?: string;
+    partial_json?: string;
+    stop_reason?: string;
+  };
+  usage?: { output_tokens?: number };
+};
+
+type ClaudeCodeSdkMessage =
+  | {
+      type: "stream_event";
+      event: ClaudeCodeStreamEvent;
+    }
+  | {
+      type: "result";
+      subtype?: string;
+      usage?: {
+        input_tokens?: number;
+        output_tokens?: number;
+      };
+      total_usage?: {
+        input_tokens?: number;
+        output_tokens?: number;
+      };
+      result?: string;
+    };
+
+type ClaudeCodeSdkUserMessage = {
+  type: "user";
+  message: {
+    role: "user";
+    content: string | AnthropicBlock[];
+  };
+  parent_tool_use_id: null;
+};
+
+function toClaudeCodeContent(blocks: ContentBlock[]): AnthropicBlock[] {
+  return blocks
+    .map(toAnthropicBlock)
+    .filter((b): b is AnthropicBlock => b !== null);
+}
+
+async function* toClaudeCodePrompt(
+  system: string,
+  messages: Message[],
+): AsyncGenerator<ClaudeCodeSdkUserMessage> {
+  const content: AnthropicBlock[] = [];
+  if (system)
+    content.push({ type: "text", text: `<system>\n${system}\n</system>\n\n` });
+  for (const message of messages) {
+    const prefix = message.role === "assistant" ? "Assistant" : "User";
+    content.push({ type: "text", text: `\n\n<${prefix}>\n` });
+    content.push(...toClaudeCodeContent(message.content));
+    content.push({ type: "text", text: `\n</${prefix}>` });
+  }
+  yield {
+    type: "user",
+    message: {
+      role: "user",
+      content:
+        content.length === 1 && content[0]?.type === "text"
+          ? content[0].text
+          : content,
+    },
+    parent_tool_use_id: null,
+  };
+}
+
+function effortForClaudeCode(
+  budget: number | undefined,
+): "low" | "medium" | "high" | "xhigh" | undefined {
+  if (!budget || budget <= 0) return undefined;
+  if (budget <= 4_000) return "low";
+  if (budget <= 10_000) return "medium";
+  return "xhigh";
+}
+
+type ClaudeCodeQuery = (params: {
+  prompt: AsyncIterable<ClaudeCodeSdkUserMessage>;
+  options?: Record<string, unknown>;
+}) => AsyncIterable<ClaudeCodeSdkMessage> & { close?: () => void };
+
+export interface ClaudeCodeOptions {
+  query?: ClaudeCodeQuery;
+}
+
+function claudeCodeProvider(opts: ClaudeCodeOptions = {}): Provider {
+  return {
+    id: "claude-code",
+    async *stream(req: StreamRequest): AsyncIterable<StreamEvent> {
+      const sdkQuery: ClaudeCodeQuery =
+        opts.query ??
+        ((await import("@anthropic-ai/claude-agent-sdk").then(
+          (m) => m.query,
+        )) as unknown as ClaudeCodeQuery);
+      const abortController = new AbortController();
+      if (req.signal) {
+        if (req.signal.aborted) abortController.abort(req.signal.reason);
+        else {
+          req.signal.addEventListener(
+            "abort",
+            () => abortController.abort(req.signal?.reason),
+            { once: true },
+          );
+        }
+      }
+      const pending: Record<
+        number,
+        { id: string; name: string; json: string }
+      > = {};
+      let stopReason: string | undefined = "stop";
+      const q = sdkQuery({
+        prompt: toClaudeCodePrompt(req.system, req.messages),
+        options: {
+          abortController,
+          cwd: process.cwd(),
+          includePartialMessages: true,
+          maxTurns: 1,
+          model: req.model,
+          permissionMode: "dontAsk",
+          persistSession: false,
+          settingSources: [],
+          tools: [],
+          ...(effortForClaudeCode(req.thinkingBudget)
+            ? { effort: effortForClaudeCode(req.thinkingBudget) }
+            : {}),
+          env: {
+            ...process.env,
+            CLAUDE_AGENT_SDK_CLIENT_APP: "canarycode",
+          },
+        },
+      });
+      try {
+        for await (const msg of q) {
+          if (msg.type === "stream_event") {
+            const ev = msg.event;
+            switch (ev.type) {
+              case "content_block_start":
+                if (
+                  ev.content_block?.type === "tool_use" &&
+                  typeof ev.index === "number"
+                ) {
+                  pending[ev.index] = {
+                    id: ev.content_block.id ?? randomUUID(),
+                    name: ev.content_block.name ?? "",
+                    json: "",
+                  };
+                }
+                break;
+              case "content_block_delta": {
+                const delta = ev.delta;
+                if (delta?.type === "text_delta") {
+                  yield { type: "text_delta", text: delta.text ?? "" };
+                } else if (delta?.type === "thinking_delta") {
+                  yield { type: "thinking_delta", text: delta.thinking ?? "" };
+                } else if (
+                  delta?.type === "input_json_delta" &&
+                  typeof ev.index === "number"
+                ) {
+                  const t = pending[ev.index];
+                  if (t) t.json += delta.partial_json ?? "";
+                }
+                break;
+              }
+              case "content_block_stop": {
+                if (typeof ev.index !== "number") break;
+                const t = pending[ev.index];
+                if (t) {
+                  let input: unknown = {};
+                  let inputError: string | undefined;
+                  try {
+                    input = t.json ? JSON.parse(t.json) : {};
+                  } catch {
+                    inputError = TOOL_INPUT_PARSE_ERROR;
+                  }
+                  yield {
+                    type: "tool_use",
+                    id: t.id,
+                    name: t.name,
+                    input,
+                    ...(inputError ? { inputError } : {}),
+                  };
+                  delete pending[ev.index];
+                }
+                break;
+              }
+              case "message_delta":
+                if (ev.delta?.stop_reason) stopReason = ev.delta.stop_reason;
+                if (ev.usage) {
+                  yield {
+                    type: "usage",
+                    inputTokens: 0,
+                    outputTokens: ev.usage.output_tokens ?? 0,
+                  };
+                }
+                break;
+              default:
+                break;
+            }
+          } else if (msg.type === "result") {
+            const usage = msg.total_usage ?? msg.usage;
+            if (usage) {
+              yield {
+                type: "usage",
+                inputTokens: usage.input_tokens ?? 0,
+                outputTokens: usage.output_tokens ?? 0,
+              };
+            }
+            if (msg.subtype && msg.subtype !== "success") {
+              stopReason = msg.subtype;
+            }
+          }
+        }
+      } finally {
+        if ("close" in q && typeof q.close === "function") q.close();
+      }
+      yield { type: "done", stopReason };
+    },
+  };
 }
 
 function anthropicProvider(opts: AnthropicOptions): Provider {
@@ -892,7 +1120,7 @@ function openaiResponsesProvider(opts: OpenAIResponsesOptions): Provider {
  */
 export function createProvider(
   cfg: ProviderConfig,
-  opts: { tokenGetter?: TokenGetter } = {},
+  opts: { tokenGetter?: TokenGetter; claudeCode?: ClaudeCodeOptions } = {},
 ): Provider {
   switch (cfg.api) {
     case "anthropic":
@@ -908,6 +1136,8 @@ export function createProvider(
         );
       }
       return anthropicProvider({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl });
+    case "claude-code":
+      return claudeCodeProvider(opts.claudeCode);
     case "openai-compat":
       if (!cfg.baseUrl) {
         throw new Error(

@@ -132,6 +132,7 @@ export function PromptArea({
   verb,
   columns,
   navMode,
+  onOpenExternalEditor,
 }: {
   approvals: Approvals;
   session: AgentSession;
@@ -148,6 +149,8 @@ export function PromptArea({
   /** True while the App is in keyboard transcript nav mode — the prompt goes inert
    * and a one-line vim-key hint shows in its place. */
   navMode: boolean;
+  /** Open the current prompt in $VISUAL/$EDITOR and replace it on save. */
+  onOpenExternalEditor: () => void;
 }): React.ReactElement {
   const checkpointIcon = useIcon("checkpoint");
   const promptIcon = useIcon("prompt");
@@ -323,6 +326,7 @@ export function PromptArea({
             pastes={pasteMap}
             onChipClick={pastePreview.open}
             previewActive={pastePreview.chipId !== null}
+            onOpenExternalEditor={onOpenExternalEditor}
             // Inner content width = terminal − paddingX (2) − the prompt prefix +
             // 1 spare so the EOL cursor block never pushes a row past the edge.
             width={Math.max(1, columns - 2 * SPACING.boxPadX - 2 - 1)}

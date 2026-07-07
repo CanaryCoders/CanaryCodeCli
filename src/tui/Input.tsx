@@ -18,10 +18,12 @@
 // tested without a render; this component is a thin shell that mirrors the cursor
 // in state and renders the value with a fake inverse-block cursor (no chalk dep).
 
+import type { ComponentProps } from "react";
 import { useRef, useState } from "react";
 import {
   chipIdBeforeCursor,
   cursorLineCol,
+  displayColToLineCol,
   EMPTY_PASTES,
   type InputResult,
   pasteChipLabel,
@@ -73,6 +75,8 @@ interface MultilineInputProps {
    *  hard-wrapped to this width so Ink never soft-wraps a live row — a soft-wrapped
    *  row is what Ink mis-erases and smears across the box border. */
   width?: number;
+  /** Open the current buffer in $VISUAL/$EDITOR. */
+  onOpenExternalEditor?: () => void;
 }
 
 export function MultilineInput({
@@ -91,6 +95,7 @@ export function MultilineInput({
   onChipClick,
   previewActive = false,
   width = 0,
+  onOpenExternalEditor,
 }: MultilineInputProps): React.ReactElement {
   // react-doctor flags this twice, both false positives: (1) no-derived-useState —
   // `value.length` only *seeds* the cursor; it then moves independently as the user
@@ -149,6 +154,10 @@ export function MultilineInput({
       // them as input.
       const cleanInput = stripEscapes(input);
       if (input && !cleanInput) return;
+      if (key.ctrl && cleanInput === "g" && !capture) {
+        onOpenExternalEditor?.();
+        return;
+      }
       // Ctrl+P opens the preview for the chip the cursor rests just after — a
       // keyboard path to what a mouse click on the chip already does. Only when
       // autocomplete is closed (`!capture`), so it never fights the popover's own
@@ -211,7 +220,13 @@ export function MultilineInput({
   // Hard-wrap each logical line into display rows of at most `width` columns,
   // keeping paste chips atomic. This stops Ink from soft-wrapping a live row,
   // which it mis-erases and smears across the input border on edits.
-  const rows: { text: string; cursorCol: number | null }[] = [];
+  const rows: {
+    text: string;
+    cursorCol: number | null;
+    line: number;
+    start: number;
+    end: number;
+  }[] = [];
   for (let i = 0; i < lines.length; i++) {
     const wrapped = wrapDisplayLine(lines[i]!, width, pastes);
     const onCursorLine = i === curLine;
@@ -228,7 +243,13 @@ export function MultilineInput({
           cursorCol = curCol - seg.start;
         }
       }
-      rows.push({ text: seg.text, cursorCol });
+      rows.push({
+        text: seg.text,
+        cursorCol,
+        line: i,
+        start: seg.start,
+        end: seg.end,
+      });
     }
   }
 
@@ -243,8 +264,41 @@ export function MultilineInput({
     onChipClick !== undefined &&
     chipIdBeforeCursor(value, effectiveCursor) !== null;
 
+  const lineStarts: number[] = [];
+  let lineStartOffset = 0;
+  for (const line of lines) {
+    lineStarts.push(lineStartOffset);
+    lineStartOffset += line.length + 1;
+  }
+  const moveCursorFromMouse = (
+    event: Parameters<
+      NonNullable<ComponentProps<typeof Box>["onMouseDown"]>
+    >[0],
+  ): void => {
+    if (!isActive || !inputActive || previewActive || event.button !== 0)
+      return;
+    const target = event.target;
+    if (!target) return;
+    const y = Math.max(0, Math.min(rows.length - 1, event.y - target.screenY));
+    const row = rows[y];
+    if (!row) return;
+    const displayCol = Math.max(0, event.x - target.screenX);
+    const lineCol = displayColToLineCol(row, displayCol, pastes);
+    const nextCursor = Math.min(
+      value.length,
+      (lineStarts[row.line] ?? 0) + lineCol,
+    );
+    cursorRef.current = nextCursor;
+    setCursor(nextCursor);
+    event.stopPropagation();
+  };
+
   return (
-    <Box flexDirection="column">
+    <Box
+      flexDirection="column"
+      cursor={inputActive && !previewActive ? "text" : "default"}
+      onMouseDown={moveCursorFromMouse}
+    >
       {rows.map((row, i) => (
         // A blank row still needs a space so Ink gives it height (otherwise a
         // Shift+Enter newline renders zero-height and appears to do nothing). The
