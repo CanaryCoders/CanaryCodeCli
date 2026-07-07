@@ -15,6 +15,7 @@ export function claudeCodeProviderConfig(): ProviderConfig {
   return {
     api: "claude-code",
     models: [
+      { id: "fable", name: "fable" },
       { id: "opus", name: "opus" },
       { id: "sonnet", name: "sonnet" },
       { id: "haiku", name: "haiku" },

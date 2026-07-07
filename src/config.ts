@@ -220,6 +220,7 @@ export function defaultConfig(): Config {
         api: "anthropic",
         apiKey: "${ANTHROPIC_API_KEY}",
         models: [
+          { id: "fable", name: "claude-fable-5" },
           { id: "opus", name: "claude-opus-4-8" },
           { id: "sonnet", name: "claude-sonnet-4-6" },
           { id: "haiku", name: "claude-haiku-4-5-20251001" },
@@ -655,7 +656,12 @@ export function summarizeConfig(value: unknown): string {
   return JSON.stringify(redactConfig(value), null, 2);
 }
 
-/** Resolve a model id to its provider + concrete model. `--model`/config id are accepted. */
+/** Resolve a model id to its provider + concrete model. `--model`/config id are accepted.
+ *
+ * Accepts an optional `provider:id` qualifier so identically-named models from
+ * different providers (e.g. `anthropic:opus` API billing vs `claude:opus` Claude
+ * Code subscription) can be told apart — otherwise the first provider that
+ * matches an unqualified id wins, which silently picks the wrong billing path. */
 export function resolveModel(
   config: Config,
   modelId?: string,
@@ -663,6 +669,20 @@ export function resolveModel(
   | { provider: string; providerConfig: ProviderConfig; model: ModelConfig }
   | undefined {
   const wanted = modelId ?? config.model;
+  // A `provider:id` qualifier pins the provider explicitly.
+  const sep = wanted.indexOf(":");
+  if (sep > 0) {
+    const wantProvider = wanted.slice(0, sep);
+    const wantId = wanted.slice(sep + 1);
+    const providerConfig = config.providers[wantProvider];
+    if (providerConfig) {
+      for (const model of providerConfig.models ?? []) {
+        if (model.id === wantId || model.name === wantId) {
+          return { provider: wantProvider, providerConfig, model };
+        }
+      }
+    }
+  }
   for (const [provider, providerConfig] of Object.entries(config.providers)) {
     for (const model of providerConfig.models ?? []) {
       if (model.id === wanted || model.name === wanted) {

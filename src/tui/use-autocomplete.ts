@@ -26,10 +26,23 @@ function buildCompletionContext(
   config: Config,
   store: SessionStore,
 ): CompletionContext {
+  // Detect ids that appear under more than one provider (e.g. `opus` from both
+  // the `anthropic` API-billing preset and the `claude` Claude Code preset). Those
+  // must be qualified as `provider:id` so /model selects the intended billing path
+  // — an unqualified id resolves to whichever provider is listed first.
+  const idCounts = new Map<string, number>();
+  for (const pc of Object.values(config.providers))
+    for (const m of pc.models ?? [])
+      idCounts.set(m.id, (idCounts.get(m.id) ?? 0) + 1);
   const models: ModelOption[] = [];
   for (const [key, pc] of Object.entries(config.providers)) {
-    for (const m of pc.models ?? [])
-      models.push({ id: m.id, source: providerDisplayName(key) });
+    for (const m of pc.models ?? []) {
+      const ambiguous = (idCounts.get(m.id) ?? 0) > 1;
+      models.push({
+        id: ambiguous ? `${key}:${m.id}` : m.id,
+        source: providerDisplayName(key),
+      });
+    }
   }
   const sessions = store
     .listSessions(20)

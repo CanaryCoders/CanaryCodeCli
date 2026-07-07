@@ -811,10 +811,22 @@ export function useAgentSession(deps: {
     if (!hasConversation()) {
       updateBanner({ model: label, provider: source });
     }
+    // When the id occurs under more than one provider (e.g. `opus` from both the
+    // `anthropic` API-billing preset and the `claude` Claude Code preset),
+    // persist it provider-qualified so the intended billing path is restored on
+    // next launch — an unqualified id would resolve to whichever provider is
+    // listed first, silently reverting the choice.
+    const ambiguous =
+      Object.values(props.config.providers).filter((pc) =>
+        (pc.models ?? []).some((m) => m.id === resolved.model.id),
+      ).length > 1;
+    const persistedModel = ambiguous
+      ? `${resolved.provider}:${resolved.model.id}`
+      : label;
     // Persist: update the session row (so --resume restores this model) and write
     // the preference to ~/.canarycode/config.json (so it's the default next launch).
     props.store.setModel(sessionIdRef.current, modelNameRef.current);
-    void saveConfig({ model: label }).catch((err) =>
+    void saveConfig({ model: persistedModel }).catch((err) =>
       note(
         `could not save model preference: ${(err as Error).message}`,
         "error",

@@ -13,6 +13,7 @@ import {
   modelSupportsVision,
   redactConfig,
   replaceConfigInPlace,
+  resolveModel,
   setRawConfigPath,
   summarizeConfig,
   unsetRawConfigPath,
@@ -52,6 +53,34 @@ function baseConfig(overrides: Partial<Config> = {}): Config {
     ...overrides,
   };
 }
+
+describe("resolveModel", () => {
+  const twoProviders = baseConfig({
+    providers: {
+      anthropic: {
+        api: "anthropic",
+        models: [{ id: "opus", name: "api-opus" }],
+      },
+      claude: { api: "claude-code", models: [{ id: "opus", name: "opus" }] },
+    },
+  });
+
+  test("an unqualified ambiguous id resolves to the first provider", () => {
+    const r = resolveModel(twoProviders, "opus");
+    expect(r?.provider).toBe("anthropic");
+  });
+
+  test("a provider:id qualifier pins the intended provider", () => {
+    const r = resolveModel(twoProviders, "claude:opus");
+    expect(r?.provider).toBe("claude");
+    expect(r?.model.id).toBe("opus");
+  });
+
+  test("a qualifier with an unknown provider falls through to plain matching", () => {
+    const r = resolveModel(twoProviders, "nope:opus");
+    expect(r?.provider).toBe("anthropic");
+  });
+});
 
 describe("modelForRole", () => {
   test("reasoning/coding fall back to base model when unset", () => {
