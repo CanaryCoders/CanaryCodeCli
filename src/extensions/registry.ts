@@ -21,6 +21,11 @@ import type {
   SessionExtension,
 } from "../extension.ts";
 import { errorMessage, extensionEnabled } from "../extension.ts";
+import {
+  clearProviderFactories,
+  type ProviderFactory,
+  registerProviderFactory,
+} from "../provider.ts";
 import { agentsExtension } from "./agents.ts";
 import { claudeCodeExtension } from "./claude.ts";
 import { codexExtension } from "./codex.ts";
@@ -195,6 +200,34 @@ export function foldPresets(
       // "${VAR}" placeholder they carry (e.g. the canary apiKey) is still
       // literal — interpolate here, or the gateway gets the raw "${VAR}" string.
       config.providers[key] ??= interpolateEnv(preset);
+    }
+  }
+}
+
+/**
+ * Register the provider factories of enabled extensions into the provider
+ * module, keyed by `api` tag, so `createProvider` can build plugin-owned
+ * providers (e.g. claude-code). Clears first so a reload / toggle re-derives the
+ * set cleanly. A throwing `providerFactories` (user code) is contained: noted and
+ * skipped, so one broken extension never kills launch. Later extensions win a
+ * key clash (registry order = built-ins first, then user extensions). */
+export function foldProviderFactories(
+  config: Config,
+  note?: (text: string) => void,
+): void {
+  clearProviderFactories();
+  for (const ext of enabledExtensions(config)) {
+    let factories: Record<string, ProviderFactory>;
+    try {
+      factories = ext.providerFactories?.() ?? {};
+    } catch (err) {
+      note?.(
+        `note: extension "${ext.name}" providerFactories failed — ${errorMessage(err)}`,
+      );
+      continue;
+    }
+    for (const [api, factory] of Object.entries(factories)) {
+      registerProviderFactory(api, factory);
     }
   }
 }

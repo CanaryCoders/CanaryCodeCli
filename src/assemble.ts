@@ -32,6 +32,7 @@ import {
 } from "./extensions/permission.ts";
 import {
   foldPresets,
+  foldProviderFactories,
   sessionExtensions,
   setUserExtensions,
 } from "./extensions/registry.ts";
@@ -91,6 +92,7 @@ export async function initExtensions(
 ): Promise<void> {
   setUserExtensions(await loadUserExtensions(config, opts));
   foldPresets(config, opts.note);
+  foldProviderFactories(config, opts.note);
 }
 
 /**

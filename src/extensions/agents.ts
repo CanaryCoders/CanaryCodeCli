@@ -41,7 +41,7 @@
 import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { type AgentOptions, runAgent } from "../agent.ts";
+import { type AgentOptions, runSession } from "../agent.ts";
 import { type Config, resolveModel } from "../config.ts";
 import type { SessionExtension } from "../extension.ts";
 import { createProvider, type Message, type Provider } from "../provider.ts";
@@ -379,7 +379,7 @@ async function runSubagent(
       ) => runPostToolHooks(env.config.hooks, call, result, hookContext)
     : undefined;
   try {
-    for await (const ev of runAgent({
+    for await (const ev of runSession({
       provider,
       model,
       system,

@@ -3,7 +3,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { TokenGetter } from "./auth.ts";
 import {
-  type ClaudeCodeOptions,
   createProvider,
   type Message,
   type StreamEvent,
@@ -163,86 +162,6 @@ async function collect(
 const origFetch = globalThis.fetch;
 afterEach(() => {
   globalThis.fetch = origFetch;
-});
-
-describe("claude-code provider stream", () => {
-  test("maps SDK partial messages to StreamEvents", async () => {
-    const query: ClaudeCodeOptions["query"] = async function* () {
-      yield {
-        type: "stream_event",
-        event: {
-          type: "content_block_delta",
-          delta: { type: "text_delta", text: "Hello" },
-        },
-      };
-      yield {
-        type: "stream_event",
-        event: {
-          type: "content_block_delta",
-          delta: { type: "thinking_delta", thinking: "ponder" },
-        },
-      };
-      yield {
-        type: "stream_event",
-        event: {
-          type: "message_delta",
-          delta: { stop_reason: "end_turn" },
-          usage: { output_tokens: 4 },
-        },
-      };
-      yield {
-        type: "result",
-        subtype: "success",
-        total_usage: { input_tokens: 9, output_tokens: 4 },
-      };
-    };
-    const provider = createProvider(
-      { api: "claude-code" },
-      { claudeCode: { query } },
-    );
-    const events = await collect(
-      provider.stream({
-        model: "sonnet",
-        system: "sys",
-        messages: [],
-        tools: [],
-      }),
-    );
-
-    expect(events).toEqual([
-      { type: "text_delta", text: "Hello" },
-      { type: "thinking_delta", text: "ponder" },
-      { type: "usage", inputTokens: 0, outputTokens: 4 },
-      { type: "usage", inputTokens: 9, outputTokens: 4 },
-      { type: "done", stopReason: "end_turn" },
-    ]);
-  });
-
-  test("does not expose CanaryCode tools to the SDK agent loop", async () => {
-    let sentOptions: Record<string, unknown> = {};
-    const provider = createProvider(
-      { api: "claude-code" },
-      {
-        claudeCode: {
-          query: async function* ({ options }) {
-            sentOptions = options ?? {};
-            yield { type: "result", subtype: "success" };
-          },
-        },
-      },
-    );
-    await collect(
-      provider.stream({
-        model: "sonnet",
-        system: "",
-        messages: [],
-        tools: [{ name: "read_file", description: "read", schema: {} }],
-      }),
-    );
-
-    expect(sentOptions.tools).toEqual([]);
-    expect(sentOptions.permissionMode).toBe("dontAsk");
-  });
 });
 
 describe("openai-responses provider stream", () => {

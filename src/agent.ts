@@ -618,6 +618,20 @@ export async function* runAgent(
   }
 }
 
+/**
+ * Drive one agent session. Dispatches to a provider that owns its own agentic
+ * loop (`Provider.runSession` — e.g. the Claude Code SDK, whose runtime executes
+ * tools and loops itself) or, by default, to the built-in {@link runAgent}
+ * engine. Every front-end calls this instead of `runAgent` directly, so an
+ * SDK-backed provider transparently swaps in its native loop while still
+ * yielding the same {@link AgentEvent} stream the callers already render.
+ */
+export function runSession(opts: AgentOptions): AsyncGenerator<AgentEvent> {
+  return opts.provider.runSession
+    ? opts.provider.runSession(opts)
+    : runAgent(opts);
+}
+
 /** Execute one tool call, enforcing plan-mode read-only gating. Never throws. */
 async function runToolCall(
   toolByName: Map<string, Tool>,

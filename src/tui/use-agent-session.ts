@@ -17,7 +17,7 @@ import {
   type AgentMode,
   compactConversation,
   roleForMode,
-  runAgent,
+  runSession,
 } from "../agent.ts";
 import {
   type AssembledSession,
@@ -572,7 +572,7 @@ export function useAgentSession(deps: {
     };
 
     try {
-      for await (const ev of runAgent({
+      for await (const ev of runSession({
         provider: turnProvider,
         model: turnModel,
         system,

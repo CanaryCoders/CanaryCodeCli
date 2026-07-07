@@ -8,7 +8,7 @@
 // prompt as context (`git diff | canarycode -p "commit message"`). Without a prompt,
 // the interactive TUI starts instead.
 
-import { type AgentMode, roleForMode, runAgent } from "./agent.ts";
+import { type AgentMode, roleForMode, runSession } from "./agent.ts";
 import {
   assembleSession,
   availableCommands,
@@ -510,7 +510,7 @@ async function runHeadless(args: Args): Promise<number> {
   if (hooksNote) process.stderr.write(`${hooksNote}\n`);
 
   try {
-    for await (const ev of runAgent({
+    for await (const ev of runSession({
       provider,
       model: modelName,
       system,

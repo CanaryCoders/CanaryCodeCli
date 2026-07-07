@@ -17,7 +17,7 @@
 
 import type { AgentOptions } from "./agent.ts";
 import type { Config, ProviderConfig } from "./config.ts";
-import type { Provider } from "./provider.ts";
+import type { Provider, ProviderFactory } from "./provider.ts";
 import type { Tool } from "./tools.ts";
 
 /** What an extension command receives from its host (CLI or TUI). */
@@ -56,6 +56,14 @@ export interface Extension {
   defaultEnabled?: boolean;
   /** Provider presets folded into config while this extension is enabled. */
   providerPresets?(): Record<string, ProviderConfig>;
+  /**
+   * Provider factories folded into the harness while this extension is enabled,
+   * keyed by provider `api` tag. Lets a plugin own a provider implementation
+   * (e.g. the Claude Code SDK path) without hardcoding it in the harness: the
+   * registry registers these via `provider.registerProviderFactory`, and
+   * `createProvider` consults them for any api it does not build natively.
+   */
+  providerFactories?(): Record<string, ProviderFactory>;
   /**
    * Startup discovery/gating, mutating `config` in place. Only called while
    * enabled. "fast" favors caches + background refresh (the TUI's first
