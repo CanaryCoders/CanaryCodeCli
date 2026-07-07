@@ -727,7 +727,6 @@ async function* runClaudeSession(
   }
 
   const sdkQuery = await resolveQuery(clientOpts);
-  const abortController = forwardAbort(signal);
 
   // Forward canarycode's own tools (skills, MCP, sub-agents, user tools) into the
   // SDK loop as one in-process MCP server; the SDK's built-ins own the primitives.
@@ -760,117 +759,172 @@ async function* runClaudeSession(
   // left queued as the next turn (a fresh runSession seeded with the updated
   // transcript), so no input is lost.
 
-  // tool_use id → display name, so a later tool_result can name its tool_end.
-  const toolNames = new Map<string, string>();
-  let stopSubtype: string | undefined;
+  // Turn budget — mirror runAgent's cap/checkpoint semantics so a Claude Code
+  // session isn't silently capped where the native loop would run on. Interactive
+  // callers (`checkpointEvery > 0`) run unbounded, pausing every `checkpointEvery`
+  // turns to ask "keep going?"; the SDK owns no checkpoint hook, so we cap each
+  // query at the checkpoint boundary and, on `error_max_turns`, prompt via
+  // `onCheckpoint` and reseed a fresh query from the transcript appended in place.
+  // Non-interactive callers keep the hard `maxTurns` cap. Without this, the SDK's
+  // internal loop would stop at `maxTurns` (default 25) even in interactive mode.
+  const checkpointEvery = agentOpts.checkpointEvery ?? 0;
+  const perQueryCap =
+    checkpointEvery > 0 ? checkpointEvery : agentOpts.maxTurns;
+  let completedCheckpoints = 0;
 
-  const q = sdkQuery({
-    prompt: toSeedPrompt(messages),
-    options: {
-      abortController,
-      canUseTool: makeCanUseTool(agentOpts, forwardedByName),
-      cwd: process.cwd(),
-      includePartialMessages: true,
-      model: agentOpts.model,
-      // Our instructions (the CLAUDE.md-equivalent) layered on the SDK's
-      // tool-competent base prompt; the machine's ~/.claude settings stay out.
-      systemPrompt: {
-        type: "preset",
-        preset: "claude_code",
-        append: agentOpts.system,
+  for (;;) {
+    const abortController = forwardAbort(signal);
+    // tool_use id → display name, so a later tool_result can name its tool_end.
+    const toolNames = new Map<string, string>();
+    let stopSubtype: string | undefined;
+
+    const q = sdkQuery({
+      prompt: toSeedPrompt(messages),
+      options: {
+        abortController,
+        canUseTool: makeCanUseTool(agentOpts, forwardedByName),
+        cwd: process.cwd(),
+        includePartialMessages: true,
+        model: agentOpts.model,
+        // Our instructions (the CLAUDE.md-equivalent) layered on the SDK's
+        // tool-competent base prompt; the machine's ~/.claude settings stay out.
+        systemPrompt: {
+          type: "preset",
+          preset: "claude_code",
+          append: agentOpts.system,
+        },
+        settingSources: [],
+        skills: [],
+        // SDK built-in tools own the primitives (Read/Write/Edit/Bash/Grep/Glob,
+        // WebFetch/WebSearch). canarycode's skills/MCP ride in via mcpServers.
+        tools: { type: "preset", preset: "claude_code" },
+        ...(mcpServers ? { mcpServers } : {}),
+        ...(askUserAlias ? { toolAliases: askUserAlias } : {}),
+        permissionMode: "default",
+        persistSession: false,
+        ...(perQueryCap ? { maxTurns: perQueryCap } : {}),
+        ...(effortForClaudeCode(agentOpts.thinkingBudget)
+          ? { effort: effortForClaudeCode(agentOpts.thinkingBudget) }
+          : {}),
+        env: sdkEnv(),
       },
-      settingSources: [],
-      skills: [],
-      // SDK built-in tools own the primitives (Read/Write/Edit/Bash/Grep/Glob,
-      // WebFetch/WebSearch). canarycode's skills/MCP ride in via mcpServers.
-      tools: { type: "preset", preset: "claude_code" },
-      ...(mcpServers ? { mcpServers } : {}),
-      ...(askUserAlias ? { toolAliases: askUserAlias } : {}),
-      permissionMode: "default",
-      persistSession: false,
-      ...(agentOpts.maxTurns ? { maxTurns: agentOpts.maxTurns } : {}),
-      ...(effortForClaudeCode(agentOpts.thinkingBudget)
-        ? { effort: effortForClaudeCode(agentOpts.thinkingBudget) }
-        : {}),
-      env: sdkEnv(),
-    },
-  });
+    });
 
-  try {
-    for await (const msg of q) {
+    try {
+      for await (const msg of q) {
+        if (signal?.aborted) {
+          yield { type: "done", reason: "aborted" };
+          return;
+        }
+        switch (msg.type) {
+          case "stream_event": {
+            const d = msg.event.delta;
+            if (msg.event.type === "content_block_delta") {
+              if (d?.type === "text_delta")
+                yield { type: "text", text: d.text ?? "" };
+              else if (d?.type === "thinking_delta")
+                yield { type: "thinking", text: d.thinking ?? "" };
+            }
+            break;
+          }
+          case "assistant": {
+            for (const b of msg.message.content) {
+              if (b.type === "tool_use") {
+                const name = displayToolName(b.name);
+                toolNames.set(b.id, name);
+                yield { type: "tool_start", id: b.id, name, input: b.input };
+              }
+            }
+            messages.push({
+              role: "assistant",
+              content: sdkContentToBlocks(msg.message.content),
+            });
+            yield { type: "turn_end" };
+            break;
+          }
+          case "user": {
+            const content =
+              typeof msg.message.content === "string"
+                ? [
+                    {
+                      type: "text",
+                      text: msg.message.content,
+                    } as SdkContentBlock,
+                  ]
+                : msg.message.content;
+            for (const b of content) {
+              if (b.type === "tool_result") {
+                yield {
+                  type: "tool_end",
+                  id: b.tool_use_id,
+                  name: toolNames.get(b.tool_use_id) ?? "tool",
+                  result: toolResultText(b.content),
+                  isError: Boolean(b.is_error),
+                };
+              }
+            }
+            messages.push({
+              role: "user",
+              content: sdkContentToBlocks(content),
+            });
+            break;
+          }
+          case "result": {
+            const usage = msg.total_usage ?? msg.usage;
+            if (usage)
+              yield {
+                type: "usage",
+                inputTokens: usage.input_tokens ?? 0,
+                outputTokens: usage.output_tokens ?? 0,
+              };
+            if (msg.subtype && msg.subtype !== "success")
+              stopSubtype = msg.subtype;
+            break;
+          }
+        }
+      }
+    } catch (err) {
       if (signal?.aborted) {
         yield { type: "done", reason: "aborted" };
         return;
       }
-      switch (msg.type) {
-        case "stream_event": {
-          const d = msg.event.delta;
-          if (msg.event.type === "content_block_delta") {
-            if (d?.type === "text_delta")
-              yield { type: "text", text: d.text ?? "" };
-            else if (d?.type === "thinking_delta")
-              yield { type: "thinking", text: d.thinking ?? "" };
-          }
-          break;
-        }
-        case "assistant": {
-          for (const b of msg.message.content) {
-            if (b.type === "tool_use") {
-              const name = displayToolName(b.name);
-              toolNames.set(b.id, name);
-              yield { type: "tool_start", id: b.id, name, input: b.input };
-            }
-          }
-          messages.push({
-            role: "assistant",
-            content: sdkContentToBlocks(msg.message.content),
-          });
-          yield { type: "turn_end" };
-          break;
-        }
-        case "user": {
-          const content =
-            typeof msg.message.content === "string"
-              ? [{ type: "text", text: msg.message.content } as SdkContentBlock]
-              : msg.message.content;
-          for (const b of content) {
-            if (b.type === "tool_result") {
-              yield {
-                type: "tool_end",
-                id: b.tool_use_id,
-                name: toolNames.get(b.tool_use_id) ?? "tool",
-                result: toolResultText(b.content),
-                isError: Boolean(b.is_error),
-              };
-            }
-          }
-          messages.push({ role: "user", content: sdkContentToBlocks(content) });
-          break;
-        }
-        case "result": {
-          const usage = msg.total_usage ?? msg.usage;
-          if (usage)
-            yield {
-              type: "usage",
-              inputTokens: usage.input_tokens ?? 0,
-              outputTokens: usage.output_tokens ?? 0,
-            };
-          if (msg.subtype && msg.subtype !== "success")
-            stopSubtype = msg.subtype;
-          break;
-        }
-      }
+      throw err;
+    } finally {
+      if ("close" in q && typeof q.close === "function") q.close();
     }
-  } catch (err) {
+
     if (signal?.aborted) {
       yield { type: "done", reason: "aborted" };
       return;
     }
-    throw err;
-  } finally {
-    if ("close" in q && typeof q.close === "function") q.close();
+
+    // Interactive checkpoint: the SDK ran to the checkpoint boundary but wanted to
+    // keep going (`error_max_turns`). Ask the caller whether to continue and, if
+    // so, reseed a fresh query from the transcript we appended in place above.
+    if (stopSubtype === "error_max_turns" && checkpointEvery > 0) {
+      completedCheckpoints++;
+      const turn = completedCheckpoints * checkpointEvery;
+      yield { type: "checkpoint", turn };
+      if (agentOpts.onCheckpoint) {
+        const keepGoing = await agentOpts.onCheckpoint(turn);
+        if (signal?.aborted) {
+          yield { type: "done", reason: "aborted" };
+          return;
+        }
+        if (!keepGoing) {
+          yield { type: "done", reason: "stopped" };
+          return;
+        }
+        continue;
+      }
+      // No checkpoint hook (the non-interactive runaway backstop): hard stop.
+      yield { type: "done", reason: "max_turns" };
+      return;
+    }
+
+    yield doneEvent(stopSubtype, Boolean(signal?.aborted));
+    return;
   }
-  yield doneEvent(stopSubtype, Boolean(signal?.aborted));
 }
 
 /** Factory registered through the extension provider-factory seam. */

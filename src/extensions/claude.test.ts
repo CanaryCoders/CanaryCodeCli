@@ -324,6 +324,99 @@ describe("runSession native loop", () => {
     );
     expect(gateCalls).toBe(0);
   });
+
+  test("interactive checkpoint: caps each query at checkpointEvery, not maxTurns", async () => {
+    let seenMaxTurns: number | undefined;
+    const query: ClaudeCodeOptions["query"] = async function* ({ options }) {
+      seenMaxTurns = options?.maxTurns as number | undefined;
+      yield { type: "result", subtype: "success" };
+    };
+    const messages: Message[] = [
+      { role: "user", content: [{ type: "text", text: "hi" }] },
+    ];
+    const provider = claudeCodeProvider({ query });
+    await collectAgent(
+      provider.runSession!(
+        agentOpts({ messages, maxTurns: 25, checkpointEvery: 50 }),
+      ),
+    );
+    // The SDK query is capped at the checkpoint boundary (50), not the 25-turn
+    // hard cap — so an interactive Claude Code session isn't killed at 25 turns.
+    expect(seenMaxTurns).toBe(50);
+  });
+
+  test("interactive checkpoint: error_max_turns prompts onCheckpoint and reseeds", async () => {
+    let calls = 0;
+    // First query hits the checkpoint boundary; a fresh (reseeded) query then
+    // finishes cleanly. Mirrors the SDK reporting error_max_turns then success.
+    const query: ClaudeCodeOptions["query"] = async function* () {
+      calls++;
+      if (calls === 1) {
+        yield { type: "result", subtype: "error_max_turns" };
+      } else {
+        yield { type: "result", subtype: "success" };
+      }
+    };
+    const checkpointTurns: number[] = [];
+    const messages: Message[] = [
+      { role: "user", content: [{ type: "text", text: "keep working" }] },
+    ];
+    const provider = claudeCodeProvider({ query });
+    const events = await collectAgent(
+      provider.runSession!(
+        agentOpts({
+          messages,
+          maxTurns: 25,
+          checkpointEvery: 50,
+          onCheckpoint: async (turn) => {
+            checkpointTurns.push(turn);
+            return true; // keep going
+          },
+        }),
+      ),
+    );
+    expect(calls).toBe(2); // reseeded a fresh query after the checkpoint
+    expect(checkpointTurns).toEqual([50]);
+    expect(events).toContainEqual({ type: "checkpoint", turn: 50 });
+    expect(events.at(-1)).toEqual({ type: "done", reason: "stop" });
+  });
+
+  test("interactive checkpoint: declining onCheckpoint stops the session", async () => {
+    const query: ClaudeCodeOptions["query"] = async function* () {
+      yield { type: "result", subtype: "error_max_turns" };
+    };
+    const messages: Message[] = [
+      { role: "user", content: [{ type: "text", text: "keep working" }] },
+    ];
+    const provider = claudeCodeProvider({ query });
+    const events = await collectAgent(
+      provider.runSession!(
+        agentOpts({
+          messages,
+          checkpointEvery: 50,
+          onCheckpoint: async () => false, // decline
+        }),
+      ),
+    );
+    expect(events.at(-1)).toEqual({ type: "done", reason: "stopped" });
+  });
+
+  test("non-interactive: maxTurns is the hard cap and error_max_turns ends the run", async () => {
+    let seenMaxTurns: number | undefined;
+    const query: ClaudeCodeOptions["query"] = async function* ({ options }) {
+      seenMaxTurns = options?.maxTurns as number | undefined;
+      yield { type: "result", subtype: "error_max_turns" };
+    };
+    const messages: Message[] = [
+      { role: "user", content: [{ type: "text", text: "do it" }] },
+    ];
+    const provider = claudeCodeProvider({ query });
+    const events = await collectAgent(
+      provider.runSession!(agentOpts({ messages, maxTurns: 25 })),
+    );
+    expect(seenMaxTurns).toBe(25);
+    expect(events.at(-1)).toEqual({ type: "done", reason: "max_turns" });
+  });
 });
 
 type CanUseToolFake = (
