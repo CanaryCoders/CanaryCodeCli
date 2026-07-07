@@ -10,7 +10,12 @@ import {
   extractCodeBlocks,
   extractMarkdownTables,
   groupCopyText,
+  isSshSession,
+  OSC52_MAX_TEXT_BYTES,
+  osc52ClipboardSequence,
   resolveItemCopyTarget,
+  writeOsc52Clipboard,
+  writeTextToClipboard,
 } from "./copy-targets.ts";
 import type { Item } from "./Message.tsx";
 
@@ -116,5 +121,59 @@ describe("resolveItemCopyTarget", () => {
 
   test("returns null for a command chip on a non-tool item", () => {
     expect(resolveItemCopyTarget(assistant, "command")).toBeNull();
+  });
+});
+
+describe("OSC 52 clipboard", () => {
+  test("detects SSH sessions from standard environment variables", () => {
+    expect(isSshSession({ SSH_CONNECTION: "1 2 3 4" })).toBe(true);
+    expect(isSshSession({ SSH_CLIENT: "1 2 3" })).toBe(true);
+    expect(isSshSession({ SSH_TTY: "/dev/pts/1" })).toBe(true);
+    expect(isSshSession({})).toBe(false);
+  });
+
+  test("builds a base64 OSC 52 clipboard sequence", () => {
+    expect(osc52ClipboardSequence("hello", {})).toBe("\x1b]52;c;aGVsbG8=\x07");
+  });
+
+  test("wraps OSC 52 for tmux passthrough", () => {
+    expect(osc52ClipboardSequence("hello", { TMUX: "/tmp/tmux" })).toBe(
+      "\x1bPtmux;\x1b\x1b]52;c;aGVsbG8=\x07\x1b\\",
+    );
+  });
+
+  test("rejects oversized OSC 52 payloads", () => {
+    expect(
+      osc52ClipboardSequence("x".repeat(OSC52_MAX_TEXT_BYTES + 1), {}),
+    ).toBe(null);
+  });
+
+  test("writes OSC 52 only to a TTY", () => {
+    const chunks: string[] = [];
+    const writer = {
+      isTTY: true,
+      write: (chunk: string) => chunks.push(chunk),
+    };
+    expect(writeOsc52Clipboard("hi", {}, writer)).toBe(true);
+    expect(chunks).toEqual(["\x1b]52;c;aGk=\x07"]);
+    expect(
+      writeOsc52Clipboard("hi", {}, { isTTY: false, write: () => {} }),
+    ).toBe(false);
+  });
+
+  test("prefers OSC 52 over remote native clipboard tools in SSH", async () => {
+    const chunks: string[] = [];
+    const writer = {
+      isTTY: true,
+      write: (chunk: string) => chunks.push(chunk),
+    };
+    const result = await writeTextToClipboard(
+      "remote copy",
+      "darwin",
+      { SSH_CONNECTION: "1 2 3 4" },
+      writer,
+    );
+    expect(result).toEqual({ ok: true });
+    expect(chunks).toEqual(["\x1b]52;c;cmVtb3RlIGNvcHk=\x07"]);
   });
 });

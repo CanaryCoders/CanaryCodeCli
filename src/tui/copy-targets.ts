@@ -26,6 +26,46 @@ export interface CopyTarget {
 
 const FENCE = /^\s*(```|~~~)\s*(.*?)\s*$/;
 
+/** Conservative OSC 52 payload cap. Terminals vary, and oversized control
+ * sequences can be dropped silently or make redraws sluggish. */
+export const OSC52_MAX_TEXT_BYTES = 100_000;
+
+type ClipboardEnv = Record<string, string | undefined>;
+
+interface ClipboardWriter {
+  isTTY?: boolean;
+  write(chunk: string): unknown;
+}
+
+export function isSshSession(env: ClipboardEnv = process.env): boolean {
+  return Boolean(env.SSH_CONNECTION || env.SSH_CLIENT || env.SSH_TTY);
+}
+
+export function osc52ClipboardSequence(
+  text: string,
+  env: ClipboardEnv = process.env,
+): string | null {
+  const bytes = Buffer.from(text, "utf8");
+  if (bytes.length > OSC52_MAX_TEXT_BYTES) return null;
+  const payload = bytes.toString("base64");
+  const sequence = `\x1b]52;c;${payload}\x07`;
+  // tmux needs the OSC sequence wrapped in a DCS passthrough. The doubled ESC
+  // before ]52 is tmux's escape for a literal ESC in the inner sequence.
+  return env.TMUX ? `\x1bPtmux;\x1b${sequence}\x1b\\` : sequence;
+}
+
+export function writeOsc52Clipboard(
+  text: string,
+  env: ClipboardEnv = process.env,
+  writer: ClipboardWriter = process.stdout,
+): boolean {
+  if (!writer.isTTY) return false;
+  const sequence = osc52ClipboardSequence(text, env);
+  if (!sequence) return false;
+  writer.write(sequence);
+  return true;
+}
+
 export function copyTargetForItem(item: Item): CopyTarget | null {
   if (item.kind === "user") {
     return { kind: "message", label: "user message", text: item.text };
@@ -190,8 +230,17 @@ export function lastAssistantCopyTarget(items: Item[]): CopyTarget | null {
 export async function writeTextToClipboard(
   text: string,
   platform: NodeJS.Platform = process.platform,
+  env: ClipboardEnv = process.env,
+  writer: ClipboardWriter = process.stdout,
 ): Promise<{ ok: true } | { ok: false; path: string }> {
   if (text.length === 0) return { ok: true };
+
+  // Over SSH, native clipboard tools copy on the remote machine. OSC 52 asks the
+  // user's local terminal to set its clipboard instead, which is what users expect.
+  if (isSshSession(env) && writeOsc52Clipboard(text, env, writer)) {
+    return { ok: true };
+  }
+
   const command =
     platform === "darwin"
       ? ["pbcopy"]
@@ -212,8 +261,11 @@ export async function writeTextToClipboard(
     await proc.stdin.end();
     if ((await proc.exited) === 0) return { ok: true };
   } catch {
-    // Fall through to temp-file fallback.
+    // Fall through to OSC 52 / temp-file fallback.
   }
+
+  if (writeOsc52Clipboard(text, env, writer)) return { ok: true };
+
   const dir = await mkdtemp(join(tmpdir(), "canarycode-copy-"));
   const path = join(dir, "copied.txt");
   await writeFile(path, text, "utf8");

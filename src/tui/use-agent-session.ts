@@ -85,6 +85,7 @@ import { VERSION } from "../version.ts";
 import type { AppProps } from "./app-types.ts";
 import {
   copyTargetToClipboard,
+  isSshSession,
   lastAssistantCopyTarget,
 } from "./copy-targets.ts";
 import type { ExtensionToggle } from "./Extensions.tsx";
@@ -1045,7 +1046,11 @@ export function useAgentSession(deps: {
     try {
       const img = await readClipboardImage();
       if (!img) {
-        note("no image in clipboard");
+        note(
+          isSshSession()
+            ? "no image in remote clipboard — over SSH, attach an image file path instead"
+            : "no image in clipboard",
+        );
         return;
       }
       pendingImagesRef.current.push(img);

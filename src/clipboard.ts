@@ -2,9 +2,11 @@
 //
 // A terminal only delivers *text* over stdin on paste, so a copied image never
 // reaches the TUI as bytes. To support pasting a screenshot we go out-of-band and
-// ask the OS clipboard directly. macOS ships AppleScript (`osascript`), so we cast
-// the clipboard to PNG and write it to a temp file — no extra dependency. Other
-// platforms return null for now (callers fall back to file-path attachment).
+// ask the OS clipboard directly. Under SSH this means the *remote* OS clipboard,
+// not the local terminal's clipboard; there is no portable OSC 52 equivalent for
+// reading local clipboard images. macOS ships AppleScript (`osascript`), so we
+// cast the clipboard to PNG and write it to a temp file — no extra dependency.
+// Other platforms return null for now (callers fall back to file-path attachment).
 
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
