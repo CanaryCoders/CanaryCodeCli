@@ -160,7 +160,7 @@ Each line is a JSON `AgentEvent`: `text`, `thinking`, `tool_start {id,name,input
 - Thinking modes. They map to Anthropic extended-thinking budgets: `off`, `think` at 4k, `think-hard` at 10k, `ultrathink` at 32k. Non-Anthropic providers degrade gracefully. Setting a level with `/think` writes it to `~/.canarycode/config.json` under the `thinking` key, so it becomes the default on the next launch. `--think` overrides it for one run without changing the saved default.
 - Web search. A read-only `web_search` tool works with no key by default through a free DuckDuckGo backend. You can configure Brave or Tavily backends under `webSearch`.
 - Sub-agents. A `spawn_agent` tool delegates focused work to a child agent with its own fresh context, bounded by `maxConcurrent` and `maxDepth`.
-- Claude Code subscription models. Use Anthropic models through the official Claude Code Agent SDK and your existing Claude Code login; run `claude login`, then pick the baked-in `opus`, `sonnet`, or `haiku` models.
+- Claude Code subscription models. Run Anthropic models on your Claude Code Pro/Max/org subscription through the official Claude Code Agent SDK — no API key. Run `claude login`, then pick `claude:opus`, `claude:sonnet`, `claude:haiku`, or `claude:fable`. The SDK drives its own agent loop with full tool execution; your skills, MCP, and project instructions are forwarded in, and even if `ANTHROPIC_API_KEY` is set this path uses the subscription, not the API. See [Claude Code](#claude-code) under Configuration.
 - OpenCode Zen. Use [opencode](https://opencode.ai)'s model gateway inside canarycode: sign in once with `opencode auth login` (or set `OPENCODE_API_KEY`) and `/login-opencode` makes the whole Zen catalog (Claude, GPT, Qwen, Kimi, GLM, the free stealth models, …) available to `/model`.
 - Extension toggles. `/extensions` lists every toggleable feature — `canaryllm`, `claude-code`, `codex`, `opencode`, `websearch`, `skills`, `agents`, `mcp`, `hooks` — and `/extensions enable|disable <name>` flips one, persisted to `~/.canarycode/config.json` under `extensions.<name>`. A disabled extension contributes nothing: no tools, no prompt text, no startup work.
 - Custom agents. You define personas as files in `~/.canarycode/agents/` and `./.canarycode/agents/`. Frontmatter sets `name`, `description`, an optional `model`, and an optional `tools` allowlist. The body is the system prompt. Each name and description loads into the prompt. `spawn_agent` dispatches to one by `agent` name and applies its persona, model, and tool restrictions.
@@ -283,14 +283,23 @@ The preset is an `openai-compat` provider pinned to `https://canaryllm.canarycod
 
 ### Claude Code
 
-`canarycode` ships a baked-in `claude` provider backed by the official `@anthropic-ai/claude-agent-sdk`, so Claude Code Pro/Max or org users can reuse their Claude Code subscription path without an Anthropic API key:
+`canarycode` ships a baked-in `claude` provider backed by the official `@anthropic-ai/claude-agent-sdk`, so Claude Code Pro/Max or org users can run Anthropic models on their **Claude Code subscription** — no Anthropic API key required:
 
 ```bash
 claude login
-canarycode --model sonnet -p "say hi"
+canarycode --model claude:sonnet -p "say hi"
 ```
 
-The preset exposes `opus`, `sonnet`, and `haiku` and reads authentication from Claude Code itself. The SDK is used only as a streaming model transport for now: CanaryCode does not expose its local tools to Claude Code's nested agent loop yet, so this path is best for chat, review, and other text/image turns. Use a direct Anthropic API provider when you need full CanaryCode tool execution until a permission-preserving SDK tool bridge lands.
+The preset exposes `opus`, `sonnet`, `haiku`, and `fable`, and authenticates through Claude Code itself (the `claude login` credentials under `~/.claude`).
+
+**Subscription, not API billing.** The `claude` provider always uses your subscription. Even if `ANTHROPIC_API_KEY` is set in your environment (for the separate `anthropic` provider), it is stripped from the SDK's environment so this path never silently bills the API. The two are deliberately distinct billing routes — qualify the model with a provider prefix to pick one explicitly when a name is otherwise ambiguous:
+
+- `claude:opus` — Anthropic model on your Claude Code **subscription**
+- `anthropic:opus` — the same model family on your **API key** (`ANTHROPIC_API_KEY`)
+
+**Full tool execution.** This provider hands the whole agent loop to the SDK rather than using it as a plain model transport. The SDK's native tools (`Read`/`Write`/`Edit`/`Bash`/`Grep`/`Glob` and its built-in web search) do the file, shell, and search work, while canarycode keeps ownership of **skills, MCP servers, and your project instructions** (`CANARYCODE.md`/`AGENTS.md`/`CLAUDE.md`) — these are forwarded into the loop so the model uses them alongside the SDK's tools. Your permission gates, plan mode, and `PreToolUse`/`PostToolUse` hooks still apply, routed through the SDK's permission callback.
+
+Because the SDK owns the loop, a few behaviors differ from the other providers: earlier conversation turns are replayed to the SDK as text rather than a native session, queued input runs as the next turn rather than being injected mid-turn, and context compaction plus the interactive "keep going?" checkpoint are handled by the SDK within a turn (bounded by `autoMaxTurns`) rather than by canarycode.
 
 ### Web search
 
