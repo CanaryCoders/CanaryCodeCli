@@ -8,6 +8,30 @@ what's-new banner.
 Format: [Keep a Changelog](https://keepachangelog.com) headings
 (`## <version> - <date>`), newest first.
 
+## 0.2.0 - 2026-07-07
+
+### Added
+
+- **Claude Code provider.** `canarycode` can now drive Anthropic's Claude Code
+  through the Claude Agent SDK, so a Claude subscription (not just a raw API
+  key) can power the agent loop. Select it like any other provider; see the
+  README's provider section for setup.
+- **Provider-factory seam.** Providers are now constructed through a single
+  factory, making it straightforward to add new backends (Claude Code is the
+  first to use it) without touching the core loop.
+- **Provider-qualified model IDs.** Model identifiers can be qualified by
+  provider (e.g. `anthropic/…`); the selected model is resolved and persisted
+  so it survives across sessions.
+- **Ctrl+G opens your `$EDITOR`.** A new external-editor action drops the
+  current prompt into your configured editor and reads it back on save, with a
+  matching footer chip advertising the shortcut.
+
+### Fixed
+
+- **Clipboard copy now works over SSH.** Copy actions fall back to an OSC 52
+  escape sequence, so copying from a remote `canarycode` session lands text on
+  your local clipboard.
+
 ## 0.1.2 - 2026-07-06
 
 ### Fixed
