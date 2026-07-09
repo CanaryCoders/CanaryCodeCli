@@ -8,6 +8,29 @@ what's-new banner.
 Format: [Keep a Changelog](https://keepachangelog.com) headings
 (`## <version> - <date>`), newest first.
 
+## 0.3.0 - 2026-07-09
+
+### Added
+
+- **Interactive checkpointing.** Claude Code sessions can now be checkpointed
+  and reseeded, letting you roll a conversation back to an earlier point and
+  continue from there.
+- **`AskUserQuestion` alias.** The Claude Code loop recognizes the SDK's
+  `AskUserQuestion` tool, and the TUI now requires a double `Esc` to dismiss a
+  prompt so a question is never closed by accident.
+- **File-edit previews for SDK tools.** `Write`/`Edit`/`MultiEdit` executed by
+  the Claude Agent SDK now produce a unified diff — reconstructed by snapshotting
+  the file before the write and diffing against disk — so the front-ends can
+  preview those changes just like canarycode's own edit tools.
+
+### Fixed
+
+- **Native CLI binary resolution under compiled installs.** The Claude Agent
+  SDK's native `claude` binary is now resolved from canarycode's own module
+  graph and passed explicitly, fixing "Native CLI binary for
+  &lt;platform&gt;-&lt;arch&gt; not found" when running as a compiled/standalone
+  binary or after an `--omit=optional` install.
+
 ## 0.2.0 - 2026-07-07
 
 ### Added

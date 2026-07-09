@@ -1,6 +1,6 @@
 {
   "name": "canarycode",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A fast, minimal terminal coding agent (Bun + OpenTUI)",
   "license": "PolyForm-Noncommercial-1.0.0",
   "type": "module",
