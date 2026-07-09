@@ -18,6 +18,8 @@ import {
   type ClaudeCodeOptions,
   claudeCodeExtension,
   claudeCodeProvider,
+  editDiff,
+  editFilePath,
   jsonSchemaToZodShape,
   partitionTools,
 } from "./claude.ts";
@@ -687,5 +689,43 @@ describe("provider-factory seam", () => {
     expect(() => createProvider({ api: "claude-code" as never })).toThrow(
       /unknown provider api/,
     );
+  });
+});
+
+describe("edit diff reconstruction for SDK file tools", () => {
+  test("editFilePath extracts the path only for file-editing tools", () => {
+    expect(editFilePath("Write", { file_path: "/a.ts", content: "x" })).toBe(
+      "/a.ts",
+    );
+    expect(editFilePath("Edit", { file_path: "/b.ts" })).toBe("/b.ts");
+    expect(editFilePath("MultiEdit", { file_path: "/c.ts" })).toBe("/c.ts");
+    // Not an editing tool → no snapshot/diff.
+    expect(editFilePath("Read", { file_path: "/a.ts" })).toBeUndefined();
+    // Editing tool but no usable path.
+    expect(editFilePath("Write", { content: "x" })).toBeUndefined();
+    expect(editFilePath("Write", { file_path: "" })).toBeUndefined();
+  });
+
+  test("editDiff diffs the pre-write snapshot against the file on disk", async () => {
+    const path = `${process.env.TMPDIR ?? "/tmp"}/canary-editdiff-${process.pid}.txt`;
+    await Bun.write(path, "line1\nline2\nline3\n");
+    const pre = new Map<string, string>([[path, "line1\nOLD\nline3\n"]]);
+
+    const diff = await editDiff("Edit", { file_path: path }, pre);
+    expect(diff).toBeDefined();
+    expect(diff?.added).toBe(1);
+    expect(diff?.removed).toBe(1);
+    // Snapshot is consumed so a later tool_end can't reuse a stale one.
+    expect(pre.has(path)).toBe(false);
+    await Bun.file(path).delete();
+  });
+
+  test("editDiff returns undefined for a no-op write and for non-editing tools", async () => {
+    const path = `${process.env.TMPDIR ?? "/tmp"}/canary-editdiff-noop-${process.pid}.txt`;
+    await Bun.write(path, "same\n");
+    const pre = new Map<string, string>([[path, "same\n"]]);
+    expect(await editDiff("Write", { file_path: path }, pre)).toBeUndefined();
+    expect(await editDiff("Read", { file_path: path }, pre)).toBeUndefined();
+    await Bun.file(path).delete();
   });
 });

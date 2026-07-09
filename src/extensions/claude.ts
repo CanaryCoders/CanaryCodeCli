@@ -14,9 +14,12 @@
 // summarization), where a one-shot query is exactly right.
 
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
 import { z } from "zod";
 import type { AgentEvent, AgentOptions } from "../agent.ts";
 import type { ProviderConfig } from "../config.ts";
+import { computeDiff, type Diff } from "../diff.ts";
 import type { Extension } from "../extension.ts";
 import {
   type AnthropicBlock,
@@ -246,6 +249,50 @@ function forwardAbort(signal: AbortSignal | undefined): AbortController {
  * set for the separate `anthropic` provider would silently bill the API here
  * instead of using their Pro/Max/org subscription.
  */
+/**
+ * Resolve the SDK's native `claude` binary from canarycode's own module graph and
+ * hand it to `query()` via `pathToClaudeCodeExecutable`.
+ *
+ * The SDK otherwise resolves this optional, platform-specific dependency relative
+ * to its own bundled `sdk.mjs`. That lookup fails — with "Native CLI binary for
+ * <platform>-<arch> not found" — when canarycode runs as a compiled/standalone
+ * binary, from an install tree where the SDK's `import.meta.url` doesn't sit above
+ * the platform package, or after an `--omit=optional` install. Resolving from our
+ * side is more robust, and passing the path explicitly is exactly the escape hatch
+ * the SDK's own error names. Returns undefined when nothing resolves, so the SDK
+ * falls back to (and reports) its own resolution.
+ */
+let cachedClaudeExecutable: string | null | undefined;
+function claudeExecutableOption(): { pathToClaudeCodeExecutable?: string } {
+  if (cachedClaudeExecutable === undefined) {
+    cachedClaudeExecutable = null;
+    const base = "@anthropic-ai/claude-agent-sdk";
+    const { platform, arch } = process;
+    const suffix = platform === "win32" ? ".exe" : "";
+    const pkgs =
+      platform === "win32"
+        ? [`${base}-win32-${arch}`]
+        : platform === "linux"
+          ? [`${base}-linux-${arch}`, `${base}-linux-${arch}-musl`]
+          : [`${base}-${platform}-${arch}`];
+    const req = createRequire(import.meta.url);
+    for (const pkg of pkgs) {
+      try {
+        const p = req.resolve(`${pkg}/claude${suffix}`);
+        if (existsSync(p)) {
+          cachedClaudeExecutable = p;
+          break;
+        }
+      } catch {
+        // Not installed for this platform; try the next candidate.
+      }
+    }
+  }
+  return cachedClaudeExecutable
+    ? { pathToClaudeCodeExecutable: cachedClaudeExecutable }
+    : {};
+}
+
 function sdkEnv(): Record<string, string | undefined> {
   const {
     ANTHROPIC_API_KEY: _apiKey,
@@ -285,6 +332,7 @@ export function claudeCodeProvider(opts: ClaudeCodeOptions = {}): Provider {
           ...(effortForClaudeCode(req.thinkingBudget)
             ? { effort: effortForClaudeCode(req.thinkingBudget) }
             : {}),
+          ...claudeExecutableOption(),
           env: sdkEnv(),
         },
       });
@@ -401,6 +449,55 @@ const READ_ONLY_SDK_TOOLS = new Set([
   "NotebookRead",
   "TodoWrite",
 ]);
+
+/**
+ * SDK built-in tools that mutate a single file at `input.file_path`. The SDK owns
+ * their execution, so — unlike canarycode's own write_file/edit_file — no diff
+ * rides out with the tool_result. We reconstruct one: snapshot the file before the
+ * write (in the permission callback, which fires pre-execution) and diff it against
+ * the on-disk result at tool_end, so the front-ends can preview the change.
+ */
+const FILE_EDIT_SDK_TOOLS = new Set(["Write", "Edit", "MultiEdit"]);
+
+/** The `file_path` a file-editing SDK tool targets, or undefined if not one. */
+export function editFilePath(
+  toolName: string,
+  input: Record<string, unknown>,
+): string | undefined {
+  if (!FILE_EDIT_SDK_TOOLS.has(displayToolName(toolName))) return undefined;
+  const fp = input.file_path;
+  return typeof fp === "string" && fp.length > 0 ? fp : undefined;
+}
+
+/** Read a file's text, treating a missing/unreadable path as empty (new file). */
+async function readFileOrEmpty(path: string): Promise<string> {
+  try {
+    const file = Bun.file(path);
+    return (await file.exists()) ? await file.text() : "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Build the unified diff for a completed file-editing SDK tool: diff the snapshot
+ * captured before the write against the file now on disk. Returns undefined for
+ * non-editing tools or a no-op change (nothing for the front-ends to preview).
+ */
+export async function editDiff(
+  toolName: string,
+  input: Record<string, unknown> | undefined,
+  preEditContent: Map<string, string>,
+): Promise<Diff | undefined> {
+  if (!input) return undefined;
+  const path = editFilePath(toolName, input);
+  if (!path) return undefined;
+  const before = preEditContent.get(path) ?? "";
+  preEditContent.delete(path);
+  const after = await readFileOrEmpty(path);
+  const diff = computeDiff(before, after);
+  return diff.hunks.length > 0 ? diff : undefined;
+}
 
 /**
  * canarycode's own tools that the SDK's built-ins already cover, so they are NOT
@@ -570,6 +667,7 @@ type CanUseToolFn = (
 function makeCanUseTool(
   opts: AgentOptions,
   forwardedByName: Map<string, Tool>,
+  onEditSnapshot?: (path: string) => Promise<void>,
 ): CanUseToolFn {
   return async (toolName, input) => {
     const readOnly = isReadOnlyTool(toolName, forwardedByName);
@@ -595,6 +693,12 @@ function makeCanUseTool(
           behavior: "deny",
           message: g.reason ?? `user declined to run ${call.name}`,
         };
+    }
+    // About to execute: snapshot the pre-write contents of a file-editing tool so
+    // tool_end can diff against the result. Best-effort — never blocks the call.
+    if (onEditSnapshot) {
+      const fp = editFilePath(toolName, input);
+      if (fp) await onEditSnapshot(fp);
     }
     // The SDK's allow result requires `updatedInput`; echo the input unchanged.
     return { behavior: "allow", updatedInput: input };
@@ -776,13 +880,19 @@ async function* runClaudeSession(
     const abortController = forwardAbort(signal);
     // tool_use id → display name, so a later tool_result can name its tool_end.
     const toolNames = new Map<string, string>();
+    // tool_use id → raw input, so tool_end can find a file-editing tool's path.
+    const toolInputs = new Map<string, Record<string, unknown>>();
+    // file_path → pre-write contents, captured in canUseTool, diffed at tool_end.
+    const preEditContent = new Map<string, string>();
     let stopSubtype: string | undefined;
 
     const q = sdkQuery({
       prompt: toSeedPrompt(messages),
       options: {
         abortController,
-        canUseTool: makeCanUseTool(agentOpts, forwardedByName),
+        canUseTool: makeCanUseTool(agentOpts, forwardedByName, async (path) => {
+          preEditContent.set(path, await readFileOrEmpty(path));
+        }),
         cwd: process.cwd(),
         includePartialMessages: true,
         model: agentOpts.model,
@@ -806,6 +916,7 @@ async function* runClaudeSession(
         ...(effortForClaudeCode(agentOpts.thinkingBudget)
           ? { effort: effortForClaudeCode(agentOpts.thinkingBudget) }
           : {}),
+        ...claudeExecutableOption(),
         env: sdkEnv(),
       },
     });
@@ -832,6 +943,7 @@ async function* runClaudeSession(
               if (b.type === "tool_use") {
                 const name = displayToolName(b.name);
                 toolNames.set(b.id, name);
+                toolInputs.set(b.id, b.input as Record<string, unknown>);
                 yield { type: "tool_start", id: b.id, name, input: b.input };
               }
             }
@@ -854,12 +966,20 @@ async function* runClaudeSession(
                 : msg.message.content;
             for (const b of content) {
               if (b.type === "tool_result") {
+                const name = toolNames.get(b.tool_use_id) ?? "tool";
                 yield {
                   type: "tool_end",
                   id: b.tool_use_id,
-                  name: toolNames.get(b.tool_use_id) ?? "tool",
+                  name,
                   result: toolResultText(b.content),
                   isError: Boolean(b.is_error),
+                  diff: b.is_error
+                    ? undefined
+                    : await editDiff(
+                        name,
+                        toolInputs.get(b.tool_use_id),
+                        preEditContent,
+                      ),
                 };
               }
             }
