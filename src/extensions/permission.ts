@@ -20,14 +20,14 @@ import type { Message, Provider } from "../provider.ts";
 import { createProvider } from "../provider.ts";
 
 /** The tools the engine ever gates (mutating). Scope narrows this set. */
-const WRITE_TOOLS = new Set(["bash", "write_file", "edit_file"]);
+const WRITE_TOOLS = new Set(["bash", "bash_kill", "write_file", "edit_file"]);
 
 /** Does the permission scope cover `toolName`? */
 export function inPermissionScope(
   scope: PermissionConfig["scope"],
   toolName: string,
 ): boolean {
-  if (scope === "bash") return toolName === "bash";
+  if (scope === "bash") return toolName === "bash" || toolName === "bash_kill";
   // "writes" (the default) covers every mutating tool.
   return WRITE_TOOLS.has(toolName);
 }

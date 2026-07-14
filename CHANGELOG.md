@@ -8,6 +8,16 @@ what's-new banner.
 Format: [Keep a Changelog](https://keepachangelog.com) headings
 (`## <version> - <date>`), newest first.
 
+## 0.3.1 - 2026-07-14
+
+### Added
+
+- **Background shells.** The `bash` tool can now start long-lived commands such
+  as dev servers with `run_in_background: true`. Background processes stay alive
+  across agent turns, retain combined stdout/stderr and exit status for polling
+  through `bash_output`, and can be stopped with `bash_kill`. Any remaining
+  process group is terminated when the session closes.
+
 ## 0.3.0 - 2026-07-09
 
 ### Added

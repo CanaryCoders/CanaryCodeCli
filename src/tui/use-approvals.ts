@@ -150,8 +150,9 @@ export function useApprovals(opts: { config: Config }): Approvals {
     if (setting === "off") return { allow: true };
     const gated =
       setting === "bash"
-        ? call.name === "bash"
+        ? call.name === "bash" || call.name === "bash_kill"
         : call.name === "bash" ||
+          call.name === "bash_kill" ||
           call.name === "write_file" ||
           call.name === "edit_file";
     if (!gated) return { allow: true };

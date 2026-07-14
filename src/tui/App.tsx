@@ -289,7 +289,8 @@ function App(props: AppProps): React.ReactNode {
     // other key is left to AskUserView (we bow out so mode-cycle/verbose don't fire).
     if (approvals.pendingAskRef.current) {
       if (key.escape || isRawEscapeInput(_input)) {
-        if (askDismissTimerRef.current) clearTimeout(askDismissTimerRef.current);
+        if (askDismissTimerRef.current)
+          clearTimeout(askDismissTimerRef.current);
         if (askDismissArmedRef.current) {
           askDismissArmedRef.current = false;
           approvals.resolveAsk(null);
@@ -306,7 +307,8 @@ function App(props: AppProps): React.ReactNode {
       // half-pressed dismiss so a stray Esc can't linger and combine with a later one.
       if (askDismissArmedRef.current) {
         askDismissArmedRef.current = false;
-        if (askDismissTimerRef.current) clearTimeout(askDismissTimerRef.current);
+        if (askDismissTimerRef.current)
+          clearTimeout(askDismissTimerRef.current);
       }
       return;
     }

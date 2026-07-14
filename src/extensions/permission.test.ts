@@ -7,7 +7,13 @@ import {
   buildPermissionGate,
   checkCommandSafety,
   composeGates,
+  inPermissionScope,
 } from "./permission.ts";
+
+test("bash_kill is covered by bash and writes permission scopes", () => {
+  expect(inPermissionScope("bash", "bash_kill")).toBe(true);
+  expect(inPermissionScope("writes", "bash_kill")).toBe(true);
+});
 
 /** A provider whose stream throws immediately (network down). */
 const throwingProvider = {
