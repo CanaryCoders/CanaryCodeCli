@@ -510,6 +510,8 @@ const SDK_COVERED_TOOLS = new Set([
   "edit_file",
   "list_dir",
   "bash",
+  "bash_output",
+  "bash_kill",
   "grep",
   "web_fetch",
   "web_search",

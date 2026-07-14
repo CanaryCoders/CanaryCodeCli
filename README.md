@@ -174,10 +174,11 @@ Each line is a JSON `AgentEvent`: `text`, `thinking`, `tool_start {id,name,input
 - Diff preview. Every `write_file` and `edit_file` shows a unified diff of the change. It colorizes on a TTY. The TUI collapses it to a `+N -M` summary you can expand.
 - Markdown rendering. Assistant text renders as styled terminal output with bold, headings, lists, and code fences. Under a pipe, `--json`, or `NO_COLOR` it stays raw.
 - Command visibility. The exact `bash` command and every tool call shows before it runs, with no truncation.
+- Background shells. `bash` can start long-lived commands with `run_in_background: true`. They stay alive across agent turns, retain combined stdout/stderr, expose incremental logs and exit status through `bash_output`, and can be stopped with `bash_kill`. Remaining processes are terminated when the session closes.
 
 ## Tools
 
-`read_file`, `write_file`, `edit_file`, `list_dir`, `bash`, `grep`, `web_search`, `spawn_agent`, `read_skill`, `update_tasks`, `ask_user`, plus any MCP tools. Each tool carries a `readOnly` flag. Plan mode filters on it.
+`read_file`, `write_file`, `edit_file`, `list_dir`, `bash`, `bash_output`, `bash_kill`, `grep`, `web_search`, `spawn_agent`, `read_skill`, `update_tasks`, `ask_user`, plus any MCP tools. Each tool carries a `readOnly` flag. Plan mode filters on it.
 
 ## Configuration
 

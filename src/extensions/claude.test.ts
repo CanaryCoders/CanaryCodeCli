@@ -432,6 +432,8 @@ describe("tool forwarding", () => {
     const { forward, covered } = partitionTools([
       mkTool("read_file"),
       mkTool("bash"),
+      mkTool("bash_output", { readOnly: true }),
+      mkTool("bash_kill"),
       mkTool("web_search"),
       mkTool("read_skill", { readOnly: true }),
       mkTool("spawn_agent"),
@@ -440,6 +442,8 @@ describe("tool forwarding", () => {
     expect(covered.map((t) => t.name)).toEqual([
       "read_file",
       "bash",
+      "bash_output",
+      "bash_kill",
       "web_search",
     ]);
     expect(forward.map((t) => t.name)).toEqual([

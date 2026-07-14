@@ -4,7 +4,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { tools } from "./tools.ts";
+import { createCoreTools, tools } from "./tools.ts";
 
 const readFile = tools.find((t) => t.name === "read_file")!;
 
@@ -62,5 +62,54 @@ describe("bash", () => {
       bash.run({ command: "echo partial; sleep 10", timeout: 500 }),
     ).rejects.toThrow(/timed out.*partial/s);
     expect(Date.now() - started).toBeLessThan(5000);
+  });
+
+  test("background shells retain logs and report exit status", async () => {
+    const core = createCoreTools();
+    const run = core.tools.find((t) => t.name === "bash")!;
+    const output = core.tools.find((t) => t.name === "bash_output")!;
+    try {
+      const started = await run.run({
+        command: "echo first; sleep 0.1; echo second",
+        run_in_background: true,
+      });
+      const text = typeof started === "string" ? started : started.content;
+      const id = text.match(/shell_\d+/)?.[0];
+      expect(id).toBeDefined();
+
+      await Bun.sleep(250);
+      const logs = await output.run({ shell_id: id });
+      const logText = typeof logs === "string" ? logs : logs.content;
+      expect(logText).toContain("Status: exited (code 0)");
+      expect(logText).toContain("first\nsecond");
+      expect(logText).toContain("next_offset=");
+    } finally {
+      await core.dispose();
+    }
+  });
+
+  test("background shells can be killed and keep their logs", async () => {
+    const core = createCoreTools();
+    const run = core.tools.find((t) => t.name === "bash")!;
+    const output = core.tools.find((t) => t.name === "bash_output")!;
+    const kill = core.tools.find((t) => t.name === "bash_kill")!;
+    try {
+      const started = await run.run({
+        command: "echo ready; sleep 30",
+        run_in_background: true,
+      });
+      const text = typeof started === "string" ? started : started.content;
+      const id = text.match(/shell_\d+/)?.[0];
+      expect(id).toBeDefined();
+
+      const stopped = await kill.run({ shell_id: id });
+      expect(typeof stopped === "string" ? stopped : stopped.content).toContain(
+        "killed",
+      );
+      const logs = await output.run({ shell_id: id });
+      expect(typeof logs === "string" ? logs : logs.content).toContain("ready");
+    } finally {
+      await core.dispose();
+    }
   });
 });

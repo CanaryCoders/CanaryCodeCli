@@ -260,81 +260,253 @@ function capOutput(text: string, limit = BASH_OUTPUT_LIMIT): string {
 
 // ── bash ──────────────────────────────────────────────────────────────────────
 
-const bash: Tool = {
-  name: "bash",
-  // The shell is resolved per-system (bash → sh → cmd.exe; see shell.ts), so the
-  // description names what the command will ACTUALLY run in.
-  description: `Run a shell command via \`${systemShell().name} -c\` and return combined stdout+stderr. Times out (default 30s). Use for builds, tests, git, etc.`,
-  readOnly: false,
-  schema: {
-    type: "object",
-    properties: {
-      command: { type: "string", description: "Shell command to run." },
-      timeout: {
-        type: "number",
-        description: "Timeout in milliseconds (default 30000).",
-      },
-    },
-    required: ["command"],
-  },
-  async run(input) {
-    const command = reqStr(input, "command");
-    const timeoutMs =
-      typeof input.timeout === "number" && input.timeout > 0
-        ? input.timeout
-        : 30_000;
+interface BackgroundShell {
+  id: string;
+  command: string;
+  proc: Bun.Subprocess<"ignore", "pipe", "pipe">;
+  output: { text: string };
+  startedAt: number;
+  exitedAt?: number;
+  exitCode?: number;
+  killed: boolean;
+  reads: Promise<void>;
+}
+
+/** Session-owned process registry. Background shells survive tool calls and
+ * turns, then are terminated when the assembled session is disposed. */
+class BackgroundShells {
+  private readonly shells = new Map<string, BackgroundShell>();
+  private nextId = 1;
+
+  start(command: string): BackgroundShell {
     const proc = Bun.spawn(systemShell().argv(command), {
+      stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
+      // A process group lets cleanup terminate a dev server's descendants too.
+      detached: true,
     });
+    const shell: BackgroundShell = {
+      id: `shell_${this.nextId++}`,
+      command,
+      proc,
+      output: { text: "" },
+      startedAt: Date.now(),
+      killed: false,
+      reads: Promise.resolve(),
+    };
+    shell.reads = Promise.all([
+      drainStream(proc.stdout, shell.output),
+      drainStream(proc.stderr, shell.output),
+    ]).then(() => {});
+    this.shells.set(shell.id, shell);
+    void proc.exited.then(async (code) => {
+      shell.exitCode = code;
+      shell.exitedAt = Date.now();
+      await shell.reads;
+    });
+    return shell;
+  }
 
-    // Drain both pipes incrementally, with the reads in flight while the
-    // process runs (a full pipe buffer would otherwise deadlock it). Buffering
-    // ourselves — rather than awaiting whole-stream `Response.text()` — means
-    // we can return the output captured so far even when a pipe never reaches
-    // EOF: a backgrounded child (`server & echo ok`) inherits the pipe and
-    // holds it open long after the shell exits.
-    const out = { text: "" };
-    const errOut = { text: "" };
-    const reads = Promise.all([
-      drainStream(proc.stdout, out),
-      drainStream(proc.stderr, errOut),
-    ]);
+  get(id: string): BackgroundShell {
+    const shell = this.shells.get(id);
+    if (!shell) throw new Error(`unknown background shell: ${id}`);
+    return shell;
+  }
 
-    let timedOut = false;
-    let killTimer: ReturnType<typeof setTimeout> | undefined;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      proc.kill();
-      // SIGKILL backstop: a shell that ignores/blocks SIGTERM must not hang
-      // the agent loop forever.
-      killTimer = setTimeout(() => {
-        try {
-          proc.kill(9);
-        } catch {}
-      }, 2000);
-    }, timeoutMs);
-
-    const code = await proc.exited;
-    // Give still-open pipes a short grace to flush (the remaining buffered
-    // bytes arrive instantly; only a surviving background child keeps a pipe
-    // open past this), then return what we have instead of hanging.
-    await Promise.race([reads, new Promise((r) => setTimeout(r, 250))]);
-    clearTimeout(timer);
-    if (killTimer) clearTimeout(killTimer);
-
-    const combined = [out.text, errOut.text]
-      .filter((s) => s.length > 0)
-      .join("");
-    if (timedOut) {
-      throw new Error(
-        `command timed out after ${timeoutMs}ms${combined ? `\n${combined}` : ""}`,
-      );
+  async kill(id: string): Promise<BackgroundShell> {
+    const shell = this.get(id);
+    if (shell.exitCode === undefined) {
+      shell.killed = true;
+      killProcessGroup(shell.proc);
+      await Promise.race([
+        shell.proc.exited,
+        new Promise((resolve) => setTimeout(resolve, 2000)),
+      ]);
+      if (shell.exitCode === undefined) killProcessGroup(shell.proc, 9);
     }
-    const trimmed = capOutput(combined.length ? combined : "(no output)");
-    return code === 0 ? trimmed : `[exit ${code}]\n${trimmed}`;
-  },
-};
+    return shell;
+  }
+
+  async dispose(): Promise<void> {
+    await Promise.all(
+      [...this.shells.values()]
+        .filter((shell) => shell.exitCode === undefined)
+        .map((shell) => this.kill(shell.id).catch(() => {})),
+    );
+  }
+}
+
+function killProcessGroup(
+  proc: Bun.Subprocess<"ignore", "pipe", "pipe">,
+  signal?: number,
+): void {
+  try {
+    if (process.platform !== "win32") process.kill(-proc.pid, signal);
+    else proc.kill(signal);
+  } catch {
+    try {
+      proc.kill(signal);
+    } catch {}
+  }
+}
+
+function shellStatus(shell: BackgroundShell): string {
+  if (shell.exitCode === undefined) return "running";
+  if (shell.killed) return `killed (exit ${shell.exitCode})`;
+  return `exited (code ${shell.exitCode})`;
+}
+
+function createShellTools(background: BackgroundShells): Tool[] {
+  const bash: Tool = {
+    name: "bash",
+    // The shell is resolved per-system (bash → sh → cmd.exe; see shell.ts), so the
+    // description names what the command will ACTUALLY run in.
+    description: `Run a shell command via \`${systemShell().name} -c\` and return combined stdout+stderr. Times out (default 30s). Set \`run_in_background\` for long-lived processes such as dev servers; use \`bash_output\` to read their logs and status, and \`bash_kill\` to stop them.`,
+    readOnly: false,
+    schema: {
+      type: "object",
+      properties: {
+        command: { type: "string", description: "Shell command to run." },
+        timeout: {
+          type: "number",
+          description: "Timeout in milliseconds (default 30000).",
+        },
+        run_in_background: {
+          type: "boolean",
+          description:
+            "Start the command in the background and return immediately with a shell ID.",
+        },
+      },
+      required: ["command"],
+    },
+    async run(input) {
+      const command = reqStr(input, "command");
+      if (input.run_in_background === true) {
+        const shell = background.start(command);
+        // Yield once so commands that print immediately usually include their
+        // startup line without delaying long-lived servers.
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        const output = shell.output.text;
+        return [
+          `Background shell started: ${shell.id} (pid ${shell.proc.pid})`,
+          `Status: ${shellStatus(shell)}`,
+          output ? `Output:\n${capOutput(output)}` : "Output: (none yet)",
+          `Use bash_output with shell_id "${shell.id}" to read logs.`,
+        ].join("\n");
+      }
+
+      const timeoutMs =
+        typeof input.timeout === "number" && input.timeout > 0
+          ? input.timeout
+          : 30_000;
+      const proc = Bun.spawn(systemShell().argv(command), {
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      // Drain both pipes while the process runs; otherwise a full pipe can
+      // deadlock it. Foreground output uses separate sinks to preserve the
+      // historical stdout-then-stderr rendering contract.
+      const out = { text: "" };
+      const errOut = { text: "" };
+      const reads = Promise.all([
+        drainStream(proc.stdout, out),
+        drainStream(proc.stderr, errOut),
+      ]);
+
+      let timedOut = false;
+      let killTimer: ReturnType<typeof setTimeout> | undefined;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        proc.kill();
+        killTimer = setTimeout(() => {
+          try {
+            proc.kill(9);
+          } catch {}
+        }, 2000);
+      }, timeoutMs);
+
+      const code = await proc.exited;
+      await Promise.race([reads, new Promise((r) => setTimeout(r, 250))]);
+      clearTimeout(timer);
+      if (killTimer) clearTimeout(killTimer);
+
+      const combined = [out.text, errOut.text]
+        .filter((s) => s.length > 0)
+        .join("");
+      if (timedOut) {
+        throw new Error(
+          `command timed out after ${timeoutMs}ms${combined ? `\n${combined}` : ""}`,
+        );
+      }
+      const trimmed = capOutput(combined.length ? combined : "(no output)");
+      return code === 0 ? trimmed : `[exit ${code}]\n${trimmed}`;
+    },
+  };
+
+  const bashOutput: Tool = {
+    name: "bash_output",
+    description:
+      "Read logs and status from a background shell started by bash. Pass offset to read only newer output; the response includes next_offset for polling.",
+    readOnly: true,
+    schema: {
+      type: "object",
+      properties: {
+        shell_id: { type: "string", description: "Background shell ID." },
+        offset: {
+          type: "number",
+          description: "Character offset to start reading from (default 0).",
+        },
+        limit: {
+          type: "number",
+          description: "Maximum characters to return (default 30000).",
+        },
+      },
+      required: ["shell_id"],
+    },
+    async run(input) {
+      const shell = background.get(reqStr(input, "shell_id"));
+      const offset =
+        typeof input.offset === "number" && input.offset > 0
+          ? Math.floor(input.offset)
+          : 0;
+      const limit =
+        typeof input.limit === "number" && input.limit > 0
+          ? Math.floor(input.limit)
+          : BASH_OUTPUT_LIMIT;
+      const end = Math.min(shell.output.text.length, offset + limit);
+      const output = shell.output.text.slice(offset, end);
+      return [
+        `Shell: ${shell.id}`,
+        `Command: ${shell.command}`,
+        `Status: ${shellStatus(shell)}`,
+        `Output (${offset}-${end}, next_offset=${end}):`,
+        output || "(no new output)",
+      ].join("\n");
+    },
+  };
+
+  const bashKill: Tool = {
+    name: "bash_kill",
+    description:
+      "Stop a background shell and its child processes. Its captured logs remain available through bash_output.",
+    readOnly: false,
+    schema: {
+      type: "object",
+      properties: {
+        shell_id: { type: "string", description: "Background shell ID." },
+      },
+      required: ["shell_id"],
+    },
+    async run(input) {
+      const shell = await background.kill(reqStr(input, "shell_id"));
+      return `Shell ${shell.id}: ${shellStatus(shell)}`;
+    },
+  };
+
+  return [bash, bashOutput, bashKill];
+}
 
 /** Append a stream's bytes to `sink.text` as they arrive (best-effort: a
  * stream error after a kill just stops the capture, never throws). */
@@ -456,12 +628,25 @@ const grep: Tool = {
 
 // ── registry ──────────────────────────────────────────────────────────────────
 
-/** The full tool set, in a stable order. */
-export const tools: Tool[] = [
-  readFile,
-  writeFile,
-  editFile,
-  listDir,
-  bash,
-  grep,
-];
+/** A fresh core tool set. Background shell state is deliberately per-session. */
+export function createCoreTools(): {
+  tools: Tool[];
+  dispose(): Promise<void>;
+} {
+  const background = new BackgroundShells();
+  return {
+    tools: [
+      readFile,
+      writeFile,
+      editFile,
+      listDir,
+      ...createShellTools(background),
+      grep,
+    ],
+    dispose: () => background.dispose(),
+  };
+}
+
+/** Default tool set retained for direct consumers and focused unit tests.
+ * Sessions use createCoreTools() so their background processes are isolated. */
+export const tools: Tool[] = createCoreTools().tools;

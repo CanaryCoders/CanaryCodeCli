@@ -19,21 +19,34 @@ function opts() {
 }
 
 describe("assembleSession", () => {
-  test("default assembly yields the core 6 plus feature tools, in order", async () => {
+  test("default assembly yields core plus feature tools, in order", async () => {
     const session = await assembleSession(opts());
     const names = session.tools.map((t) => t.name);
-    expect(names.slice(0, 6)).toEqual([
+    expect(names.slice(0, 8)).toEqual([
       "read_file",
       "write_file",
       "edit_file",
       "list_dir",
       "bash",
+      "bash_output",
+      "bash_kill",
       "grep",
     ]);
     expect(names).toContain("web_search");
     expect(names).toContain("ask_user");
     expect(names).toContain("update_tasks");
     expect(names[names.length - 1]).toBe("update_tasks");
+    await session.dispose();
+  });
+
+  test("includes the default writing style in every mode", async () => {
+    const session = await assembleSession(opts());
+    expect(session.system).toContain("# Writing style");
+    expect(session.system).toContain(
+      "Answer exactly what was asked, at the length it deserves - err short.",
+    );
+    expect(sessionForMode(session, "plan").system).toContain("# Writing style");
+    expect(sessionForMode(session, "auto").system).toContain("# Writing style");
     await session.dispose();
   });
 
