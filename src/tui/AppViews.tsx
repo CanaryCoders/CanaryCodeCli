@@ -5,6 +5,7 @@
 // width-capped so it never overflows Ink's dynamic region); `PromptArea` renders
 // whichever pause-and-ask overlay is active, or the framed input box when none is.
 
+import { useRef } from "react";
 import { AskUserView } from "./AskUser.tsx";
 import { Complete } from "./Complete.tsx";
 import { ConfirmView } from "./Confirm.tsx";
@@ -14,7 +15,12 @@ import { useIcon, useSpinnerFrame } from "./Icon.tsx";
 import { MultilineInput } from "./Input.tsx";
 import { ActionChip } from "./Interactive.tsx";
 import { type Item, ItemView } from "./Message.tsx";
-import { clampLineWidth, tailLines } from "./message-helpers.ts";
+import {
+  clampLineWidth,
+  fmtElapsed,
+  rowKey,
+  tailLines,
+} from "./message-helpers.ts";
 import { PastePreview } from "./PastePreview.tsx";
 import { PlanView } from "./Plan.tsx";
 import { Box, Text } from "./primitives.tsx";
@@ -27,6 +33,42 @@ import type { HelpState } from "./use-help.ts";
 import type { PastePreview as PastePreviewState } from "./use-paste-preview.ts";
 import type { PromptHistory } from "./use-prompt-history.ts";
 import type { PromptInput } from "./use-prompt-input.ts";
+
+/** Rows of reasoning shown while it streams. */
+const LIVE_THINKING_ROWS = 3;
+
+/** Reasoning in flight: a header plus its last few lines as plain dim text. It is
+ *  never rendered as markdown here, so a half-streamed code fence can't take over
+ *  the screen; the block collapses to its one-line summary once it finishes. */
+function LiveThinking({
+  item,
+  marginTop,
+  width,
+}: {
+  item: Extract<Item, { kind: "thinking" }>;
+  marginTop: number;
+  width: number;
+}): React.ReactElement {
+  const icon = useIcon("thinking");
+  const tail = clampLineWidth(
+    tailLines(item.text.trimEnd(), LIVE_THINKING_ROWS, width - 4).text,
+    width - 4,
+  );
+  return (
+    <Box
+      flexDirection="column"
+      paddingLeft={SPACING.boxPadX + 2}
+      marginTop={marginTop}
+    >
+      <Text dimColor>{`${icon} Thinking`}</Text>
+      {tail.split("\n").map((line, i) => (
+        <Text key={rowKey(i, line)} dimColor wrap="truncate">
+          {`  ${line}`}
+        </Text>
+      ))}
+    </Box>
+  );
+}
 
 /** The in-flight turn: only the currently-streaming item lives here (finished items
  *  have moved to `<Static>`). A streaming assistant/thinking block is the one item
@@ -67,6 +109,16 @@ export function LiveRegion({
             : history.length > 0
               ? history[history.length - 1]!.kind
               : undefined;
+        if (item.kind === "thinking" && !verbose) {
+          return (
+            <LiveThinking
+              key={item.id}
+              item={item}
+              marginTop={prevKind ? 1 : 0}
+              width={liveContentWidth}
+            />
+          );
+        }
         if (item.kind === "assistant" || item.kind === "thinking") {
           // Two bounds keep this block from overflowing the redrawn dynamic region
           // (which desyncs Ink into duplicate lines): `tailLines` caps its *height*
@@ -158,6 +210,11 @@ export function PromptArea({
   // Called unconditionally (before the early-return overlays) per the rules of
   // hooks; it only animates while the turn is busy.
   const spinner = useSpinnerFrame(session.busy);
+  // The spinner re-renders this component every frame, so the elapsed time ticks
+  // without a timer of its own.
+  const busySince = useRef<number | null>(null);
+  if (!session.busy) busySince.current = null;
+  else if (busySince.current === null) busySince.current = Date.now();
 
   if (approvals.pendingConfirm) {
     return (
@@ -278,10 +335,17 @@ export function PromptArea({
       {/* Live status: spinner + verb sit on their own row just above the input
           frame while busy (so they never share the prompt line). */}
       {session.busy ? (
-        <Text color={tint(modeColor)}>
-          {spinner}
-          <Text dimColor>{` ${verb}`}</Text>
-        </Text>
+        <Box flexDirection="row">
+          <Text color={tint(modeColor)}>{`${spinner} `}</Text>
+          <Box flexShrink={1}>
+            <Text wrap="truncate">{verb}</Text>
+          </Box>
+          <Box flexShrink={0}>
+            <Text dimColor>
+              {` · ${fmtElapsed(Date.now() - (busySince.current ?? Date.now()))} · esc to stop`}
+            </Text>
+          </Box>
+        </Box>
       ) : null}
       {/* Nav mode: a one-line dim hint of the vim keys, shown just above the (inert)
           input frame so the user knows what the keyboard now drives. */}

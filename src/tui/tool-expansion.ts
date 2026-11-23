@@ -16,9 +16,9 @@ export function toggleToolExpanded(
   return next;
 }
 
-/** Whether a transcript item should render expanded. Non-tool items are
- *  unaffected (they ignore `expanded`); a tool expands on verbose, individual
- *  expansion, or error. */
+/** Whether a transcript item should render expanded. A tool expands on verbose,
+ *  individual expansion, or error; a reasoning block on verbose or individual
+ *  expansion. Other kinds ignore `expanded`. */
 export function isItemExpanded(
   item: Item,
   verbose: boolean,
@@ -28,5 +28,5 @@ export function isItemExpanded(
   if (item.kind === "tool") {
     return expandedToolIds.has(item.id) || Boolean(item.isError);
   }
-  return false;
+  return item.kind === "thinking" && expandedToolIds.has(item.id);
 }

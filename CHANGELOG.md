@@ -8,6 +8,11 @@ what's-new banner.
 Format: [Keep a Changelog](https://keepachangelog.com) headings
 (`## <version> - <date>`), newest first.
 
+## 0.4.1 - 2026-11-23
+
+- Model reasoning collapses to one line (`Thought for 34s (120 lines)`), expanded by a click, Enter in nav mode, or ctrl+r. While it streams, only its last three lines show, as plain text.
+- The busy row says what is happening in plain words: the running tool and its target, `Thinking`, or `Writing the answer`, with the elapsed time and how to stop.
+
 ## 0.4.0 - 2026-11-23
 
 Open-weight models on CanaryLLM (Kimi, GLM, and the local Qwen and Gemma

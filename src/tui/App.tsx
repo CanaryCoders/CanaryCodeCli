@@ -342,8 +342,9 @@ function App(props: AppProps): React.ReactNode {
         return;
       }
       if ((key.return && !key.shift && !key.meta) || _input === " ") {
-        // Enter/Space expands or collapses a focused tool card; a no-op otherwise.
-        if (focused?.kind === "tool") toggleTool(focused.id);
+        // Enter/Space expands or collapses a focused tool card or reasoning block.
+        if (focused?.kind === "tool" || focused?.kind === "thinking")
+          toggleTool(focused.id);
         return;
       }
       if (_input === "y") {

@@ -23,6 +23,7 @@ import {
   padRow,
   rowKey,
   summarizeToolInput,
+  thinkingSummary,
   truncate,
   truncateWidth,
 } from "./message-helpers.ts";
@@ -70,7 +71,17 @@ export type Item =
        * so its speaker gutter is rendered glyph-less to avoid a repeated marker. */
       continuation?: boolean;
     }
-  | { id: number; kind: "thinking"; text: string; continuation?: boolean }
+  | {
+      id: number;
+      kind: "thinking";
+      text: string;
+      continuation?: boolean;
+      /** When the first reasoning delta arrived (live turns only). */
+      startedAt?: number;
+      /** How long the model reasoned. Absent on resumed sessions, which store no
+       * timing. */
+      ms?: number;
+    }
   | {
       id: number;
       kind: "tool";
@@ -528,6 +539,29 @@ function topGap(item: Item, prevKind?: Item["kind"]): number {
   return SPACING.blockGap;
 }
 
+/** The one-line summary of a reasoning block; clicking it toggles the full text. */
+function ThinkingHeader({
+  item,
+  expanded,
+  onToggle,
+}: {
+  item: Extract<Item, { kind: "thinking" }>;
+  expanded: boolean;
+  onToggle: () => void;
+}): React.ReactElement {
+  const icon = useIcon(ROLE.thinking.icon);
+  return (
+    <Box flexDirection="row">
+      <ActionChip
+        label={`${icon} ${thinkingSummary(item)}`}
+        color="gray"
+        onAction={onToggle}
+      />
+      <Text dimColor>{expanded ? "  click to hide" : "  click to show"}</Text>
+    </Box>
+  );
+}
+
 export function ItemView({
   item,
   prevKind,
@@ -596,9 +630,8 @@ export function ItemView({
         </FocusBar>
       );
     case "thinking":
-      // Thinking is plain dim+italic prose, same layout as the assistant answer so
-      // it reads as a quieter part of the same thread rather than a separate block.
-      // Like the assistant answer, it's selection-copied, not chip-copied.
+      // Reasoning collapses to one line: a reasoning model can emit screens of it,
+      // which buries the answer. The full text is one click (or ctrl+r) away.
       return (
         <FocusBar focused={itemFocused}>
           <Box
@@ -606,7 +639,12 @@ export function ItemView({
             paddingX={SPACING.boxPadX}
             marginTop={Math.max(1, topGap(item, prevKind))}
           >
-            <Markdown text={item.text} dim />
+            <ThinkingHeader
+              item={item}
+              expanded={expanded}
+              onToggle={() => onToggleTool?.(item.id)}
+            />
+            {expanded ? <Markdown text={item.text} dim /> : null}
           </Box>
         </FocusBar>
       );

@@ -4,12 +4,7 @@
 // fast-refresh boundaries) and so they can be unit-tested without a renderer.
 
 import type { Message } from "../provider.ts";
-import {
-  pickVerb,
-  RESPONDING_VERBS,
-  THINKING_VERBS,
-  TOOL_VERB,
-} from "../verbs.ts";
+import { TOOL_VERB } from "../verbs.ts";
 import { charWidth } from "./input-helpers.ts";
 import type { Item, ItemInput } from "./Message.tsx";
 
@@ -260,18 +255,39 @@ export function itemsFromMessages(messages: Message[]): ItemInput[] {
 
 // ── Live status verb ───────────────────────────────────────────────────────────
 
-/** A short status verb for the busy spinner, derived from the live transcript. */
+/** What the agent is doing right now, in plain words, for the busy row: the
+ * running tool and its target, or whether the model is reasoning or answering. */
 export function statusVerb(live: Item[]): string {
   const last = live[live.length - 1];
-  if (!last) return `${pickVerb(THINKING_VERBS, 0)}…`;
-  // A stable per-step seed: holds steady while this item is live, rolls on the next.
-  const seed = last.id;
+  if (!last) return "Waiting for the model";
   if (last.kind === "tool" && last.pending) {
-    return `${TOOL_VERB[last.name] ?? `running ${last.name}`}…`;
+    const what =
+      TOOL_VERB[last.name] ?? `Running ${displayToolName(last.name)}`;
+    const target = summarizeToolInput(last.name, last.input);
+    return target ? `${what}: ${target}` : what;
   }
-  if (last.kind === "assistant") return `${pickVerb(RESPONDING_VERBS, seed)}…`;
-  // A finished tool, a note, or thinking → the model is (about to be) speaking.
-  return `${pickVerb(THINKING_VERBS, seed)}…`;
+  if (last.kind === "assistant") return "Writing the answer";
+  if (last.kind === "thinking") return "Thinking";
+  // A finished tool or a note: the next request is on its way to the model.
+  return "Waiting for the model";
+}
+
+/** `8s`, `1m 05s`, `1h 02m`. */
+export function fmtElapsed(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${String(s % 60).padStart(2, "0")}s`;
+  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
+}
+
+/** One-line label for a finished reasoning block. */
+export function thinkingSummary(item: { text: string; ms?: number }): string {
+  const lines = item.text.split("\n").filter((l) => l.trim()).length;
+  const size = `${lines} ${lines === 1 ? "line" : "lines"}`;
+  return item.ms !== undefined && item.ms >= 1000
+    ? `Thought for ${fmtElapsed(item.ms)} (${size})`
+    : `Thought (${size})`;
 }
 
 // ── Live-region clamping ───────────────────────────────────────────────────────

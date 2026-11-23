@@ -559,8 +559,18 @@ export function useAgentSession(deps: {
     };
     const appendThinking = (text: string) => {
       const last = local[local.length - 1];
-      if (last && last.kind === "thinking") last.text += text;
-      else local.push({ id: nextId(), kind: "thinking", text });
+      if (last && last.kind === "thinking") {
+        last.text += text;
+        if (last.startedAt !== undefined) last.ms = Date.now() - last.startedAt;
+      } else {
+        local.push({
+          id: nextId(),
+          kind: "thinking",
+          text,
+          startedAt: Date.now(),
+          ms: 0,
+        });
+      }
     };
 
     // Re-resolve provider/model/thinking each agentic step so a mid-turn /model or

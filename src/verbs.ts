@@ -1,70 +1,19 @@
-// verbs.ts — the status verbs shown beside the busy spinner.
+// verbs.ts: what the busy row says while a tool runs.
 //
-// While a turn is in flight the spinner pairs with a short present-tense verb
-// describing what's happening *right now*. There are two kinds:
-//
-//   • Contextual tool verbs — when a tool is running, the verb names the tool
-//     ("running bash…", "searching…"). These always win; they're literal.
-//   • Mood pools — when the model is just thinking or streaming a reply, the verb
-//     is drawn from a pool (a mix of plain and whimsical synonyms) and rotates per
-//     step, so a long session feels alive without flickering mid-render.
-//
-// Rotation is seeded by a stable per-step number (the live item's id), so the verb
-// holds steady for the duration of one step and changes on the next — never on
-// every spinner frame.
+// The row names the tool in plain words and is followed by the call's target
+// (the command, path or task), so it always answers "what is it doing now".
 
-/** Tool → present-tense contextual verb shown while that tool runs. */
+/** Tool → what it is doing, shown while that tool runs. */
 export const TOOL_VERB: Record<string, string> = {
-  bash: "running bash",
-  web_fetch: "fetching a URL",
-  github_read_file: "reading GitHub",
-  web_search: "searching the web",
-  grep: "grepping",
-  read_file: "reading",
-  list_dir: "listing",
-  read_skill: "consulting a skill",
-  write_file: "writing",
-  edit_file: "editing",
-  spawn_agent: "summoning a sub-agent",
+  bash: "Running",
+  web_fetch: "Fetching",
+  github_read_file: "Reading from GitHub",
+  web_search: "Searching the web",
+  grep: "Searching files",
+  read_file: "Reading",
+  list_dir: "Listing",
+  read_skill: "Loading skill",
+  write_file: "Writing",
+  edit_file: "Editing",
+  spawn_agent: "Sub-agent working",
 };
-
-/**
- * Verbs for "the model is reasoning between tools". A deliberate mix of plain
- * ("thinking", "reasoning") and whimsical ("noodling", "percolating") synonyms.
- */
-export const THINKING_VERBS: string[] = [
-  "thinking",
-  "pondering",
-  "reasoning",
-  "cogitating",
-  "mulling it over",
-  "ruminating",
-  "noodling",
-  "deliberating",
-  "contemplating",
-  "percolating",
-  "untangling",
-  "chewing on it",
-  "puzzling",
-  "scheming",
-  "conjuring",
-  "musing",
-  "wrangling",
-  "synthesizing",
-];
-
-/** Verbs for "the model is streaming its reply". */
-export const RESPONDING_VERBS: string[] = [
-  "responding",
-  "composing",
-  "drafting",
-  "writing",
-  "articulating",
-  "penning",
-];
-
-/** Pick a verb from `pool`, rotated by a stable `seed` (no flicker mid-render). */
-export function pickVerb(pool: string[], seed: number): string {
-  const i = ((seed % pool.length) + pool.length) % pool.length;
-  return pool[i] as string;
-}
