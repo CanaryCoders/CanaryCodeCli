@@ -801,3 +801,44 @@ describe("deferred tool schemas", () => {
     );
   });
 });
+
+describe("tool progress", () => {
+  test("lines reach the caller before the tool finishes", async () => {
+    const slow: Tool = {
+      name: "slow",
+      description: "slow",
+      readOnly: true,
+      schema: { type: "object", properties: {} },
+      async run(_input, ctx) {
+        ctx?.progress?.("one");
+        await new Promise((r) => setTimeout(r, 5));
+        ctx?.progress?.("two");
+        return "finished";
+      },
+    };
+    const provider = scripted([
+      [
+        { type: "tool_use", id: "c1", name: "slow", input: {} },
+        { type: "done", stopReason: "tool_use" },
+      ],
+      [
+        { type: "text_delta", text: "ok" },
+        { type: "done", stopReason: "stop" },
+      ],
+    ]);
+    const seen: string[] = [];
+    for await (const ev of runAgent({
+      provider,
+      model: "m",
+      system: "",
+      messages: [userMsg("go")],
+      tools: [slow],
+      mode: "normal",
+      maxTurns: 5,
+    })) {
+      if (ev.type === "tool_progress") seen.push(ev.text);
+      if (ev.type === "tool_end") seen.push(`end:${ev.result}`);
+    }
+    expect(seen).toEqual(["one", "two", "end:finished"]);
+  });
+});

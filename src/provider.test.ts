@@ -11,6 +11,7 @@ import {
   toAnthropicMessage,
   toOpenAIMessages,
   toResponsesInput,
+  withIdleTimeout,
 } from "./provider.ts";
 
 // ── image content blocks across all three providers ─────────────────────────
@@ -489,5 +490,21 @@ describe("openai-compat provider stream", () => {
         { error: { message: "model crashed" } },
       ])) as unknown as typeof fetch;
     await expect(collectCompat()).rejects.toThrow(/model crashed/);
+  });
+});
+
+describe("withIdleTimeout", () => {
+  test("fails a stream that goes silent", async () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(new Uint8Array([1]));
+      },
+    });
+    const got: number[] = [];
+    const read = (async () => {
+      for await (const chunk of withIdleTimeout(body, 20)) got.push(chunk[0]!);
+    })();
+    await expect(read).rejects.toThrow("the connection looks dead");
+    expect(got).toEqual([1]);
   });
 });

@@ -639,6 +639,15 @@ export function useAgentSession(deps: {
             });
             sync();
             break;
+          case "tool_progress": {
+            // eslint-disable-next-line react-doctor/js-index-maps -- tiny per-turn array
+            const t = local.find(
+              (i) => i.kind === "tool" && i.toolId === ev.id,
+            );
+            if (t && t.kind === "tool") t.progress = ev.text;
+            sync();
+            break;
+          }
           case "tool_end": {
             // `local` holds only the current turn's items (a handful of tool
             // calls); a linear find runs once per tool_end. A keyed Map would add
@@ -694,14 +703,9 @@ export function useAgentSession(deps: {
             break;
           case "done":
             outcome = ev.reason;
-            if (ev.reason === "aborted") {
-              local.push({
-                id: nextId(),
-                kind: "note",
-                text: "aborted",
-                tone: "error",
-              });
-            } else if (ev.reason === "max_turns") {
+            // An interrupt is the user's own doing and the key handler already
+            // notes it, so it gets no error card.
+            if (ev.reason === "max_turns") {
               local.push({
                 id: nextId(),
                 kind: "note",

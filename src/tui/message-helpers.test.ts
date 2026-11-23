@@ -14,9 +14,7 @@ describe("busy row", () => {
         pending: true,
       },
     ];
-    expect(statusVerb(live)).toBe(
-      "Sub-agent working: Update only locale files",
-    );
+    expect(statusVerb(live)).toBe("Sub-agent: Update only locale files");
   });
 
   test("tells reasoning from answering", () => {

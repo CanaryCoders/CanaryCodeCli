@@ -11,7 +11,7 @@ import type { ModelRole } from "./config.ts";
 import type { Diff } from "./diff.ts";
 import type { ImageData } from "./image.ts";
 import type { ContentBlock, Message, Provider, ToolDef } from "./provider.ts";
-import type { Tool } from "./tools.ts";
+import type { Tool, ToolRunContext } from "./tools.ts";
 
 export type AgentMode = "normal" | "plan" | "auto";
 
@@ -216,6 +216,8 @@ export type AgentEvent =
   | { type: "text"; text: string }
   | { type: "thinking"; text: string }
   | { type: "tool_start"; id: string; name: string; input: unknown }
+  /** A one-line status from a tool that is still running (a sub-agent's step). */
+  | { type: "tool_progress"; id: string; text: string }
   | {
       type: "tool_end";
       id: string;
@@ -746,11 +748,35 @@ export async function* runAgent(
       }
 
       // ── 4. run the tool ──
-      const { content, isError, diff, image } = await runToolCall(
-        toolByName,
-        mode,
-        call,
-      );
+      // Progress lines are queued by the tool and drained here, so they reach
+      // the caller while the tool is still running.
+      const progress: string[] = [];
+      let wake: (() => void) | undefined;
+      let outcome: Awaited<ReturnType<typeof runToolCall>> | undefined;
+      void runToolCall(toolByName, mode, call, {
+        signal,
+        provider,
+        model,
+        progress: (text) => {
+          progress.push(text);
+          wake?.();
+        },
+      }).then((r) => {
+        outcome = r;
+        wake?.();
+      });
+      while (!outcome) {
+        if (progress.length === 0) {
+          // eslint-disable-next-line react-doctor/async-await-in-loop -- waits on one running tool
+          await new Promise<void>((resolve) => {
+            wake = resolve;
+          });
+        }
+        for (const text of progress.splice(0)) {
+          yield { type: "tool_progress", id: call.id, text };
+        }
+      }
+      const { content, isError, diff, image } = outcome;
       // An image result rides along as an `image` block on this user turn — but
       // only for vision-capable models; otherwise drop it and say so in the text.
       const visionOk = supportsVision;
@@ -814,6 +840,7 @@ async function runToolCall(
   toolByName: Map<string, Tool>,
   mode: AgentMode,
   call: { id: string; name: string; input: unknown },
+  ctx?: ToolRunContext,
 ): Promise<{
   content: string;
   isError: boolean;
@@ -835,7 +862,7 @@ async function runToolCall(
   }
   const input = coerceToolInput(tool.schema, call.input);
   try {
-    const out = await tool.run(input);
+    const out = await tool.run(input, ctx);
     // Tools may return a bare string or a `{ content, diff }` result.
     if (typeof out === "string") return { content: out, isError: false };
     return {

@@ -15,6 +15,7 @@ import {
 import { useTerminalDimensions } from "@opentui/react";
 import type { ReactElement, ReactNode } from "react";
 import { createContext, createElement, useContext } from "react";
+import { paint } from "./theme.ts";
 
 type MouseHandler = (event: MouseEvent) => void;
 
@@ -232,7 +233,7 @@ export function buildTextElement(
   // a flat hard-coded grey foreground, which discarded the real colour and made
   // every dim line one uniform grey. Use the native dim attribute instead so the
   // colour is preserved and faded — terminal-theme-aware, matching Ink.
-  const fg = color;
+  const fg = paint(color);
   const attributes = createTextAttributes({
     bold,
     italic,
@@ -248,7 +249,7 @@ export function buildTextElement(
       {
         ...props,
         fg,
-        bg: backgroundColor,
+        bg: paint(backgroundColor),
         attributes,
         selectable,
         selectionBg,
@@ -263,7 +264,7 @@ export function buildTextElement(
     {
       ...props,
       fg,
-      bg: backgroundColor,
+      bg: paint(backgroundColor),
       attributes,
       selectable,
       selectionBg,

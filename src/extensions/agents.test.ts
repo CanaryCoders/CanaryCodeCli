@@ -95,6 +95,67 @@ describe("spawnAgentTool gate propagation", () => {
   });
 });
 
+describe("spawnAgentTool run context", () => {
+  const config = {
+    maxDepth: 1,
+    maxConcurrent: 1,
+    autoMaxTurns: 5,
+    hooks: {},
+  } as Config;
+  const noop: Tool = {
+    name: "mutate",
+    description: "",
+    readOnly: true,
+    schema: { type: "object", properties: {} },
+    async run() {
+      return "ok";
+    },
+  };
+
+  test("reports each child step and runs on the calling turn's provider", async () => {
+    const stale = { id: "stale" } as Provider;
+    const tool = spawnAgentTool({
+      config,
+      parentProvider: stale,
+      parentModel: "old",
+      inheritedTools: () => [noop],
+      depth: 0,
+      limiter: new Semaphore(1),
+    });
+    const lines: string[] = [];
+    const out = await tool.run(
+      { task: "do the thing" },
+      {
+        provider: mutateOnceProvider(),
+        model: "new",
+        progress: (t) => lines.push(t),
+      },
+    );
+    expect(lines[0]).toBe("started on new");
+    expect(lines).toContain("step 1: mutate");
+    expect(typeof out).toBe("string");
+  });
+
+  test("stops when the calling turn is interrupted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const tool = spawnAgentTool({
+      config,
+      parentProvider: mutateOnceProvider(),
+      parentModel: "m",
+      inheritedTools: () => [noop],
+      depth: 0,
+      limiter: new Semaphore(1),
+      signal: new AbortController().signal,
+    });
+    const out = await tool.run(
+      { task: "do the thing" },
+      { signal: controller.signal },
+    );
+    expect(out).toBe("(sub-agent interrupted by the user)");
+  });
+});
+
 // ---------------------------------------------------------------------------
 // agentsExtension factory
 // ---------------------------------------------------------------------------

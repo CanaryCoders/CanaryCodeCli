@@ -31,17 +31,21 @@ test("a block <text> flags its subtree inside-text so children become spans", ()
 
 test("styling props pass through on both block and inline variants", () => {
   const block = buildTextElement(
-    { color: "cyan", backgroundColor: "black" },
+    { color: "#112233", backgroundColor: "black" },
     false,
   );
-  expect(props(block).fg).toBe("cyan");
+  expect(props(block).fg).toBe("#112233");
   expect(props(block).bg).toBe("black");
   const inline = buildTextElement(
-    { color: "cyan", backgroundColor: "black" },
+    { color: "#112233", backgroundColor: "black" },
     true,
   );
-  expect(props(inline).fg).toBe("cyan");
+  expect(props(inline).fg).toBe("#112233");
   expect(props(inline).bg).toBe("black");
+});
+
+test("named colours resolve to the palette", () => {
+  expect(props(buildTextElement({ color: "cyan" }, false)).fg).toBe("#86c1d4");
 });
 
 test("block-only wrap props apply to <text> but not <span>", () => {

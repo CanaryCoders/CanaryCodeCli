@@ -15,5 +15,5 @@ export const TOOL_VERB: Record<string, string> = {
   read_skill: "Loading skill",
   write_file: "Writing",
   edit_file: "Editing",
-  spawn_agent: "Sub-agent working",
+  spawn_agent: "Sub-agent",
 };

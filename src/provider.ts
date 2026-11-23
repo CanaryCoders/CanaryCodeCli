@@ -100,6 +100,45 @@ function takeFrame(buf: string): { frame: string; rest: string } | undefined {
   return { frame: buf.slice(0, sep), rest: buf.slice(sep + 2) };
 }
 
+/** How long a response stream may go silent before it counts as dead. Generous,
+ * because a gateway in front of one local model can queue a request for minutes. */
+const STREAM_IDLE_MS = 300_000;
+
+/** Read `body`, failing when no bytes arrive for `idleMs`. A dropped connection
+ * that never closes would otherwise hang the turn for good. */
+export async function* withIdleTimeout(
+  body: ReadableStream<Uint8Array>,
+  idleMs: number = STREAM_IDLE_MS,
+): AsyncIterable<Uint8Array> {
+  const reader = body.getReader();
+  try {
+    for (;;) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const stalled = new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(
+              new Error(
+                `the model sent nothing for ${Math.round(idleMs / 1000)}s; the connection looks dead`,
+              ),
+            ),
+          idleMs,
+        );
+      });
+      try {
+        // eslint-disable-next-line react-doctor/async-await-in-loop -- sequential stream read
+        const { done, value } = await Promise.race([reader.read(), stalled]);
+        if (done) return;
+        yield value;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+}
+
 /** Yield each parsed `data:` JSON object from a server-sent-events body. */
 async function* parseSSE(
   body: ReadableStream<Uint8Array>,
@@ -109,7 +148,7 @@ async function* parseSSE(
   let buf = "";
   // Iterate the byte stream directly: each chunk strictly follows the previous
   // one (the read cursor advances), so this pump is sequential by construction.
-  for await (const value of body as AsyncIterable<Uint8Array>) {
+  for await (const value of withIdleTimeout(body)) {
     buf += decoder.decode(value, { stream: true });
     let split = takeFrame(buf);
     while (split) {

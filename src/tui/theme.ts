@@ -202,6 +202,25 @@ export const SPACING = {
 // The detection lives here so every component asks the palette one question; the
 // actual stripping is applied by a later 4.8 task at each render site.
 
+// The named colours components ask for, resolved to one muted set that sits with
+// the card fills above. A terminal's own "yellow" or "cyan" is usually the fully
+// saturated one, which reads as a warning on every inline code span.
+const PALETTE: Record<string, string> = {
+  cyan: "#86c1d4",
+  yellow: "#e0c27a",
+  green: "#9ece9a",
+  red: "#e09aa0",
+  blue: "#89a8d8",
+  magenta: "#c0a3e0",
+  gray: "#8189a0",
+  white: "#e6e8ee",
+};
+
+/** Resolve a colour name to its palette value; hex and unknown names pass through. */
+export function paint(color: string | undefined): string | undefined {
+  return color === undefined ? undefined : (PALETTE[color] ?? color);
+}
+
 const NO_COLOR = Boolean(process.env.NO_COLOR);
 
 /** Return `color` unless `NO_COLOR` is set, in which case undefined (default). */

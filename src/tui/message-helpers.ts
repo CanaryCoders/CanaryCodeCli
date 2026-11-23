@@ -263,7 +263,7 @@ export function statusVerb(live: Item[]): string {
   if (last.kind === "tool" && last.pending) {
     const what =
       TOOL_VERB[last.name] ?? `Running ${displayToolName(last.name)}`;
-    const target = summarizeToolInput(last.name, last.input);
+    const target = last.progress ?? summarizeToolInput(last.name, last.input);
     return target ? `${what}: ${target}` : what;
   }
   if (last.kind === "assistant") return "Writing the answer";

@@ -45,7 +45,7 @@ import { type AgentOptions, runSession } from "../agent.ts";
 import { type Config, contextBudget, resolveModel } from "../config.ts";
 import type { SessionExtension } from "../extension.ts";
 import { createProvider, type Message, type Provider } from "../provider.ts";
-import type { Tool } from "../tools.ts";
+import type { Tool, ToolRunContext } from "../tools.ts";
 import {
   runPostToolHooks,
   runPreToolHooks,
@@ -215,6 +215,11 @@ export class Semaphore {
     // Resumed by release(), which handed us its slot — active already accounts for it.
   }
 
+  /** True when the next `acquire` would have to wait. */
+  get busy(): boolean {
+    return this.max > 0 && this.active >= this.max;
+  }
+
   release(): void {
     const next = this.queue.shift();
     if (next) next();
@@ -297,12 +302,31 @@ export function pickSubagentModel(
   return reqModel ?? defModel ?? config.models?.subagent;
 }
 
+/** `edit_file src/a.ts`: a tool call as one short line for the progress row. */
+function describeCall(name: string, input: unknown): string {
+  const rec =
+    input && typeof input === "object"
+      ? (input as Record<string, unknown>)
+      : {};
+  const arg = [rec.path, rec.command, rec.pattern, rec.query, rec.url, rec.task]
+    .find((v): v is string => typeof v === "string" && v.length > 0)
+    ?.replace(/\s+/g, " ");
+  if (!arg) return name;
+  return `${name} ${arg.length > 60 ? `${arg.slice(0, 59)}…` : arg}`;
+}
+
 /** Run one sub-agent to completion and return its summary text. Never throws —
  * failures come back as a model-readable string so the parent loop continues. */
 async function runSubagent(
   env: SpawnAgentEnv,
   req: SpawnRequest,
+  ctx: ToolRunContext = {},
 ): Promise<string> {
+  // The calling turn's signal and model win over the ones captured at assembly:
+  // those go stale on the first interrupt or `/model` switch.
+  const signal = ctx.signal ?? env.signal;
+  const parentProvider = ctx.provider ?? env.parentProvider;
+  const parentModel = ctx.model ?? env.parentModel;
   if (env.depth >= env.config.maxDepth) {
     return `spawn_agent blocked: maximum sub-agent depth (${env.config.maxDepth}) reached`;
   }
@@ -324,15 +348,15 @@ async function runSubagent(
   // Model precedence: an explicit `model` arg wins, else the custom agent's
   // declared model, else the configured subagent role, else the parent's model.
   const wantModel = pickSubagentModel(req.model, def?.model, env.config);
-  let provider = env.parentProvider;
-  let model = env.parentModel;
+  let provider = parentProvider;
+  let model = parentModel;
   let budget = contextBudget(
     env.config,
     env.config.providers
-      ? resolveModel(env.config, env.parentModel)?.model
+      ? resolveModel(env.config, parentModel)?.model
       : undefined,
   );
-  if (wantModel && wantModel !== env.parentModel) {
+  if (wantModel && wantModel !== parentModel) {
     const resolved = resolveModel(env.config, wantModel);
     if (!resolved) return `spawn_agent: unknown model "${wantModel}"`;
     try {
@@ -362,7 +386,11 @@ async function runSubagent(
     brief += `\n\nRelevant files:\n${blocks.join("\n\n")}`;
   }
 
-  const tools = buildChildTools(env, childDepth, def?.tools);
+  const tools = buildChildTools(
+    { ...env, signal, parentProvider, parentModel },
+    childDepth,
+    def?.tools,
+  );
   // A custom agent's body becomes the persona; the generic contract (work
   // autonomously, return a self-contained summary) is appended so the return value
   // still flows back to the parent correctly.
@@ -371,8 +399,11 @@ async function runSubagent(
     { role: "user", content: [{ type: "text", text: brief }] },
   ];
 
+  if (env.limiter.busy) ctx.progress?.("waiting for a free sub-agent slot");
   await env.limiter.acquire();
+  ctx.progress?.(`started on ${model}`);
   let summary = "";
+  let step = 0;
   let reason = "stop";
   const hookContext = { cwd: process.cwd() };
   const preToolUse = env.config.hooks.PreToolUse?.length
@@ -398,19 +429,31 @@ async function runSubagent(
       compactAtTokens: budget.compactAtTokens,
       maxToolResultChars: budget.maxToolResultChars,
       maxToolSchemaChars: budget.maxToolSchemaChars,
-      signal: env.signal,
+      signal,
       gate: env.gate,
       preToolUse,
       postToolUse,
     })) {
       if (ev.type === "text") summary += ev.text;
       if (ev.type === "done") reason = ev.reason;
+      if (ev.type === "tool_start") {
+        step++;
+        ctx.progress?.(`step ${step}: ${describeCall(ev.name, ev.input)}`);
+      }
+      if (ev.type === "tool_progress") ctx.progress?.(ev.text);
+      if (ev.type === "turn_end" && step > 0) {
+        ctx.progress?.(`step ${step} done, waiting for ${model}`);
+      }
     }
   } finally {
     if (env.config.hooks.SubagentStop?.length) {
       await runSubagentStopHooks(env.config.hooks, { ...hookContext, reason });
     }
     env.limiter.release();
+  }
+  if (reason === "aborted") return "(sub-agent interrupted by the user)";
+  if (reason === "max_turns") {
+    return `${summary.trim()}\n\n(sub-agent stopped at its ${env.config.autoMaxTurns}-turn limit before finishing)`.trim();
   }
   return summary.trim() || "(sub-agent finished without a summary)";
 }
@@ -464,7 +507,7 @@ export function spawnAgentTool(env: SpawnAgentEnv): Tool {
       },
       required: ["task"],
     },
-    async run(input) {
+    async run(input, ctx) {
       const task = input.task;
       if (typeof task !== "string" || task.length === 0) {
         throw new Error('missing required string argument "task"');
@@ -474,7 +517,7 @@ export function spawnAgentTool(env: SpawnAgentEnv): Tool {
         : undefined;
       const model = typeof input.model === "string" ? input.model : undefined;
       const agent = typeof input.agent === "string" ? input.agent : undefined;
-      return runSubagent(env, { task, files, model, agent });
+      return runSubagent(env, { task, files, model, agent }, ctx);
     },
   };
 }

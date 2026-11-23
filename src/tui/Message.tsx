@@ -88,6 +88,8 @@ export type Item =
       toolId: string;
       name: string;
       input: unknown;
+      /** Latest status line from a tool that is still running. */
+      progress?: string;
       result?: string;
       isError?: boolean;
       pending: boolean;
@@ -354,11 +356,20 @@ function BannerView({
       width="100%"
     >
       {/* The wordmark wears the CanaryCoders brand orange. */}
-      <Text bold color={tint(BRAND.orange)}>{`${appName} v${version}`}</Text>
-      <Text
-        dimColor
-      >{`  ${abbreviateCwd(cwd)}  ·  ${model} · ${provider}`}</Text>
-      <Text color={tint(BRAND.orange)}>{"  ·  canarycoders.es"}</Text>
+      {/* The wordmark and model never shrink; the path gives way on a narrow
+          terminal. */}
+      <Box flexShrink={0}>
+        <Text bold color={tint(BRAND.orange)}>{`${appName} v${version}`}</Text>
+      </Box>
+      <Box flexShrink={0}>
+        <Text>{`  ${model}`}</Text>
+      </Box>
+      <Box flexShrink={1}>
+        <Text
+          dimColor
+          wrap="truncate"
+        >{`  ${provider} · ${abbreviateCwd(cwd)}`}</Text>
+      </Box>
     </Box>
   );
 }
@@ -777,11 +788,17 @@ function ToolView({
   // the live content width so it never wraps. The full card renders on finalise.
   if (compact) {
     const line = `${headline} ${mark}`;
+    const progress = item.pending && item.progress ? `  ${item.progress}` : "";
     return (
       <Box flexDirection="column">
         <Text color={tint(statusColor)}>
           {width ? truncate(line, width) : line}
         </Text>
+        {progress ? (
+          <Text dimColor wrap="truncate">
+            {width ? truncate(progress, width) : progress}
+          </Text>
+        ) : null}
       </Box>
     );
   }

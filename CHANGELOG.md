@@ -8,6 +8,14 @@ what's-new banner.
 Format: [Keep a Changelog](https://keepachangelog.com) headings
 (`## <version> - <date>`), newest first.
 
+## 0.4.2 - 2026-11-23
+
+- Fixed: a sub-agent could not be interrupted. It was tied to a signal that only fires at exit, so Esc left it running, up to its turn limit, with nothing on screen.
+- Fixed: a sub-agent ran on the model the session started with instead of the one selected with `/model`.
+- A running sub-agent now reports each step (`step 3: edit_file locales/nl.json`) under its row and in the busy row.
+- A response stream that sends nothing for five minutes fails with a clear error instead of hanging the turn.
+- Softer colours for inline code, headings, status marks and chips; the header no longer cuts off the version and model; an interrupt no longer prints a red error card.
+
 ## 0.4.1 - 2026-11-23
 
 - Model reasoning collapses to one line (`Thought for 34s (120 lines)`), expanded by a click, Enter in nav mode, or ctrl+r. While it streams, only its last three lines show, as plain text.

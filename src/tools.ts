@@ -10,6 +10,7 @@ import { readdir } from "node:fs/promises";
 import { relative, resolve, sep } from "node:path";
 import { computeDiff, type Diff } from "./diff.ts";
 import { type ImageData, isImagePath, readImageFile } from "./image.ts";
+import type { Provider } from "./provider.ts";
 import { systemShell } from "./shell.ts";
 
 /**
@@ -30,6 +31,18 @@ export interface ToolRunResult {
   image?: ImageData;
 }
 
+/** What the agent loop tells a tool about the call it is running under. */
+export interface ToolRunContext {
+  /** Aborts when the user interrupts the turn that issued the call. */
+  signal?: AbortSignal;
+  /** Provider and model of the calling turn, which may differ from the ones the
+   * session was assembled with after a `/model` switch. */
+  provider?: Provider;
+  model?: string;
+  /** Report a one-line status while the tool is still running. */
+  progress?(text: string): void;
+}
+
 export interface Tool {
   name: string;
   description: string;
@@ -43,8 +56,11 @@ export interface Tool {
    * that arrive in bulk from outside (MCP servers), never on the core set.
    */
   deferrable?: boolean;
-  // biome-ignore lint/suspicious/noExplicitAny: tool inputs are dynamic JSON bags read with typeof guards.
-  run(input: Record<string, any>): Promise<string | ToolRunResult>;
+  run(
+    // biome-ignore lint/suspicious/noExplicitAny: tool inputs are dynamic JSON bags read with typeof guards.
+    input: Record<string, any>,
+    ctx?: ToolRunContext,
+  ): Promise<string | ToolRunResult>;
 }
 
 // ── small helpers ─────────────────────────────────────────────────────────────
