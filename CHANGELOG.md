@@ -8,6 +8,59 @@ what's-new banner.
 Format: [Keep a Changelog](https://keepachangelog.com) headings
 (`## <version> - <date>`), newest first.
 
+## 0.4.0 - 2026-11-23
+
+Open-weight models on CanaryLLM (Kimi, GLM, and the local Qwen and Gemma
+builds) now work as daily drivers, including the 32k-context local ones.
+
+### Added
+
+- **Context limits per model.** CanaryLLM discovery reads each model's context
+  window, output limit and vision support from the catalogue. The completion
+  cap, the compaction threshold and the size of a single tool result are
+  derived from the window, so a 32k model compacts at about 18k tokens while a
+  1M model keeps the configured `compactAtTokens`. Custom providers can set
+  `contextWindow` and `maxOutputTokens` on a model by hand.
+- **Tool schemas on demand.** When the tool schemas would take more than a
+  fifth of the window, MCP tools are left out of the request and reached
+  through `describe_tool` and `call_tool`. Three MCP servers used to add about
+  22k tokens to every request.
+- **Reasoning output on Chat Completions gateways.** `reasoning_content`
+  deltas and a leading `<think>` block are shown as thinking, and `/think`
+  levels are sent as `reasoning_effort`.
+- **Retries.** Requests that fail with a network error or a 408, 429 or 5xx
+  status are retried up to three times with backoff.
+- **Context usage in the footer** (`ctx 42%`) once a known window is at least
+  10% full, and `/model` lists models grouped by upstream, wrapped to the
+  terminal, with their window size.
+- `CANARYLLM_BASE_URL` points the built-in provider at another CanaryLLM
+  instance.
+
+### Changed
+
+- Compaction first clears old tool output and only summarizes when that is not
+  enough. A summary keeps the original request word for word and runs on the
+  active model instead of the configured default.
+- A request rejected for exceeding the context window is compacted and retried
+  once instead of ending the run.
+- `edit_file` accepts an `old` string that differs from the file only in
+  whitespace, or that still carries `read_file` line numbers, when the match is
+  unique. A miss names the closest line.
+- Tool arguments are coerced toward the schema (`"50"` to `50`, `"true"` to
+  `true`, a JSON string to an object) before the tool runs.
+- An empty reply gets one follow-up prompt instead of ending the run.
+- With only `CANARYLLM_API_KEY` set, the default model is a CanaryLLM model
+  instead of an Anthropic one that has no key.
+- `autoMaxTurns` defaults to 200 (was 25).
+- An MCP server that does not answer within 15 seconds is skipped.
+
+### Fixed
+
+- `canarycode -p` no longer hangs when stdin is open but never written to
+  (agent harnesses, CI, service units). It waits two seconds for piped input.
+- An error reported by the gateway after the stream started is raised instead
+  of being read as an empty reply.
+
 ## 0.3.1 - 2026-07-14
 
 ### Added
