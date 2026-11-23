@@ -76,9 +76,10 @@ bun run dev
 `canarycode` needs an API key before it can talk to a model. Pick one:
 
 ```bash
-# Recommended — CanaryLLM (see #canaryllm above)
+# Recommended: CanaryLLM (see #canaryllm above)
 export CANARYLLM_API_KEY=clk...
-canarycode --model <a-canary-model-id>
+canarycode                                   # starts on an open-weight coding model
+canarycode --model lmstudio/qwen3.6-27b-mlx  # or pick one; /model lists them all
 
 # Alternative — raw Anthropic
 export ANTHROPIC_API_KEY=sk-ant-...
@@ -119,7 +120,7 @@ canarycode                 # interactive TUI in the current directory
 | `--model <id>` | Override the configured model |
 | `--think [level]` | Extended thinking: `off`, `think`, `think-hard`, or `ultrathink` (a keyword in the prompt triggers this too) |
 | `--plan` | Planning mode: investigate read-only, emit a structured plan, then stop |
-| `--auto, --yolo` | Autonomous mode: run to completion with no confirmations (capped at `autoMaxTurns`, default 25) |
+| `--auto, --yolo` | Autonomous mode: run to completion with no confirmations (capped at `autoMaxTurns`, default 200) |
 | `--no-tools` | Disable tools for read-only quick Q&A |
 | `--resume [id]` | Continue a saved session: bare `--resume` opens an interactive picker, an id resumes directly. Opens the TUI when interactive; runs headless with `-p` |
 | `-c, --continue` | Continue the most recent session directly (no picker) |
@@ -157,7 +158,7 @@ Each line is a JSON `AgentEvent`: `text`, `thinking`, `tool_start {id,name,input
 
 - Plan mode. Runs read-only and allows `read_file`, `list_dir`, `grep`, and `web_search`. It blocks write, edit, and bash. It emits a structured plan with steps, files to touch, and risks.
 - Auto mode. Runs autonomous multi-turn execution with no per-step input, bounded by `autoMaxTurns`. `Esc` aborts.
-- Thinking modes. They map to Anthropic extended-thinking budgets: `off`, `think` at 4k, `think-hard` at 10k, `ultrathink` at 32k. Non-Anthropic providers degrade gracefully. Setting a level with `/think` writes it to `~/.canarycode/config.json` under the `thinking` key, so it becomes the default on the next launch. `--think` overrides it for one run without changing the saved default.
+- Thinking modes. They map to Anthropic extended-thinking budgets: `off`, `think` at 4k, `think-hard` at 10k, `ultrathink` at 32k. OpenAI-compatible gateways get the matching `reasoning_effort` (`low`, `medium`, `high`). Setting a level with `/think` writes it to `~/.canarycode/config.json` under the `thinking` key, so it becomes the default on the next launch. `--think` overrides it for one run without changing the saved default.
 - Web search. A read-only `web_search` tool works with no key by default through a free DuckDuckGo backend. You can configure Brave or Tavily backends under `webSearch`.
 - Sub-agents. A `spawn_agent` tool delegates focused work to a child agent with its own fresh context, bounded by `maxConcurrent` and `maxDepth`.
 - Claude Code subscription models. Run Anthropic models on your Claude Code Pro/Max/org subscription through the official Claude Code Agent SDK — no API key. Run `claude login`, then pick `claude:opus`, `claude:sonnet`, `claude:haiku`, or `claude:fable`. The SDK drives its own agent loop with full tool execution; your skills, MCP, and project instructions are forwarded in, and even if `ANTHROPIC_API_KEY` is set this path uses the subscription, not the API. See [Claude Code](#claude-code) under Configuration.
@@ -280,7 +281,15 @@ canarycode --model <a-canary-model-id> -p "say hi"
 
 Display output redacts the key, and a literal `${CANARYLLM_API_KEY}` reference is preserved in the file rather than written as an interpolated secret.
 
-The preset is an `openai-compat` provider pinned to `https://canaryllm.canarycoders.es/v1`. The spec's `servers` list is localhost-only, so the base URL is hard-set. To use the Anthropic-compatible path instead, declare your own provider against `/v1/messages` with `"api": "anthropic"`.
+With only the CanaryLLM key set, `canarycode` starts on an open-weight coding model (`moonshot/kimi-k2.7-code`, then `zhipu/glm-5.3`, then `lmstudio/qwen3.6-27b-mlx`, whichever the gateway offers first). Set `model` in the config to choose another.
+
+Discovery also reads each model's context window and output limit, and the agent loop sizes itself to them. On a 32k local model that means a smaller completion cap, compaction at about 18k tokens, tool results capped at about 20k characters, and MCP tool schemas loaded on demand through `describe_tool` and `call_tool` when they would take more than a fifth of the window. Reasoning (`reasoning_content`, or a leading `<think>` block) is shown as thinking, and `/think` levels are sent as `reasoning_effort`. For a model on a custom provider, set the limits by hand:
+
+```json
+{ "id": "my-local-model", "contextWindow": 32768, "maxOutputTokens": 8192 }
+```
+
+The preset is an `openai-compat` provider pinned to `https://canaryllm.canarycoders.es/v1`; set `CANARYLLM_BASE_URL` to use another CanaryLLM instance. The spec's `servers` list is localhost-only, so the base URL is hard-set. To use the Anthropic-compatible path instead, declare your own provider against `/v1/messages` with `"api": "anthropic"`.
 
 ### Claude Code
 

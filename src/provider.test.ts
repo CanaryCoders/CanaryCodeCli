@@ -5,6 +5,7 @@ import type { TokenGetter } from "./auth.ts";
 import {
   createProvider,
   type Message,
+  type Provider,
   type StreamEvent,
   TOOL_INPUT_PARSE_ERROR,
   toAnthropicMessage,
@@ -371,5 +372,122 @@ describe("openai-responses provider stream", () => {
     expect(calls).toBe(2);
     expect(forced).toBe(1);
     expect(events.at(-1)).toEqual({ type: "done", stopReason: "stop" });
+  });
+});
+
+// ── openai-compat provider stream ────────────────────────────────────────────
+
+function sse(frames: unknown[]): Response {
+  const body = `${frames.map((f) => `data: ${JSON.stringify(f)}\n\n`).join("")}data: [DONE]\n\n`;
+  return new Response(body, {
+    status: 200,
+    headers: { "content-type": "text/event-stream" },
+  });
+}
+
+function delta(d: Record<string, unknown>): unknown {
+  return { choices: [{ index: 0, delta: d, finish_reason: null }] };
+}
+
+async function collectCompat(
+  req: Partial<Parameters<Provider["stream"]>[0]> = {},
+): Promise<StreamEvent[]> {
+  const provider = createProvider({
+    api: "openai-compat",
+    baseUrl: "http://gateway.test/v1",
+    apiKey: "k",
+  });
+  const out: StreamEvent[] = [];
+  for await (const ev of provider.stream({
+    model: "lmstudio/qwen",
+    system: "",
+    messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+    tools: [],
+    ...req,
+  }))
+    out.push(ev);
+  return out;
+}
+
+describe("openai-compat provider stream", () => {
+  test("reasoning_content deltas surface as thinking", async () => {
+    globalThis.fetch = (async () =>
+      sse([
+        delta({ reasoning_content: "plan " }),
+        delta({ reasoning_content: "it" }),
+        delta({ content: "answer" }),
+      ])) as unknown as typeof fetch;
+    const events = await collectCompat();
+    expect(events.filter((e) => e.type === "thinking_delta")).toEqual([
+      { type: "thinking_delta", text: "plan " },
+      { type: "thinking_delta", text: "it" },
+    ]);
+    expect(events).toContainEqual({ type: "text_delta", text: "answer" });
+  });
+
+  test("a leading <think> block split across chunks is thinking, not text", async () => {
+    globalThis.fetch = (async () =>
+      sse([
+        delta({ content: "<th" }),
+        delta({ content: "ink>weigh options</th" }),
+        delta({ content: "ink>\n\nUse <think> tags" }),
+      ])) as unknown as typeof fetch;
+    const events = await collectCompat();
+    const thinking = events
+      .filter((e) => e.type === "thinking_delta")
+      .map((e) => (e as { text: string }).text)
+      .join("");
+    const text = events
+      .filter((e) => e.type === "text_delta")
+      .map((e) => (e as { text: string }).text)
+      .join("");
+    expect(thinking).toBe("weigh options");
+    expect(text).toBe("Use <think> tags");
+  });
+
+  test("sends reasoning_effort only when thinking is on", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(init.body as string));
+      return sse([delta({ content: "ok" })]);
+    }) as unknown as typeof fetch;
+    await collectCompat();
+    await collectCompat({ thinkingBudget: 10_000 });
+    expect(bodies[0]).not.toHaveProperty("reasoning_effort");
+    expect(bodies[1]?.reasoning_effort).toBe("medium");
+  });
+
+  test("retries a 503 and then streams the reply", async () => {
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      if (calls++ === 0)
+        return new Response("busy", {
+          status: 503,
+          headers: { "retry-after": "0.01" },
+        });
+      return sse([delta({ content: "ok" })]);
+    }) as unknown as typeof fetch;
+    const events = await collectCompat();
+    expect(calls).toBe(2);
+    expect(events).toContainEqual({ type: "text_delta", text: "ok" });
+  });
+
+  test("a 400 is not retried", async () => {
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls++;
+      return new Response("bad request", { status: 400 });
+    }) as unknown as typeof fetch;
+    await expect(collectCompat()).rejects.toThrow(/400/);
+    expect(calls).toBe(1);
+  });
+
+  test("an error frame after the 200 throws", async () => {
+    globalThis.fetch = (async () =>
+      sse([
+        delta({ content: "par" }),
+        { error: { message: "model crashed" } },
+      ])) as unknown as typeof fetch;
+    await expect(collectCompat()).rejects.toThrow(/model crashed/);
   });
 });

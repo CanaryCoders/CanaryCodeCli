@@ -22,6 +22,7 @@ import {
 } from "./assemble.ts";
 import {
   type Config,
+  contextBudget,
   loadConfig,
   modelForRole,
   modelSupportsVision,
@@ -207,7 +208,7 @@ function printUsage(
       "                     (also triggered by a keyword in the prompt)",
       "  --plan             planning mode: investigate read-only, emit a plan, stop",
       "  --auto, --yolo     autonomous mode: run to completion, no confirmations,",
-      "                     capped at autoMaxTurns (default 25)",
+      "                     capped at autoMaxTurns (default 200)",
       "  --no-tools         disable tools (read-only quick Q&A)",
       "  --no-color         raw markdown to stdout even on a TTY (also: NO_COLOR)",
       "  --json             stream structured JSON events (JSONL) on stdout",
@@ -230,11 +231,47 @@ function printUsage(
   );
 }
 
-/** Read all of stdin when it is piped (not a TTY). Returns "" for an interactive terminal. */
-async function readStdin(): Promise<string> {
+/** How long to wait for piped context to start arriving when a prompt was
+ * already given on the command line. */
+const STDIN_WAIT_MS = 2000;
+
+/**
+ * Read piped stdin (returns "" on a terminal). With `-p` stdin is optional
+ * context, and a parent that leaves it open without writing (an agent
+ * harness, a CI runner, a service unit) never sends EOF; waiting on it would
+ * hang the run. So when a prompt exists, give up if nothing arrives in
+ * {@link STDIN_WAIT_MS}. Once data flows, or when stdin is the only prompt
+ * source, read through to EOF.
+ */
+async function readStdin(hasPrompt: boolean): Promise<string> {
   if (process.stdin.isTTY) return "";
   try {
-    return (await Bun.stdin.text()).trimEnd();
+    const reader = Bun.stdin.stream().getReader();
+    const decoder = new TextDecoder();
+    let text = "";
+    let first = true;
+    while (true) {
+      const next = reader.read();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const chunk =
+        first && hasPrompt
+          ? await Promise.race([
+              next,
+              new Promise<null>((resolve) => {
+                timer = setTimeout(() => resolve(null), STDIN_WAIT_MS);
+              }),
+            ])
+          : await next;
+      clearTimeout(timer);
+      if (chunk === null) {
+        void reader.cancel().catch(() => {});
+        return "";
+      }
+      first = false;
+      if (chunk.done) break;
+      text += decoder.decode(chunk.value, { stream: true });
+    }
+    return (text + decoder.decode()).trimEnd();
   } catch {
     return "";
   }
@@ -248,7 +285,7 @@ function titleFrom(prompt: string): string {
 
 /** Headless print mode: run the agent loop once over `prompt`, streaming to stdout. */
 async function runHeadless(args: Args): Promise<number> {
-  const stdin = await readStdin();
+  const stdin = await readStdin(Boolean(args.prompt?.trim()));
   let prompt = args.prompt ?? "";
   if (stdin) {
     prompt = prompt ? `${prompt}\n\n--- stdin ---\n${stdin}` : stdin;
@@ -310,6 +347,7 @@ async function runHeadless(args: Args): Promise<number> {
   }
 
   const modelName = resolved.model.name ?? resolved.model.id;
+  const budget = contextBudget(config, resolved.model);
   // Turn cap: auto mode uses the configured autonomy budget; otherwise the
   // checkpoint budget as a hard runaway guard (headless is non-interactive, so
   // there's no human to answer a checkpoint). `checkpointEvery: 0` disables the
@@ -403,7 +441,11 @@ async function runHeadless(args: Args): Promise<number> {
     },
   });
   const { tools, system, gate } = sessionForMode(session, mode);
-  const compactResolved = resolveModel(config, modelForRole(config, "compact"));
+  // Summaries run on the active model unless a compact model is configured;
+  // falling back to `config.model` would ignore a `--model` override.
+  const compactResolved = config.models?.compact
+    ? resolveModel(config, config.models.compact)
+    : undefined;
   const compactProvider = compactResolved
     ? createProvider(compactResolved.providerConfig)
     : provider;
@@ -520,7 +562,10 @@ async function runHeadless(args: Args): Promise<number> {
       supportsVision,
       maxTurns: turnCap,
       thinkingBudget,
-      compactAtTokens: config.compactAtTokens,
+      maxTokens: budget.maxTokens,
+      compactAtTokens: budget.compactAtTokens,
+      maxToolResultChars: budget.maxToolResultChars,
+      maxToolSchemaChars: budget.maxToolSchemaChars,
       compactProvider,
       compactModel,
       signal: controller.signal,

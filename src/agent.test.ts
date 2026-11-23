@@ -4,7 +4,13 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type AgentEvent, roleForMode, runAgent } from "./agent.ts";
+import {
+  type AgentEvent,
+  coerceToolInput,
+  planTools,
+  roleForMode,
+  runAgent,
+} from "./agent.ts";
 import {
   type ContentBlock,
   type Message,
@@ -520,5 +526,278 @@ describe("runAgent abort during streaming", () => {
       events.push(ev);
     }
     expect(events.at(-1)).toEqual({ type: "done", reason: "aborted" });
+  });
+});
+
+// ── small-context behaviour ──────────────────────────────────────────────────
+
+/** A provider that plays back one scripted turn per call. */
+function scripted(turns: StreamEvent[][]): Provider & { calls: number } {
+  const p = {
+    id: "fake",
+    calls: 0,
+    async *stream(): AsyncIterable<StreamEvent> {
+      const turn = turns[Math.min(p.calls++, turns.length - 1)]!;
+      for (const ev of turn) yield ev;
+    },
+  };
+  return p;
+}
+
+const echo: Tool = {
+  name: "echo",
+  description: "echo",
+  readOnly: true,
+  schema: {
+    type: "object",
+    properties: { n: { type: "number" }, loud: { type: "boolean" } },
+  },
+  async run(input) {
+    return `${typeof input.n}:${input.n} ${typeof input.loud}:${input.loud}`;
+  },
+};
+
+function userMsg(text: string): Message {
+  return { role: "user", content: [{ type: "text", text }] };
+}
+
+describe("coerceToolInput", () => {
+  test("fixes stringified numbers, booleans and whole-argument strings", () => {
+    expect(coerceToolInput(echo.schema, { n: "50", loud: "true" })).toEqual({
+      n: 50,
+      loud: true,
+    });
+    expect(coerceToolInput(echo.schema, '{"n":"7"}')).toEqual({ n: 7 });
+    expect(coerceToolInput(echo.schema, null)).toEqual({});
+  });
+
+  test("leaves values it cannot interpret untouched", () => {
+    expect(coerceToolInput(echo.schema, { n: "many", other: "1" })).toEqual({
+      n: "many",
+      other: "1",
+    });
+  });
+});
+
+describe("runAgent recoveries", () => {
+  test("coerced arguments reach the tool", async () => {
+    const messages = [userMsg("go")];
+    await drain(
+      runAgent({
+        provider: scripted([
+          [
+            {
+              type: "tool_use",
+              id: "c1",
+              name: "echo",
+              input: { n: "3", loud: "false" },
+            },
+            { type: "done", stopReason: "tool_use" },
+          ],
+          [{ type: "text_delta", text: "ok" }, { type: "done" }],
+        ]),
+        model: "m",
+        system: "",
+        messages,
+        tools: [echo],
+      }),
+    );
+    const result = messages[2]!.content[0] as { content: string };
+    expect(result.content).toBe("number:3 boolean:false");
+  });
+
+  test("an empty reply is nudged once, then the run ends", async () => {
+    const provider = scripted([[{ type: "done", stopReason: "stop" }]]);
+    const messages = [userMsg("go")];
+    const events: AgentEvent[] = [];
+    for await (const ev of runAgent({
+      provider,
+      model: "m",
+      system: "",
+      messages,
+      tools: [],
+    }))
+      events.push(ev);
+    expect(provider.calls).toBe(2);
+    expect(events.at(-1)).toEqual({ type: "done", reason: "stop" });
+    expect(JSON.stringify(messages)).toContain("Your last reply was empty");
+  });
+
+  test("an oversized tool result is cut down with a notice", async () => {
+    const big: Tool = {
+      ...echo,
+      name: "big",
+      async run() {
+        return "x".repeat(5000);
+      },
+    };
+    const messages = [userMsg("go")];
+    await drain(
+      runAgent({
+        provider: scripted([
+          [
+            { type: "tool_use", id: "c1", name: "big", input: {} },
+            { type: "done", stopReason: "tool_use" },
+          ],
+          [{ type: "text_delta", text: "ok" }, { type: "done" }],
+        ]),
+        model: "m",
+        system: "",
+        messages,
+        tools: [big],
+        maxToolResultChars: 1000,
+      }),
+    );
+    const result = messages[2]!.content[0] as { content: string };
+    expect(result.content.length).toBeLessThan(1400);
+    expect(result.content).toContain("4000 characters omitted");
+  });
+
+  test("over the limit, stale tool output is cleared before summarizing", async () => {
+    const stale = "y".repeat(4000);
+    const messages: Message[] = [userMsg("the task")];
+    for (let i = 0; i < 8; i++) {
+      messages.push({
+        role: "assistant",
+        content: [{ type: "tool_use", id: `c${i}`, name: "echo", input: {} }],
+      });
+      messages.push({
+        role: "user",
+        content: [
+          { type: "tool_result", tool_use_id: `c${i}`, content: stale },
+        ],
+      });
+    }
+    const provider = scripted([
+      [{ type: "text_delta", text: "done" }, { type: "done" }],
+    ]);
+    const events: AgentEvent[] = [];
+    for await (const ev of runAgent({
+      provider,
+      model: "m",
+      system: "",
+      messages,
+      tools: [],
+      compactAtTokens: 5000,
+    }))
+      events.push(ev);
+    // One model call: the reply. No summarization round-trip was needed.
+    expect(provider.calls).toBe(1);
+    expect(events.some((e) => e.type === "compaction")).toBe(true);
+    expect(JSON.stringify(messages[2])).toContain("tool output cleared");
+    expect(JSON.stringify(messages.at(-2)).includes(stale)).toBe(true);
+    expect(messages[0]).toEqual(userMsg("the task"));
+  });
+
+  test("a context-overflow error shrinks the transcript and retries once", async () => {
+    const messages: Message[] = [userMsg("the task")];
+    for (let i = 0; i < 6; i++) {
+      messages.push({
+        role: "assistant",
+        content: [{ type: "text", text: `step ${i} ${"z".repeat(600)}` }],
+      });
+      messages.push(userMsg(`next ${i}`));
+    }
+    let calls = 0;
+    const provider: Provider = {
+      id: "fake",
+      async *stream(req): AsyncIterable<StreamEvent> {
+        calls++;
+        if (calls === 1)
+          throw new Error("400 — maximum context length is 32768 tokens");
+        // call 2 is the summarizer (no tools, its own system prompt)
+        yield { type: "text_delta", text: req.system ? "summary" : "ok" };
+        yield { type: "done" };
+      },
+    };
+    const before = messages.length;
+    const events: AgentEvent[] = [];
+    for await (const ev of runAgent({
+      provider,
+      model: "m",
+      system: "",
+      messages,
+      tools: [],
+    }))
+      events.push(ev);
+    expect(events.some((e) => e.type === "compaction")).toBe(true);
+    expect(events.at(-1)).toEqual({ type: "done", reason: "stop" });
+    expect(messages.length).toBeLessThan(before);
+    expect(JSON.stringify(messages[0])).toContain("the task");
+  });
+});
+
+describe("deferred tool schemas", () => {
+  const remote: Tool = {
+    name: "mcp__docs__search",
+    description: "Search the docs.\nLong details the index leaves out.",
+    readOnly: true,
+    deferrable: true,
+    schema: {
+      type: "object",
+      properties: { query: { type: "string", description: "x".repeat(2000) } },
+    },
+    async run(input) {
+      return `results for ${input.query}`;
+    },
+  };
+
+  test("everything is sent when the schemas fit", () => {
+    const plan = planTools([echo, remote], 100_000);
+    expect(plan.deferred).toBe(false);
+    expect(plan.active).toEqual([echo, remote]);
+  });
+
+  test("over budget, deferrable tools are swapped for an index", () => {
+    const plan = planTools([echo, remote], 1000);
+    expect(plan.deferred).toBe(true);
+    expect(plan.active.map((t) => t.name)).toEqual([
+      "echo",
+      "describe_tool",
+      "call_tool",
+    ]);
+    const call = plan.active[2]!;
+    expect(call.description).toContain("- mcp__docs__search: Search the docs.");
+    expect(call.description).not.toContain("Long details");
+  });
+
+  test("call_tool runs the named tool and reports it under its own name", async () => {
+    const messages = [userMsg("go")];
+    const events: AgentEvent[] = [];
+    for await (const ev of runAgent({
+      provider: scripted([
+        [
+          {
+            type: "tool_use",
+            id: "c1",
+            name: "call_tool",
+            input: { name: "mcp__docs__search", arguments: '{"query":"hono"}' },
+          },
+          { type: "done", stopReason: "tool_use" },
+        ],
+        [{ type: "text_delta", text: "ok" }, { type: "done" }],
+      ]),
+      model: "m",
+      system: "",
+      messages,
+      tools: [echo, remote],
+      maxToolSchemaChars: 1000,
+    }))
+      events.push(ev);
+    const end = events.find((e) => e.type === "tool_end") as {
+      name: string;
+      result: string;
+    };
+    expect(end.name).toBe("mcp__docs__search");
+    expect(end.result).toBe("results for hono");
+  });
+
+  test("describe_tool returns the withheld parameters", async () => {
+    const describe = planTools([echo, remote], 1000).active[1]!;
+    const out = await describe.run({ name: "mcp__docs__search" });
+    expect(out).toContain('"query"');
+    await expect(describe.run({ name: "nope" })).rejects.toThrow(
+      /no such tool/,
+    );
   });
 });

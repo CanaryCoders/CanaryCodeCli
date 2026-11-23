@@ -40,6 +40,8 @@ import {
   makeCommandSet,
 } from "../commands.ts";
 import {
+  type ContextBudget,
+  contextBudget,
   getRawConfigPath,
   loadConfig,
   modelSupportsVision,
@@ -92,6 +94,7 @@ import type { ExtensionToggle } from "./Extensions.tsx";
 import { drainInputQuiet, expandPastes } from "./input-helpers.ts";
 import type { Item } from "./Message.tsx";
 import { itemsFromMessages } from "./message-helpers.ts";
+import { formatModelList } from "./model-list.ts";
 import type { TuiRuntime } from "./runtime.tsx";
 import type { Approvals } from "./use-approvals.ts";
 import type { PasteChips } from "./use-paste-chips.ts";
@@ -124,6 +127,8 @@ export interface AgentSession {
   cost: number;
   costKnown: boolean;
   tokens: number;
+  /** Share of the active model's context window in use (0-100), when known. */
+  contextPct?: number;
   modelLabel: string;
   mode: AgentMode;
   thinking: ThinkingLevel;
@@ -282,6 +287,7 @@ export function useAgentSession(deps: {
     () => props.store.getSession(props.sessionId)?.costUsd ?? 0,
   );
   const [costKnown, setCostKnown] = useState(hasPriceData(props.modelName));
+  const [contextPct, setContextPct] = useState<number | undefined>(undefined);
   const [tokens, setTokens] = useState(() => {
     const s = props.store.getSession(props.sessionId);
     return s ? s.inputTokens + s.outputTokens : 0;
@@ -358,6 +364,7 @@ export function useAgentSession(deps: {
     provider: Provider;
     model: string;
     supportsVision: boolean;
+    budget: ContextBudget;
   } | null {
     if (!roleId) return null;
     const resolved = resolveModel(props.config, roleId);
@@ -367,6 +374,7 @@ export function useAgentSession(deps: {
         provider: createProvider(resolved.providerConfig),
         model: resolved.model.name ?? resolved.model.id,
         supportsVision: modelSupportsVision(resolved.model),
+        budget: contextBudget(props.config, resolved.model),
       };
     } catch {
       return null;
@@ -379,6 +387,7 @@ export function useAgentSession(deps: {
     provider: Provider;
     model: string;
     supportsVision: boolean;
+    budget: ContextBudget;
   } {
     const roleModel = modelForRoleId(
       props.config.models?.[roleForMode(runMode)],
@@ -386,11 +395,12 @@ export function useAgentSession(deps: {
     if (roleModel) return roleModel;
     // Base-ref fallback has no ModelConfig in hand; assume vision-capable (the
     // built-in models all are) — a text-only model is opted out via config.
-    const base = resolveModel(props.config);
+    const base = resolveModel(props.config, modelNameRef.current);
     return {
       provider: providerRef.current,
       model: modelNameRef.current,
       supportsVision: base ? modelSupportsVision(base.model) : true,
+      budget: contextBudget(props.config, base?.model),
     };
   }
 
@@ -486,6 +496,7 @@ export function useAgentSession(deps: {
       provider: turnProvider,
       model: turnModel,
       supportsVision: turnSupportsVision,
+      budget: turnBudget,
     } = modelForTurn(runMode);
     // Per-turn view of the assembled session: plan filtering, the mode suffix, and
     // auto's gate skip are all derived here (tools/system/gate) from the single
@@ -568,6 +579,7 @@ export function useAgentSession(deps: {
         thinkingBudget: budget,
         compactProvider: compact?.provider,
         compactModel: compact?.model,
+        ...m.budget,
       };
     };
 
@@ -584,7 +596,10 @@ export function useAgentSession(deps: {
         checkpointEvery,
         onCheckpoint: interactive ? approvals.requestCheckpoint : undefined,
         thinkingBudget: budget,
-        compactAtTokens: props.config.compactAtTokens,
+        maxTokens: turnBudget.maxTokens,
+        compactAtTokens: turnBudget.compactAtTokens,
+        maxToolResultChars: turnBudget.maxToolResultChars,
+        maxToolSchemaChars: turnBudget.maxToolSchemaChars,
         compactProvider: compactRunModel.provider,
         compactModel: compactRunModel.model,
         signal: controller.signal,
@@ -629,6 +644,15 @@ export function useAgentSession(deps: {
               t.diff = ev.diff;
             }
             sync();
+            break;
+          }
+          case "turn_end": {
+            const window = modelForTurn(runMode).budget.contextWindow;
+            setContextPct(
+              window && ev.contextTokens
+                ? Math.min(100, Math.round((ev.contextTokens / window) * 100))
+                : undefined,
+            );
             break;
           }
           case "usage": {
@@ -977,18 +1001,8 @@ export function useAgentSession(deps: {
 
   /** List every configured model, grouped by source (/model with no argument). */
   function listModels(): void {
-    const lines: string[] = [];
-    for (const [key, pc] of Object.entries(props.config.providers)) {
-      const models = pc.models ?? [];
-      if (models.length === 0) continue;
-      const ids = models.map((m) =>
-        m.name && m.name !== m.id ? `${m.id} (${m.name})` : m.id,
-      );
-      lines.push(`  ${providerDisplayName(key)}: ${ids.join(", ")}`);
-    }
-    note(
-      lines.length ? `models:\n${lines.join("\n")}` : "no models configured",
-    );
+    const text = formatModelList(props.config, process.stdout.columns ?? 100);
+    note(text ? `models:\n${text}` : "no models configured");
   }
 
   async function submitPrompt(
@@ -1619,6 +1633,7 @@ export function useAgentSession(deps: {
     cost,
     costKnown: effectiveModel ? hasPriceData(effectiveModelName) : costKnown,
     tokens,
+    contextPct,
     modelLabel: effectiveModelLabel,
     mode,
     thinking,

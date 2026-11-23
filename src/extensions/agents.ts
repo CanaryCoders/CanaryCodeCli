@@ -42,7 +42,7 @@ import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { type AgentOptions, runSession } from "../agent.ts";
-import { type Config, resolveModel } from "../config.ts";
+import { type Config, contextBudget, resolveModel } from "../config.ts";
 import type { SessionExtension } from "../extension.ts";
 import { createProvider, type Message, type Provider } from "../provider.ts";
 import type { Tool } from "../tools.ts";
@@ -326,12 +326,19 @@ async function runSubagent(
   const wantModel = pickSubagentModel(req.model, def?.model, env.config);
   let provider = env.parentProvider;
   let model = env.parentModel;
+  let budget = contextBudget(
+    env.config,
+    env.config.providers
+      ? resolveModel(env.config, env.parentModel)?.model
+      : undefined,
+  );
   if (wantModel && wantModel !== env.parentModel) {
     const resolved = resolveModel(env.config, wantModel);
     if (!resolved) return `spawn_agent: unknown model "${wantModel}"`;
     try {
       provider = createProvider(resolved.providerConfig);
       model = resolved.model.name ?? resolved.model.id;
+      budget = contextBudget(env.config, resolved.model);
     } catch (err) {
       return `spawn_agent: ${(err as Error).message}`;
     }
@@ -387,6 +394,10 @@ async function runSubagent(
       tools,
       mode: "normal",
       maxTurns: env.config.autoMaxTurns,
+      maxTokens: budget.maxTokens,
+      compactAtTokens: budget.compactAtTokens,
+      maxToolResultChars: budget.maxToolResultChars,
+      maxToolSchemaChars: budget.maxToolSchemaChars,
       signal: env.signal,
       gate: env.gate,
       preToolUse,

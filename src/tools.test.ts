@@ -77,9 +77,12 @@ describe("bash", () => {
       const id = text.match(/shell_\d+/)?.[0];
       expect(id).toBeDefined();
 
-      await Bun.sleep(250);
-      const logs = await output.run({ shell_id: id });
-      const logText = typeof logs === "string" ? logs : logs.content;
+      let logText = "";
+      for (let i = 0; i < 100 && !logText.includes("Status: exited"); i++) {
+        await Bun.sleep(50);
+        const logs = await output.run({ shell_id: id });
+        logText = typeof logs === "string" ? logs : logs.content;
+      }
       expect(logText).toContain("Status: exited (code 0)");
       expect(logText).toContain("first\nsecond");
       expect(logText).toContain("next_offset=");
@@ -111,5 +114,48 @@ describe("bash", () => {
     } finally {
       await core.dispose();
     }
+  });
+});
+
+describe("edit_file whitespace tolerance", () => {
+  const edit = tools.find((t) => t.name === "edit_file")!;
+  const path = join(tmpdir(), "canarycode-edit-tolerant.py");
+  afterEach(async () => {
+    await rm(path, { force: true });
+  });
+
+  test("matches when only spacing differs and keeps the indentation", async () => {
+    await Bun.write(path, "def add(a,b):\n    return a-b\n");
+    const out = await edit.run({
+      path,
+      old: "    return a - b",
+      new: "    return a + b",
+    });
+    expect(typeof out === "string" ? out : out.content).toContain(
+      "ignoring whitespace",
+    );
+    expect(await Bun.file(path).text()).toBe(
+      "def add(a,b):\n    return a + b\n",
+    );
+  });
+
+  test("accepts the numbered view pasted back from read_file", async () => {
+    await Bun.write(path, "one\ntwo\nthree\n");
+    await edit.run({ path, old: "2\ttwo\n3\tthree", new: "2\n3" });
+    expect(await Bun.file(path).text()).toBe("one\n2\n3\n");
+  });
+
+  test("refuses a whitespace-insensitive match that is not unique", async () => {
+    await Bun.write(path, "x = a-b\ny = a - b\n");
+    await expect(
+      edit.run({ path, old: "a  -  b", new: "a + b" }),
+    ).rejects.toThrow(/several places/);
+  });
+
+  test("a miss names the closest line", async () => {
+    await Bun.write(path, "alpha\nbeta gamma\n");
+    await expect(
+      edit.run({ path, old: "beta gamma\ndelta", new: "x" }),
+    ).rejects.toThrow(/line 2/);
   });
 });

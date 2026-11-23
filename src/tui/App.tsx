@@ -687,6 +687,7 @@ function App(props: AppProps): React.ReactNode {
               cost={session.cost}
               costKnown={session.costKnown}
               tokens={session.tokens}
+              contextPct={session.contextPct}
               verbose={session.verbose}
               onCycleMode={session.cycleMode}
               onToggleVerbose={() => session.setVerbose((v) => !v)}

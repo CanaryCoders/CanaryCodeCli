@@ -28,6 +28,8 @@ export interface FooterProps {
   costKnown: boolean;
   /** Total tokens (input + output) for the running session. */
   tokens: number;
+  /** Share of the model's context window in use (0-100), when known. */
+  contextPct?: number;
   verbose: boolean;
   /** Override terminal width (tests); defaults to the measured stdout columns. */
   columns?: number;
@@ -179,6 +181,20 @@ export function Footer(props: FooterProps): React.ReactElement {
       node: <Text dimColor>{tokText}</Text>,
     },
   ];
+  // Only once it is worth watching; a 1M-token model sits near 0% all day.
+  if (props.contextPct !== undefined && props.contextPct >= 10) {
+    const ctxText = `ctx ${props.contextPct}%`;
+    segs.push({
+      key: "context",
+      width: ctxText.length,
+      prio: 3,
+      node: (
+        <Text dimColor={props.contextPct < 80} color={tint("yellow")}>
+          {ctxText}
+        </Text>
+      ),
+    });
+  }
   if (costText) {
     segs.push({
       key: "cost",

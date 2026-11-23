@@ -265,7 +265,7 @@ export function describeCodex(
 ): string | undefined {
   if (!result) return undefined;
   if ("error" in result)
-    return `note: Codex model discovery failed (${result.error}) — using a built-in fallback list`;
+    return `note: Codex model discovery failed (${result.error.replace(/\s+/g, " ").slice(0, 160)}) — using a built-in fallback list`;
   if ("fallback" in result)
     return `note: Codex returned no models — using a built-in fallback list`;
   if (result.count === 0) return undefined;

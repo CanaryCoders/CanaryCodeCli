@@ -33,6 +33,66 @@ export interface ModelConfig {
    * instead of triggering an opaque API error.
    */
   supportsVision?: boolean;
+  /** Total context window in tokens. Drives compaction and output caps. */
+  contextWindow?: number;
+  /** Largest completion the model accepts, in tokens. */
+  maxOutputTokens?: number;
+}
+
+/** Per-model limits the agent loop runs under (see {@link contextBudget}). */
+export interface ContextBudget {
+  /** Completion cap sent to the provider; undefined keeps its default. */
+  maxTokens?: number;
+  /** Shrink the transcript once the estimated request exceeds this. */
+  compactAtTokens: number;
+  /** Cap on one tool result, in characters. */
+  maxToolResultChars: number;
+  /** Cap on the tool schemas sent with each request, in characters. Beyond
+   * it, deferrable tools are loaded on demand. Undefined means no cap. */
+  maxToolSchemaChars?: number;
+  /** The model's window, when known (for the context-usage readout). */
+  contextWindow?: number;
+}
+
+const DEFAULT_TOOL_RESULT_CHARS = 100_000;
+
+/**
+ * Derive the loop's limits from a model's context window. A 32k local model
+ * and a 1M hosted one cannot share one threshold: the configured
+ * `compactAtTokens` is an upper bound, lowered to what the window can hold
+ * once the completion is reserved. A model with no known window keeps the
+ * configured values.
+ */
+export function contextBudget(
+  config: Config,
+  model?: ModelConfig,
+): ContextBudget {
+  const window = model?.contextWindow;
+  if (!window || window <= 0) {
+    return {
+      compactAtTokens: config.compactAtTokens,
+      maxToolResultChars: DEFAULT_TOOL_RESULT_CHARS,
+    };
+  }
+  const maxTokens = Math.max(
+    1024,
+    Math.min(model.maxOutputTokens || 8192, 32_000, Math.floor(window / 4)),
+  );
+  return {
+    contextWindow: window,
+    // A fifth of the window (4 chars per token) for tool schemas.
+    maxToolSchemaChars: Math.floor(window * 0.8),
+    maxTokens,
+    compactAtTokens: Math.min(
+      config.compactAtTokens,
+      Math.floor((window - maxTokens) * 0.75),
+    ),
+    // ~15% of the window (4 chars per token) for any single result.
+    maxToolResultChars: Math.max(
+      8_000,
+      Math.min(DEFAULT_TOOL_RESULT_CHARS, Math.floor(window * 0.6)),
+    ),
+  };
 }
 
 /** Whether image content may be sent to this model (see ModelConfig.supportsVision). */
@@ -235,7 +295,7 @@ export function defaultConfig(): Config {
     extensions: {},
     mcpServers: {},
     ui: { nerdFont: false },
-    autoMaxTurns: 25,
+    autoMaxTurns: 200,
     checkpointEvery: 50,
     maxConcurrent: 3,
     maxDepth: 2,

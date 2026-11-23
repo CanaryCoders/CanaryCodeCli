@@ -132,6 +132,127 @@ async function* parseSSE(
   }
 }
 
+// ── Retry ────────────────────────────────────────────────────────────────────
+
+/** Statuses worth retrying: rate limits, timeouts, and upstream hiccups. */
+const RETRY_STATUS = new Set([408, 425, 429, 500, 502, 503, 504, 529]);
+const RETRY_ATTEMPTS = 4;
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        reject(new DOMException("aborted", "AbortError"));
+      },
+      { once: true },
+    );
+  });
+}
+
+/**
+ * `fetch` that retries transient failures before any of the response body is
+ * consumed: network errors and the statuses above, with exponential backoff
+ * (honouring `retry-after`). A gateway fronting a single local model queues
+ * and sheds load routinely, so one failed request must not end the run.
+ */
+async function fetchWithRetry(
+  url: string,
+  init: RequestInit & { signal?: AbortSignal },
+  fetchImpl: typeof fetch = fetch,
+): Promise<Response> {
+  for (let attempt = 1; ; attempt++) {
+    let res: Response | undefined;
+    let failure: unknown;
+    try {
+      res = await fetchImpl(url, init);
+    } catch (err) {
+      if (init.signal?.aborted) throw err;
+      failure = err;
+    }
+    if (res && !RETRY_STATUS.has(res.status)) return res;
+    if (attempt >= RETRY_ATTEMPTS) {
+      if (res) return res;
+      throw failure;
+    }
+    const retryAfter = Number(res?.headers.get("retry-after"));
+    const delay =
+      Number.isFinite(retryAfter) && retryAfter > 0
+        ? Math.min(retryAfter * 1000, 30_000)
+        : 1000 * 2 ** (attempt - 1);
+    await res?.body?.cancel().catch(() => {});
+    await sleep(delay, init.signal);
+  }
+}
+
+// ── Inline reasoning tags ────────────────────────────────────────────────────
+
+const THINK_OPEN = "<think>";
+const THINK_CLOSE = "</think>";
+
+/**
+ * Split a content stream that opens with a `<think>…</think>` block (how many
+ * local runtimes deliver reasoning when they don't use `reasoning_content`)
+ * into thinking and text. Only a block at the very start of the reply is
+ * treated as reasoning, so later prose or code mentioning the tag is untouched.
+ * Tags may arrive split across chunks, so undecided input is held back.
+ */
+export function createThinkSplitter(): {
+  push(chunk: string): { thinking: string; text: string };
+  flush(): { thinking: string; text: string };
+} {
+  let state: "start" | "thinking" | "text" = "start";
+  let held = "";
+  const step = (final: boolean): { thinking: string; text: string } => {
+    const out = { thinking: "", text: "" };
+    if (state === "start") {
+      const lead = held.trimStart();
+      if (lead.startsWith(THINK_OPEN)) {
+        state = "thinking";
+        held = lead.slice(THINK_OPEN.length);
+      } else if (!final && THINK_OPEN.startsWith(lead)) {
+        return out; // could still become the tag
+      } else {
+        state = "text";
+      }
+    }
+    if (state === "thinking") {
+      const end = held.indexOf(THINK_CLOSE);
+      if (end !== -1) {
+        out.thinking = held.slice(0, end);
+        held = held.slice(end + THINK_CLOSE.length).replace(/^\s+/, "");
+        state = "text";
+      } else {
+        // Hold back a tail that may be the start of the closing tag.
+        let keep = 0;
+        if (!final) {
+          for (let n = THINK_CLOSE.length - 1; n > 0; n--) {
+            if (held.endsWith(THINK_CLOSE.slice(0, n))) {
+              keep = n;
+              break;
+            }
+          }
+        }
+        out.thinking = held.slice(0, held.length - keep);
+        held = held.slice(held.length - keep);
+        return out;
+      }
+    }
+    out.text = held;
+    held = "";
+    return out;
+  };
+  return {
+    push(chunk) {
+      held += chunk;
+      return step(false);
+    },
+    flush: () => step(true),
+  };
+}
+
 // ── Anthropic ────────────────────────────────────────────────────────────────
 
 export type AnthropicBlock =
@@ -263,7 +384,7 @@ function anthropicProvider(opts: AnthropicOptions): Provider {
       }
       body.max_tokens = maxTokens;
 
-      const res = await fetch(`${baseUrl}/v1/messages`, {
+      const res = await fetchWithRetry(`${baseUrl}/v1/messages`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -489,14 +610,19 @@ function openaiCompatProvider(opts: OpenAICompatOptions): Provider {
           },
         }));
       }
-      // Extended thinking has no portable Chat Completions equivalent; drop it.
+      // Chat Completions has no token budget for reasoning, only an effort
+      // level. Sent only when thinking is on, so gateways that reject the field
+      // are unaffected by default.
+      if (req.thinkingBudget && req.thinkingBudget > 0) {
+        body.reasoning_effort = effortForBudget(req.thinkingBudget);
+      }
 
       const headers: Record<string, string> = {
         "content-type": "application/json",
       };
       if (opts.apiKey) headers.authorization = `Bearer ${opts.apiKey}`;
 
-      const res = await fetch(`${baseUrl}/chat/completions`, {
+      const res = await fetchWithRetry(`${baseUrl}/chat/completions`, {
         method: "POST",
         headers,
         body: JSON.stringify(body),
@@ -516,6 +642,15 @@ function openaiCompatProvider(opts: OpenAICompatOptions): Provider {
         { id: string; name: string; args: string }
       > = {};
       let stopReason: string | undefined;
+      const splitter = createThinkSplitter();
+      const emitSplit = function* (part: {
+        thinking: string;
+        text: string;
+      }): Iterable<StreamEvent> {
+        if (part.thinking)
+          yield { type: "thinking_delta", text: part.thinking };
+        if (part.text) yield { type: "text_delta", text: part.text };
+      };
 
       const flushTools = function* (): Iterable<StreamEvent> {
         for (const key of Object.keys(pending)
@@ -541,6 +676,14 @@ function openaiCompatProvider(opts: OpenAICompatOptions): Provider {
       };
 
       for await (const ev of parseSSE(res.body)) {
+        // Gateways report a failure after the 200 as an `error` frame.
+        if (ev.error) {
+          const detail =
+            typeof ev.error === "string"
+              ? ev.error
+              : (ev.error.message ?? JSON.stringify(ev.error));
+          throw new Error(`openai-compat stream error: ${detail}`);
+        }
         if (ev.usage) {
           yield {
             type: "usage",
@@ -551,8 +694,14 @@ function openaiCompatProvider(opts: OpenAICompatOptions): Provider {
         const choice = ev.choices?.[0];
         if (!choice) continue;
         const delta = choice.delta ?? {};
+        // Reasoning arrives as `reasoning_content` (most gateways) or
+        // `reasoning` (OpenRouter-style), separate from the answer text.
+        const reasoning = delta.reasoning_content ?? delta.reasoning;
+        if (typeof reasoning === "string" && reasoning) {
+          yield { type: "thinking_delta", text: reasoning };
+        }
         if (typeof delta.content === "string" && delta.content) {
-          yield { type: "text_delta", text: delta.content };
+          yield* emitSplit(splitter.push(delta.content));
         }
         if (Array.isArray(delta.tool_calls)) {
           for (const tc of delta.tool_calls) {
@@ -572,6 +721,7 @@ function openaiCompatProvider(opts: OpenAICompatOptions): Provider {
         }
       }
 
+      yield* emitSplit(splitter.flush());
       // Emit any reassembled tool calls, then the terminal done event.
       yield* flushTools();
       yield { type: "done", stopReason };

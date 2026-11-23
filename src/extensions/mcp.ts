@@ -21,6 +21,10 @@ const PROTOCOL_VERSION = "2024-11-05";
 /** Per-request timeout (ms) before we give up on a server response. */
 const REQUEST_TIMEOUT_MS = 30_000;
 
+/** Deadline (ms) for a server to start, handshake and list its tools. A dead
+ * server must not hold every launch for the full request timeout. */
+const CONNECT_TIMEOUT_MS = 15_000;
+
 /** A JSON-RPC 2.0 message (request, notification, or response). */
 export interface RpcMessage {
   jsonrpc: "2.0";
@@ -234,6 +238,7 @@ function wrapMcpTool(server: string, mt: McpTool, client: McpClient): Tool {
       mt.description || `MCP tool "${mt.name}" from server "${server}".`,
     schema: mt.inputSchema ?? { type: "object", properties: {} },
     readOnly: mt.annotations?.readOnlyHint === true,
+    deferrable: true,
     async run(input): Promise<ToolRunResult> {
       const { content, image } = await client.callTool(mt.name, input);
       return image ? { content, image } : { content };
@@ -534,8 +539,19 @@ export async function connectMcpServers(
   ): Promise<ServerResult> => {
     const client = new McpClient(transportFor(cfg));
     try {
-      await client.connect();
-      const mcpTools = await client.listTools();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const mcpTools = await Promise.race([
+        client.connect().then(() => client.listTools()),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () =>
+              reject(
+                new Error(`no response within ${CONNECT_TIMEOUT_MS / 1000}s`),
+              ),
+            CONNECT_TIMEOUT_MS,
+          );
+        }),
+      ]).finally(() => clearTimeout(timer));
       return {
         tools: mcpTools.map((mt) => wrapMcpTool(name, mt, client)),
         client,

@@ -132,6 +132,18 @@ export interface AgentOptions {
   compactAtTokens?: number;
   /** When compacting, how many recent messages to keep verbatim. Default 6. */
   keepRecentMessages?: number;
+  /**
+   * Cap, in characters, on a single tool result entering the conversation.
+   * Small-context models need this: one unbounded read can fill the window.
+   * Omitted/0 leaves results as the tool returned them.
+   */
+  maxToolResultChars?: number;
+  /**
+   * Cap, in characters, on the tool schemas sent with each request. When the
+   * tool set is larger, tools marked `deferrable` are withheld and reached
+   * through `describe_tool` / `call_tool` instead. Omitted/0 sends everything.
+   */
+  maxToolSchemaChars?: number;
   /** Optional provider/model override used only for context compaction. */
   compactProvider?: Provider;
   compactModel?: string;
@@ -193,6 +205,10 @@ export interface AgentOptions {
     thinkingBudget: number | undefined;
     compactProvider?: Provider;
     compactModel?: string;
+    /** Per-model budgets; fall back to the run's options when omitted. */
+    maxTokens?: number;
+    compactAtTokens?: number;
+    maxToolResultChars?: number;
   };
 }
 
@@ -209,7 +225,12 @@ export type AgentEvent =
       diff?: Diff;
     }
   | { type: "usage"; inputTokens: number; outputTokens: number }
-  | { type: "turn_end"; stopReason?: string }
+  | {
+      type: "turn_end";
+      stopReason?: string;
+      /** Estimated tokens the next request will carry (prompt + this reply). */
+      contextTokens?: number;
+    }
   | {
       type: "compaction";
       beforeTokens: number;
@@ -227,6 +248,89 @@ const MAX_IDENTICAL_CALLS = 2;
 /** Strip a Tool down to the provider-facing `ToolDef` (no executor). */
 function toToolDef(t: Tool): ToolDef {
   return { name: t.name, description: t.description, schema: t.schema };
+}
+
+/** Synthetic tool names used when part of the tool set is deferred. */
+const DESCRIBE_TOOL = "describe_tool";
+const CALL_TOOL = "call_tool";
+
+/**
+ * Decide which tool schemas go in the request. When they all fit the budget
+ * nothing changes. Otherwise the `deferrable` ones are withheld and replaced
+ * by two small tools: `describe_tool` returns one tool's parameters on demand
+ * and `call_tool` runs it. A few MCP servers can otherwise spend most of a
+ * 32k window on schemas the model never uses.
+ */
+export function planTools(
+  tools: Tool[],
+  maxSchemaChars: number,
+): { active: Tool[]; deferred: boolean } {
+  const size = (list: Tool[]) => JSON.stringify(list.map(toToolDef)).length;
+  if (maxSchemaChars <= 0 || size(tools) <= maxSchemaChars)
+    return { active: tools, deferred: false };
+  const held = tools.filter((t) => t.deferrable);
+  if (held.length === 0) return { active: tools, deferred: false };
+  const byName = new Map(held.map((t) => [t.name, t] as const));
+  const index = held
+    .map((t) => {
+      const line = t.description.split("\n")[0]!.trim();
+      return `- ${t.name}: ${line.length > 140 ? `${line.slice(0, 137)}...` : line}`;
+    })
+    .join("\n");
+  const describe: Tool = {
+    name: DESCRIBE_TOOL,
+    description: `Get the full description and parameters of one of the additional tools listed under ${CALL_TOOL}. Call this before the first use of such a tool.`,
+    readOnly: true,
+    schema: {
+      type: "object",
+      properties: { name: { type: "string", description: "Tool name." } },
+      required: ["name"],
+    },
+    async run(input) {
+      const tool = byName.get(String(input.name));
+      if (!tool) throw new Error(`no such tool: ${input.name}`);
+      return `${tool.name}\n${tool.description}\n\nParameters (JSON Schema):\n${JSON.stringify(tool.schema)}`;
+    },
+  };
+  const call: Tool = {
+    name: CALL_TOOL,
+    description: `Run one of the additional tools below. Their parameters are not loaded, to save context: get them with ${DESCRIBE_TOOL} first, then pass them as \`arguments\`.\n${index}`,
+    // Never the gate for plan mode: the loop unwraps this into the real tool.
+    readOnly: held.every((t) => t.readOnly),
+    schema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Tool name from the list." },
+        arguments: {
+          type: "object",
+          description: "The tool's arguments, per its parameters.",
+        },
+      },
+      required: ["name"],
+    },
+    async run(input) {
+      throw new Error(
+        `no such tool: ${input.name}. Use a name from the ${CALL_TOOL} list.`,
+      );
+    },
+  };
+  return {
+    active: [...tools.filter((t) => !t.deferrable), describe, call],
+    deferred: true,
+  };
+}
+
+/** Turn a `call_tool` invocation into a call to the tool it names. */
+function unwrapCallTool<T extends { name: string; input: unknown }>(
+  call: T,
+): T {
+  if (call.name !== CALL_TOOL) return call;
+  const input = coerceToolInput(
+    { properties: { arguments: { type: "object" } } },
+    call.input,
+  );
+  if (typeof input.name !== "string" || input.name === CALL_TOOL) return call;
+  return { ...call, name: input.name, input: input.arguments ?? {} };
 }
 
 interface CollectedTurn {
@@ -248,11 +352,20 @@ export async function* runAgent(
   const mode: AgentMode = opts.mode ?? "normal";
   const maxTurns = opts.maxTurns ?? 25;
   const checkpointEvery = opts.checkpointEvery ?? 0;
-  const compactAtTokens = opts.compactAtTokens ?? 0;
   const keepRecent = opts.keepRecentMessages ?? 6;
-  const toolDefs = tools.map(toToolDef);
+  const plan = planTools(tools, opts.maxToolSchemaChars ?? 0);
+  const toolDefs = plan.active.map(toToolDef);
+  // Tool schemas ride along on every request, so they count against the window.
+  const toolTokens = Math.ceil(
+    JSON.stringify(toolDefs).length / CHARS_PER_TOKEN,
+  );
+  // One-shot recoveries, so a model that keeps failing the same way still stops.
+  let nudgedEmpty = false;
+  let overflowRetried = false;
   // Index tools by name once so the per-call lookups below are O(1).
-  const toolByName = new Map(tools.map((t) => [t.name, t] as const));
+  const toolByName = new Map(
+    [...tools, ...plan.active].map((t) => [t.name, t] as const),
+  );
 
   // Repeated-call loop breaker: a model that re-issues the exact same call
   // (same tool, same input) over and over is stuck — execute it at most
@@ -276,6 +389,10 @@ export async function* runAgent(
     const model = cfg?.model ?? opts.model;
     const supportsVision = cfg?.supportsVision ?? opts.supportsVision ?? true;
     const thinkingBudget = cfg ? cfg.thinkingBudget : opts.thinkingBudget;
+    const maxTokens = cfg?.maxTokens ?? opts.maxTokens;
+    const compactAtTokens = cfg?.compactAtTokens ?? opts.compactAtTokens ?? 0;
+    const maxToolResultChars =
+      cfg?.maxToolResultChars ?? opts.maxToolResultChars ?? 0;
 
     // ── turn-boundary cap / checkpoint ──
     if (checkpointEvery > 0) {
@@ -310,21 +427,23 @@ export async function* runAgent(
     // ── compact older history if the context has grown too large ──
     // Done at the turn boundary (message list is in a valid, paired state here).
     if (compactAtTokens > 0) {
-      const beforeTokens = estimateTokens(messages, system);
+      const beforeTokens = estimateTokens(messages, system) + toolTokens;
       if (beforeTokens > compactAtTokens) {
         try {
-          const result = await compactConversation({
+          const result = await shrinkContext({
             provider: cfg?.compactProvider ?? opts.compactProvider ?? provider,
             model: cfg?.compactModel ?? opts.compactModel ?? model,
             messages,
             keepRecent,
+            targetTokens: compactAtTokens - toolTokens,
+            system,
             signal,
           });
           if (result.summarized > 0) {
             yield {
               type: "compaction",
               beforeTokens,
-              afterTokens: estimateTokens(messages, system),
+              afterTokens: estimateTokens(messages, system) + toolTokens,
               summarized: result.summarized,
             };
           }
@@ -348,7 +467,7 @@ export async function* runAgent(
     // (even with `include_usage`). Track whether the provider reported any so we
     // can fall back to a local estimate, keeping the footer counter live.
     let reportedUsage = false;
-    const promptTokens = estimateTokens(messages, system);
+    const promptTokens = estimateTokens(messages, system) + toolTokens;
 
     const flushText = () => {
       if (textBuf) {
@@ -364,7 +483,7 @@ export async function* runAgent(
         messages,
         tools: toolDefs,
         thinkingBudget,
-        maxTokens: opts.maxTokens,
+        maxTokens,
         signal,
       })) {
         if (signal?.aborted) {
@@ -416,6 +535,33 @@ export async function* runAgent(
         yield { type: "done", reason: "aborted" };
         return;
       }
+      // The request did not fit the model's window (our estimate is chars/4 and
+      // the window is not always known). Shrink hard and retry this turn once;
+      // nothing was appended yet, so the transcript is still in a paired state.
+      const nothingStreamed =
+        !textBuf && !thinkingBuf && collected.blocks.length === 0;
+      if (!overflowRetried && nothingStreamed && isContextOverflow(err)) {
+        overflowRetried = true;
+        const beforeTokens = promptTokens;
+        const result = await shrinkContext({
+          provider: cfg?.compactProvider ?? opts.compactProvider ?? provider,
+          model: cfg?.compactModel ?? opts.compactModel ?? model,
+          messages,
+          keepRecent: 2,
+          targetTokens: Math.floor(estimateTokens(messages, system) / 2),
+          system,
+          signal,
+        }).catch(() => ({ summarized: 0 }));
+        if (result.summarized > 0) {
+          yield {
+            type: "compaction",
+            beforeTokens,
+            afterTokens: estimateTokens(messages, system) + toolTokens,
+            summarized: result.summarized,
+          };
+          continue;
+        }
+      }
       throw err;
     }
     flushText();
@@ -438,7 +584,34 @@ export async function* runAgent(
     if (collected.blocks.length > 0) {
       messages.push({ role: "assistant", content: collected.blocks });
     }
-    yield { type: "turn_end", stopReason: collected.stopReason };
+    yield {
+      type: "turn_end",
+      stopReason: collected.stopReason,
+      contextTokens:
+        promptTokens +
+        Math.ceil(JSON.stringify(collected.blocks).length / CHARS_PER_TOKEN),
+    };
+
+    // ── empty reply → nudge once ──
+    // Smaller models sometimes end a turn with no text and no tool call (often
+    // after spending the whole turn reasoning). Ending the run there looks like
+    // a silent hang-up, so ask once for the next step before giving up.
+    const saidNothing = !collected.blocks.some(
+      (b) => (b.type === "text" && b.text.trim()) || b.type === "tool_use",
+    );
+    if (saidNothing && !nudgedEmpty && messages.length > 0) {
+      nudgedEmpty = true;
+      const last = messages[messages.length - 1]!;
+      const text =
+        collected.stopReason === "length" ||
+        collected.stopReason === "max_tokens"
+          ? "Your last reply was cut off before any answer or tool call. Reply again, more briefly."
+          : "Your last reply was empty. Continue with the next tool call, or give your final answer.";
+      // Keep user/assistant alternation: fold into a trailing user turn.
+      if (last.role === "user") last.content.push({ type: "text", text });
+      else messages.push({ role: "user", content: [{ type: "text", text }] });
+      continue;
+    }
 
     // ── no tools → we're done ──
     if (collected.toolUses.length === 0) {
@@ -451,11 +624,14 @@ export async function* runAgent(
     // Image blocks produced by tools this turn, appended after all tool_results so
     // they never split a tool_result from its tool_use in the OpenAI/Codex wire form.
     const images: ContentBlock[] = [];
-    for (const call of collected.toolUses) {
+    for (const issued of collected.toolUses) {
       if (signal?.aborted) {
         yield { type: "done", reason: "aborted" };
         return;
       }
+      // A deferred tool is invoked through `call_tool`; unwrap it so hooks,
+      // the approval gate and the UI all see the real tool and its input.
+      const call = plan.deferred ? unwrapCallTool(issued) : issued;
       yield {
         type: "tool_start",
         id: call.id,
@@ -578,10 +754,11 @@ export async function* runAgent(
       // An image result rides along as an `image` block on this user turn — but
       // only for vision-capable models; otherwise drop it and say so in the text.
       const visionOk = supportsVision;
+      const capped = capToolResult(content, maxToolResultChars);
       const resultText =
         image && !visionOk
-          ? `${content} (the current model cannot view images)`
-          : content;
+          ? `${capped} (the current model cannot view images)`
+          : capped;
       if (image && visionOk) {
         images.push({
           type: "image",
@@ -645,7 +822,10 @@ async function runToolCall(
 }> {
   const tool = toolByName.get(call.name);
   if (!tool) {
-    return { content: `unknown tool: ${call.name}`, isError: true };
+    return {
+      content: `unknown tool: ${call.name}. Available tools: ${[...toolByName.keys()].join(", ")}`,
+      isError: true,
+    };
   }
   if (mode === "plan" && !tool.readOnly) {
     return {
@@ -653,7 +833,7 @@ async function runToolCall(
       isError: true,
     };
   }
-  const input = (call.input ?? {}) as Record<string, unknown>;
+  const input = coerceToolInput(tool.schema, call.input);
   try {
     const out = await tool.run(input);
     // Tools may return a bare string or a `{ content, diff }` result.
@@ -730,6 +910,149 @@ function pickCut(messages: Message[], keepRecent: number): number {
   return cut;
 }
 
+/** Placeholder left where a stale tool result was dropped from the context. */
+const CLEARED_TOOL_RESULT =
+  "[earlier tool output cleared to save context; run the tool again if you need it]";
+
+/** Tool results shorter than this are not worth clearing. */
+const CLEAR_MIN_CHARS = 400;
+
+/**
+ * Drop the bodies of tool results older than the last `keepRecent` messages.
+ * Old file reads and command output are the bulk of a long session and the
+ * model has already acted on them, so this frees most of the window without a
+ * summarization round-trip. Returns how many results were cleared.
+ */
+function clearStaleToolResults(
+  messages: Message[],
+  keepRecent: number,
+): number {
+  let cleared = 0;
+  const end = messages.length - keepRecent;
+  for (let i = 0; i < end; i++) {
+    for (const b of messages[i]!.content) {
+      if (
+        b.type === "tool_result" &&
+        b.content.length > CLEAR_MIN_CHARS &&
+        b.content !== CLEARED_TOOL_RESULT
+      ) {
+        b.content = CLEARED_TOOL_RESULT;
+        cleared++;
+      }
+    }
+  }
+  return cleared;
+}
+
+/**
+ * Bring the transcript under `targetTokens`: clear stale tool output first, and
+ * only summarize when that is not enough. The kept tail shrinks (6 → 4 → 2
+ * messages) until it fits half the target, so a few large recent results
+ * cannot keep the transcript over the limit. Returns the number of messages
+ * affected (0 = nothing could be done).
+ */
+async function shrinkContext(opts: {
+  provider: Provider;
+  model: string;
+  messages: Message[];
+  keepRecent: number;
+  targetTokens: number;
+  system: string;
+  signal?: AbortSignal;
+}): Promise<{ summarized: number }> {
+  const { messages, system, targetTokens } = opts;
+  const cleared = clearStaleToolResults(messages, Math.max(opts.keepRecent, 4));
+  if (cleared > 0 && estimateTokens(messages, system) <= targetTokens * 0.8) {
+    return { summarized: cleared };
+  }
+  let keepRecent = opts.keepRecent;
+  for (const keep of [opts.keepRecent, 4, 2]) {
+    if (keep > opts.keepRecent) continue;
+    const cut = pickCut(messages, keep);
+    if (cut === 0) continue;
+    keepRecent = keep;
+    if (estimateTokens(messages.slice(cut)) <= targetTokens / 2) break;
+  }
+  const result = await compactConversation({
+    provider: opts.provider,
+    model: opts.model,
+    messages,
+    keepRecent,
+    signal: opts.signal,
+  });
+  return { summarized: result.summarized + cleared };
+}
+
+/** Whether a provider error says the request exceeded the context window. */
+function isContextOverflow(err: unknown): boolean {
+  return /context (length|window|size)|maximum context|context_length|too many tokens|prompt is too long|exceeds? the (model's )?(maximum|context)|n_ctx|tokens to keep/i.test(
+    (err as Error)?.message ?? "",
+  );
+}
+
+/** Keep the head and tail of an oversized tool result, with a notice between. */
+function capToolResult(content: string, maxChars: number): string {
+  if (maxChars <= 0 || content.length <= maxChars) return content;
+  const head = Math.floor(maxChars * 0.7);
+  const tail = maxChars - head;
+  const omitted = content.length - maxChars;
+  return `${content.slice(0, head)}\n\n[... ${omitted} characters omitted: the output is too large for this model's context window. Narrow the request (read_file with offset/limit, grep, or a more specific command) to see the rest.]\n\n${content.slice(content.length - tail)}`;
+}
+
+/**
+ * Coerce a tool call's arguments toward the tool's JSON schema. Open-weight
+ * models regularly send `"limit": "50"`, `"replace_all": "true"`, or a whole
+ * argument object as a JSON string; rejecting those costs a full turn each
+ * time, so fix the unambiguous cases and leave everything else untouched.
+ */
+export function coerceToolInput(
+  schema: Record<string, unknown>,
+  raw: unknown,
+): Record<string, unknown> {
+  let input = raw;
+  if (typeof input === "string") {
+    try {
+      input = JSON.parse(input);
+    } catch {
+      input = {};
+    }
+  }
+  if (input === null || typeof input !== "object" || Array.isArray(input))
+    return {};
+  const out = { ...(input as Record<string, unknown>) };
+  const props = (schema.properties ?? {}) as Record<
+    string,
+    { type?: string } | undefined
+  >;
+  for (const [key, value] of Object.entries(out)) {
+    const type = props[key]?.type;
+    if (!type) continue;
+    if (typeof value === "string") {
+      const v = value.trim();
+      if ((type === "number" || type === "integer") && v !== "") {
+        const n = Number(v);
+        if (Number.isFinite(n)) out[key] = n;
+      } else if (type === "boolean") {
+        if (v === "true") out[key] = true;
+        else if (v === "false") out[key] = false;
+      } else if (type === "array" || type === "object") {
+        try {
+          const parsed = JSON.parse(v);
+          if (parsed !== null && typeof parsed === "object") out[key] = parsed;
+        } catch {
+          // leave as-is; the tool reports the bad argument
+        }
+      }
+    } else if (
+      type === "string" &&
+      (typeof value === "number" || typeof value === "boolean")
+    ) {
+      out[key] = String(value);
+    }
+  }
+  return out;
+}
+
 export interface CompactOptions {
   provider: Provider;
   model: string;
@@ -751,7 +1074,21 @@ export async function compactConversation(
   if (cut === 0) return { summarized: 0 };
 
   const older = messages.slice(0, cut);
-  const transcript = renderTranscript(older);
+  // The opening request is the one thing a summary must not paraphrase: carry
+  // it over verbatim and summarize only what followed it.
+  const first = older[0]!;
+  const request =
+    first.role === "user" &&
+    first.content.every((b) => b.type === "text") &&
+    !first.content.some(
+      (b) => b.type === "text" && b.text.startsWith(SUMMARY_MARKER),
+    )
+      ? first.content
+          .map((b) => (b.type === "text" ? b.text : ""))
+          .join("\n")
+          .slice(0, REQUEST_KEEP_CHARS)
+      : undefined;
+  const transcript = renderTranscript(request ? older.slice(1) : older);
   const summary = await summarize(provider, model, transcript, signal);
   if (!summary.trim()) return { summarized: 0 };
 
@@ -761,7 +1098,8 @@ export async function compactConversation(
       {
         type: "text",
         text:
-          "[Earlier conversation was summarized to conserve context.]\n\n" +
+          `${SUMMARY_MARKER}\n\n` +
+          (request ? `The original request:\n${request}\n\n` : "") +
           "Summary of the work so far:\n" +
           summary,
       },
@@ -772,11 +1110,19 @@ export async function compactConversation(
   return { summarized: cut };
 }
 
+const SUMMARY_MARKER =
+  "[Earlier conversation was summarized to conserve context.]";
+
+/** Upper bound on the opening request carried verbatim through a compaction. */
+const REQUEST_KEEP_CHARS = 8000;
+
 const SUMMARIZER_SYSTEM =
-  "You are a summarizer. Condense the conversation transcript into a compact but " +
-  "complete brief that lets the assistant continue the task seamlessly. Preserve: " +
-  "the user's goal, key decisions, files inspected or modified, important findings, " +
-  "and any pending next steps. Use terse bullet points. Do not invent details.";
+  "You are a summarizer. Condense the transcript of a coding session into a brief " +
+  "that lets the assistant continue the task without re-reading anything. Preserve: " +
+  "the user's goal and constraints, decisions made, every file changed so far with " +
+  "what was changed in it (so the work is not repeated or undone), relevant file " +
+  "paths, function names and line numbers, commands run and their outcome, and the " +
+  "steps still pending. Use terse bullet points. Do not invent details.";
 
 /** One-shot, tool-free summarization call against the provider. */
 async function summarize(

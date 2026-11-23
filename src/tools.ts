@@ -37,6 +37,12 @@ export interface Tool {
   schema: Record<string, unknown>;
   /** True if the tool cannot mutate anything — the gate for plan mode. */
   readOnly: boolean;
+  /**
+   * The schema may be left out of the request and loaded on demand when the
+   * whole tool set is too large for the model's context window. Set on tools
+   * that arrive in bulk from outside (MCP servers), never on the core set.
+   */
+  deferrable?: boolean;
   // biome-ignore lint/suspicious/noExplicitAny: tool inputs are dynamic JSON bags read with typeof guards.
   run(input: Record<string, any>): Promise<string | ToolRunResult>;
 }
@@ -156,6 +162,49 @@ const writeFile: Tool = {
 
 // ── edit_file ─────────────────────────────────────────────────────────────────
 
+/**
+ * Locate `old` in `text` ignoring whitespace differences. Models often
+ * reproduce a line with altered spacing or indentation (`a - b` for `a-b`,
+ * tabs for spaces); when exactly one span matches that way the intent is
+ * unambiguous, so the edit can proceed instead of costing another turn.
+ * Returns the matched span, "ambiguous" for several, or undefined for none.
+ */
+export function findIgnoringWhitespace(
+  text: string,
+  old: string,
+): { start: number; end: number } | "ambiguous" | undefined {
+  const chars = [...old.replace(/\s+/g, "")];
+  if (chars.length < 3) return undefined;
+  const pattern = chars
+    .map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("\\s*");
+  const matches = [...text.matchAll(new RegExp(pattern, "g"))];
+  if (matches.length === 0) return undefined;
+  if (matches.length > 1) return "ambiguous";
+  let start = matches[0]!.index;
+  const end = start + matches[0]![0].length;
+  // `old` opened with indentation: take the line's own indentation into the
+  // span so the replacement's indentation is not added on top of it.
+  if (/^[ \t]/.test(old)) {
+    while (start > 0 && (text[start - 1] === " " || text[start - 1] === "\t"))
+      start--;
+  }
+  return { start, end };
+}
+
+/** Where the first line of `old` appears in the file, for a not-found error. */
+function nearestLineHint(text: string, old: string): string {
+  const probe = old
+    .split("\n")
+    .map((l) => l.trim())
+    .find((l) => l.length > 0);
+  if (!probe) return "";
+  const lines = text.split("\n");
+  const at = lines.findIndex((l) => l.includes(probe));
+  if (at === -1) return "";
+  return ` The closest text is on line ${at + 1}: ${JSON.stringify(lines[at])}`;
+}
+
 const editFile: Tool = {
   name: "edit_file",
   description:
@@ -198,7 +247,28 @@ const editFile: Tool = {
     }
 
     const first = text.indexOf(oldStr);
-    if (first === -1) throw new Error(`"old" string not found in ${path}`);
+    if (first === -1) {
+      // The numbered view from read_file pasted back verbatim is the other
+      // common miss; strip the prefixes before the whitespace-tolerant search.
+      const unnumbered = oldStr.replace(/^[ \t]*\d+\t/gm, "");
+      const span = findIgnoringWhitespace(text, unnumbered);
+      if (span === "ambiguous") {
+        throw new Error(
+          `"old" string not found exactly in ${path}, and it matches several places when whitespace is ignored; add more surrounding context`,
+        );
+      }
+      if (!span) {
+        throw new Error(
+          `"old" string not found in ${path}.${nearestLineHint(text, unnumbered)} Read the file again and copy the text exactly.`,
+        );
+      }
+      const updated = text.slice(0, span.start) + newStr + text.slice(span.end);
+      await Bun.write(path, updated);
+      return {
+        content: `edited ${path} (matched ignoring whitespace differences)`,
+        diff: computeDiff(text, updated),
+      };
+    }
     if (text.indexOf(oldStr, first + oldStr.length) !== -1) {
       throw new Error(
         `"old" string is not unique in ${path}; add more context or set replace_all`,

@@ -6,11 +6,25 @@
 
 import type { ModelInfo } from "@canarycoders/canaryllm";
 
-import type { Config, ModelConfig, ProviderConfig } from "./config.ts";
+import {
+  type Config,
+  type ModelConfig,
+  type ProviderConfig,
+  resolveModel,
+} from "./config.ts";
 
 /** The provider key used for the baked-in CanaryLLM preset. */
 export const CANARY_PROVIDER = "canaryllm";
-const CANARY_API_HOST = "https://canaryllm.canarycoders.es";
+const CANARY_DEFAULT_HOST = "https://canaryllm.canarycoders.es";
+
+/** The gateway origin. `CANARYLLM_BASE_URL` points it at a self-hosted or
+ * local instance. */
+function canaryHost(): string {
+  return (process.env.CANARYLLM_BASE_URL || CANARY_DEFAULT_HOST).replace(
+    /\/(v1\/?)?$/,
+    "",
+  );
+}
 
 /**
  * The baked-in CanaryLLM provider preset (OpenAI-compatible). The API key reads
@@ -20,7 +34,7 @@ const CANARY_API_HOST = "https://canaryllm.canarycoders.es";
 export function canaryProviderConfig(): ProviderConfig {
   return {
     api: "openai-compat",
-    baseUrl: `${CANARY_API_HOST}/v1`,
+    baseUrl: `${canaryHost()}/v1`,
     apiKey: "${CANARYLLM_API_KEY}",
     models: [],
   };
@@ -29,7 +43,7 @@ export function canaryProviderConfig(): ProviderConfig {
 /** Whether a provider config points at the CanaryLLM gateway. */
 function isCanaryProvider(pc: ProviderConfig): boolean {
   return (
-    pc.api === "openai-compat" && (pc.baseUrl ?? "").startsWith(CANARY_API_HOST)
+    pc.api === "openai-compat" && (pc.baseUrl ?? "").startsWith(canaryHost())
   );
 }
 
@@ -62,7 +76,20 @@ function toCanaryModel(provider: string, model: ModelInfo): ModelConfig | null {
   const id = /\//.test(model.id)
     ? model.id
     : `${model.provider || provider}/${model.id}`;
-  return { id };
+  const out: ModelConfig = {
+    id,
+    supportsVision: (caps as readonly unknown[]).includes("vision"),
+  };
+  // Media-only entries report 0 for both; a missing value means "unknown".
+  const limits = model as {
+    contextWindow?: unknown;
+    maxOutputTokens?: unknown;
+  };
+  if (typeof limits.contextWindow === "number" && limits.contextWindow > 0)
+    out.contextWindow = limits.contextWindow;
+  if (typeof limits.maxOutputTokens === "number" && limits.maxOutputTokens > 0)
+    out.maxOutputTokens = limits.maxOutputTokens;
+  return out;
 }
 
 /**
@@ -155,10 +182,43 @@ export async function populateCanaryModels(
       fetchImpl: opts.fetchImpl,
       timeoutMs: opts.timeoutMs,
     });
+    adoptCanaryDefault(config, pc.models);
     return { provider: name, count: pc.models.length };
   } catch (err) {
     return { provider: name, error: (err as Error).message };
   }
+}
+
+/** Open-weight coding models to start on, best first, when nothing usable is
+ * configured. */
+const CANARY_DEFAULT_MODELS = [
+  "moonshot/kimi-k2.7-code",
+  "zhipu/glm-5.3",
+  "lmstudio/qwen3.6-27b-mlx",
+];
+
+/**
+ * With only a CanaryLLM key set, the built-in default model belongs to the
+ * Anthropic provider, which has no key, so a first run would fail before
+ * sending anything. Point `config.model` at a CanaryLLM model in that case. A
+ * model the user configured, or one whose provider has a key, is left alone.
+ */
+function adoptCanaryDefault(config: Config, models: ModelConfig[]): void {
+  if (models.length === 0) return;
+  const current = resolveModel(config);
+  const usable =
+    current &&
+    (current.model.id === config.model ||
+      current.model.name === config.model) &&
+    !(
+      current.providerConfig.api === "anthropic" &&
+      !current.providerConfig.apiKey
+    );
+  if (usable) return;
+  const pick =
+    CANARY_DEFAULT_MODELS.find((id) => models.some((m) => m.id === id)) ??
+    models[0]!.id;
+  config.model = pick;
 }
 
 /** One-line stderr/scrollback note describing a discovery result (or nothing). */

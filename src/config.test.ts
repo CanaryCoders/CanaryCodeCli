@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   type Config,
+  contextBudget,
   defaultConfig,
   getRawConfigPath,
   loadConfig,
@@ -272,4 +273,35 @@ test("foldPresets env-interpolates the apiKey placeholder in injected presets", 
     if (prev === undefined) delete process.env.CANARYLLM_API_KEY;
     else process.env.CANARYLLM_API_KEY = prev;
   }
+});
+
+describe("contextBudget", () => {
+  test("a model with no known window keeps the configured threshold", () => {
+    const b = contextBudget(defaultConfig(), { id: "x" });
+    expect(b.maxTokens).toBeUndefined();
+    expect(b.compactAtTokens).toBe(120_000);
+  });
+
+  test("a 32k model compacts well inside its window", () => {
+    const b = contextBudget(defaultConfig(), {
+      id: "lmstudio/qwen",
+      contextWindow: 32_768,
+      maxOutputTokens: 8192,
+    });
+    expect(b.maxTokens).toBe(8192);
+    expect(b.compactAtTokens).toBe(18_432);
+    expect(b.compactAtTokens + b.maxTokens!).toBeLessThan(32_768);
+    expect(b.maxToolResultChars).toBe(19_660);
+  });
+
+  test("a large window keeps the configured threshold as the upper bound", () => {
+    const b = contextBudget(defaultConfig(), {
+      id: "zhipu/glm",
+      contextWindow: 1_000_000,
+      maxOutputTokens: 128_000,
+    });
+    expect(b.maxTokens).toBe(32_000);
+    expect(b.compactAtTokens).toBe(120_000);
+    expect(b.maxToolResultChars).toBe(100_000);
+  });
 });

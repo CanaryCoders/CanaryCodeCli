@@ -6,9 +6,8 @@
 //
 // A level can come from `--think <level>` / `/think <level>` (explicit) or from a
 // keyword in the prompt itself ("think hard", "ultrathink"). Explicit wins. The
-// budget is handed to the provider as `thinkingBudget`; providers that don't
-// support thinking (openai-compat) drop it — `supportsThinking` lets the caller
-// note that once instead of silently ignoring the request.
+// budget is handed to the provider as `thinkingBudget`; `supportsThinking`
+// lets the caller note once when a provider cannot act on it.
 
 export type ThinkingLevel = "off" | "think" | "think-hard" | "ultrathink";
 
@@ -114,13 +113,16 @@ export function resolveThinking(opts: {
 }
 
 /**
- * Whether a provider can act on a thinking budget. The Anthropic Messages API
- * exposes extended thinking, and the OpenAI Codex Responses provider maps the
- * budget onto a reasoning effort level. Plain openai-compat gateways have no
- * portable equivalent, so the budget is dropped (the caller should note this once).
+ * Whether a provider can act on a thinking budget. Anthropic takes the budget
+ * directly; the Codex Responses and Chat Completions providers map it onto a
+ * reasoning effort level.
  */
 export function supportsThinking(providerId: string): boolean {
-  return providerId === "anthropic" || providerId === "openai-responses";
+  return (
+    providerId === "anthropic" ||
+    providerId === "openai-responses" ||
+    providerId === "openai-compat"
+  );
 }
 
 /** Human-readable label, e.g. "think hard (10k)". For status lines / notes. */
